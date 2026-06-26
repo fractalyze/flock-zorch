@@ -17,7 +17,9 @@ Bottom-up port, each layer gated by a byte-match vs unmodified flock:
 | SHA-256 Merkle tree | ✅ GPU byte-match root | `merkle_oracle_test.py` |
 | **PCS commit (pack→NTT→Merkle→root)** | ✅ **byte-identical root; encode 20–383× CPU** | `commit_oracle_test.py` |
 | **sumcheck core (build_eq / fold / round_pair)** | ✅ **GPU byte-match (sw + clmad); build_eq 20–174× CPU** | `sumcheck_oracle_test.py`, `sumcheck_gpu_vs_cpu.py` |
-| zerocheck / lincheck prove (full PIOP) | ⏳ next (core primitives done) | — |
+| **Fiat-Shamir challenger (SHA-256 duplex)** | ✅ **byte-identical to flock `FsChallenger`** (on `zorch.byte_transcript`) | `challenger_oracle_test.py` |
+| zerocheck prove (full PIOP) — URM + multilinear rounds | 🚧 in progress (challenger + primitives done) | — |
+| PCS open (FRI) / e2e proof | ⏳ | — |
 | PCS open (FRI) / e2e proof | ⏳ | — |
 | fused `.mlirbc` + Rust host (PJRT) | ⏳ | — |
 
