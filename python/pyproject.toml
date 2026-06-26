@@ -1,0 +1,6 @@
+# Type-check config only — nothing here is built or pip-installed. The package is
+# consumed off PYTHONPATH (PYTHONPATH=python), like accumulation-zorch.
+[tool.mypy]
+files = ["flock_zorch"]
+python_version = "3.11"
+ignore_missing_imports = true

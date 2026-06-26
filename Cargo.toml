@@ -1,0 +1,27 @@
+[package]
+name = "flock-zorch"
+version = "0.1.0"
+edition = "2021"
+description = "GPU port of succinctlabs/flock (R1CS-over-GF(2) PIOP) via the zorch/zkx compiler stack"
+
+[dependencies]
+# The byte-compare baseline: unmodified upstream flock, path-depped so its types
+# and reference arithmetic ARE the oracle. flock-core is edition 2024 and
+# inherits from flock's own workspace.
+flock-core = { path = "../flock/crates/flock-core" }
+
+# Only for the CPU-baseline bench examples: hash leaves in parallel the way
+# flock's `merkle_tree` does (rayon par_iter over `hash_leaf`), so the SHA-256
+# CPU anchor is flock's honest best on this box, not a single thread.
+rayon = "1.10"
+
+# Standalone workspace root (do not get absorbed into a parent dir). The reusable
+# `crates/zkx-pjrt` FFI shim is added as a member when the fused-GPU PJRT path lands.
+[workspace]
+
+# Match flock's bench profile (thin LTO + single codegen unit) so the CPU NTT
+# baseline in `cpu_vs_gpu.py` is flock's honest best on this hardware, not an
+# under-optimized build that would inflate the GPU speedup.
+[profile.release]
+lto = "thin"
+codegen-units = 1

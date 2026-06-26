@@ -1,0 +1,4 @@
+[build]
+# Match flock's build so the CPU baseline in cpu_vs_gpu is flock's honest best
+# on this hardware (else the GPU speedup is unfairly inflated).
+rustflags = ["-C", "target-cpu=native"]

@@ -1,0 +1,7 @@
+/target
+/.venv
+/artifacts
+__pycache__/
+*.mlirbc
+*.pyc
+.mypy_cache/
