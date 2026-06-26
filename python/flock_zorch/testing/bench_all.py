@@ -1,6 +1,7 @@
 """Consolidated per-layer benchmark for flock-zorch — run each iteration to track
 improvement. Reports field-mul (current fori_loop vs the original unroll),
-additive-NTT, and the XOR-add bandwidth ceiling on the active backend.
+additive-NTT, the sumcheck core (build_eq / round_pair / fold), and the XOR-add
+bandwidth ceiling on the active backend.
 """
 import gc
 import time
@@ -11,7 +12,12 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp  # noqa: E402
 
-from flock_zorch import field, ntt as ntt_mod  # noqa: E402
+from flock_zorch import field, ntt as ntt_mod, sumcheck  # noqa: E402
+
+try:
+    from flock_zorch import field_clmad  # noqa: E402
+except Exception:  # pragma: no cover
+    field_clmad = None
 
 U64 = jnp.uint64
 _ONE = U64(1)
@@ -94,6 +100,24 @@ def main():
         except Exception as e:  # noqa: BLE001
             print(f"  log_d={log:<2} {'OOM' if _oom(e) else type(e).__name__}: {str(e)[:70]}")
         del d, tw
+        gc.collect()
+
+    sc_mul = field_clmad.mul if (field_clmad and field_clmad.available()) else field.mul
+    sc_tag = "clmad" if sc_mul is not field.mul else "software"
+    print(f"\n[sumcheck core]  mul={sc_tag}")
+    for log in (16, 18, 20):
+        n = 1 << log
+        r = _rand(log, 5)
+        a, b = _rand(n, 6), _rand(n, 7)
+        eq_fn = jax.jit(lambda rr, ln=log: sumcheck.build_eq(rr, mul=sc_mul))
+        rp_fn = jax.jit(lambda aa, bb, rr: sumcheck.round_pair(aa, bb, rr, mul=sc_mul))
+        fs_fn = jax.jit(lambda aa: sumcheck.fold_single(aa, r[0], mul=sc_mul))
+        eq_ms = _bench(eq_fn, (r,), 30) * 1e3
+        rp_ms = _bench(rp_fn, (a, b, r), 30) * 1e3
+        fs_ms = _bench(fs_fn, (a,), 30) * 1e3
+        print(f"  log={log:<2} build_eq {eq_ms:7.3f} ms ({n/(eq_ms/1e3)/1e9:5.2f} G elem/s)"
+              f"  round_pair {rp_ms:7.3f} ms  fold {fs_ms:7.3f} ms")
+        del a, b
         gc.collect()
 
     print("\n[XOR add]  bandwidth ceiling")

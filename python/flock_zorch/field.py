@@ -101,8 +101,14 @@ def _ghash_reduce(r0, r1, r2, r3):
 def mul(a, b):
     """Elementwise GF(2^128) multiply in flock's GHASH basis.
 
-    a, b: uint64 [..., 2] (lo, hi). Returns uint64 [..., 2].
+    a, b: uint64 [..., 2] (lo, hi), broadcastable on the leading dims (e.g. a
+    scalar [2] against a [N, 2] table). Returns the broadcast shape. Both operands
+    are broadcast to a common shape first so the bit-serial `_clmul64` carry stays
+    consistent regardless of operand order — same contract as `field_clmad.mul`.
     """
+    shape = jnp.broadcast_shapes(a.shape, b.shape)
+    a = jnp.broadcast_to(a, shape)
+    b = jnp.broadcast_to(b, shape)
     alo, ahi = a[..., 0], a[..., 1]
     blo, bhi = b[..., 0], b[..., 1]
     r0, r1, r2, r3 = _mul_unreduced(alo, ahi, blo, bhi)

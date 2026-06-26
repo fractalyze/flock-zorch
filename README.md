@@ -16,7 +16,9 @@ Bottom-up port, each layer gated by a byte-match vs unmodified flock:
 | SHA-256 (Merkle / challenger hash) | ✅ GPU byte-match (CPU-favorable, see below) | `sha256_oracle_test.py` |
 | SHA-256 Merkle tree | ✅ GPU byte-match root | `merkle_oracle_test.py` |
 | **PCS commit (pack→NTT→Merkle→root)** | ✅ **byte-identical root; encode 20–383× CPU** | `commit_oracle_test.py` |
-| zerocheck / lincheck / PCS open | ⏳ next | — |
+| **sumcheck core (build_eq / fold / round_pair)** | ✅ **GPU byte-match (sw + clmad); build_eq 20–174× CPU** | `sumcheck_oracle_test.py`, `sumcheck_gpu_vs_cpu.py` |
+| zerocheck / lincheck prove (full PIOP) | ⏳ next (core primitives done) | — |
+| PCS open (FRI) / e2e proof | ⏳ | — |
 | fused `.mlirbc` + Rust host (PJRT) | ⏳ | — |
 
 ### First full sub-protocol: PCS commit, byte-identical + 10×
@@ -50,6 +52,27 @@ end-to-end speedup must still be measured, and in particular flock's **Fiat-Sham
 SHA-256 is a strictly sequential host hash chain** whose per-round cost could
 become the critical path once the bulk sumcheck work moves to the GPU. No
 full-prover 10× is claimed here until that is built and benchmarked.
+
+### Sumcheck arithmetic core (`sumcheck.py`)
+The reusable kernels shared by **both** sumchecks in flock's PIOP (zerocheck and
+lincheck): `build_eq` (eq-table expansion by parallel power-of-two doubling),
+`fold_single`/`fold_pair` (bind the low multilinear variable), and `round_pair`
+(the Karatsuba ∞-trick round message `(r₀·G(1), G(∞))`). All pure GF(2¹²⁸) over
+uint64 lanes → they inherit clmad on GPU and are fully data-parallel. Byte-identical
+to flock-core's `zerocheck::{univariate_skip,multilinear}` under **both** the
+software mul and the clmad FFI (`sumcheck_oracle_test.py`). GPU-vs-CPU on `build_eq`
+(the dominant primitive), vs unmodified x86 flock:
+
+| n | 2ⁿ elems | CPU flock | GPU zorch | speedup |
+|---|----------|-----------|-----------|---------|
+| 16 | 65 536 | 2.30 ms | 0.116 ms | 19.7× |
+| 18 | 262 144 | 9.25 ms | 0.155 ms | 59.9× |
+| 20 | 1 048 576 | 37.70 ms | 0.216 ms | **174.4×** |
+
+CPU baseline is flock's x86 scalar build_eq — the only path that compiles on x86;
+flock is tuned for Apple silicon (NEON, aarch64-gated), so the definitive
+apples-to-apples comparison needs flock built on a MacBook. These primitives are
+the building blocks of the full zerocheck/lincheck prove loop (next).
 
 ## Performance: GPU vs CPU (the headline gate)
 flock-zorch's GPU additive NTT (the dominant PCS-commit primitive) vs
