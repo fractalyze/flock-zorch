@@ -18,8 +18,9 @@ Bottom-up port, each layer gated by a byte-match vs unmodified flock:
 | **PCS commit (pack→NTT→Merkle→root)** | ✅ **byte-identical root; encode 20–383× CPU** | `commit_oracle_test.py` |
 | **sumcheck core (build_eq / fold / round_pair)** | ✅ **GPU byte-match (sw + clmad); build_eq 20–174× CPU** | `sumcheck_oracle_test.py`, `sumcheck_gpu_vs_cpu.py` |
 | **Fiat-Shamir challenger (SHA-256 duplex)** | ✅ **byte-identical to flock `FsChallenger`** (on `zorch.byte_transcript`) | `challenger_oracle_test.py` |
-| zerocheck prove (full PIOP) — URM + multilinear rounds | 🚧 in progress (challenger + primitives done) | — |
-| PCS open (FRI) / e2e proof | ⏳ | — |
+| F8 layer + round-1 URM (F8 NTT / φ₈ / `round1_naive`) | ✅ GPU byte-match (φ₈ table + URM) | `gf8_urm_oracle_test.py` |
+| **zerocheck `prove_packed` (full PIOP → ZerocheckProof)** | ✅ **byte-identical to flock** (sw + clmad), m=13/14 | `zerocheck_oracle_test.py` |
+| PCS open (FRI) / e2e proof | ⏳ next | — |
 | PCS open (FRI) / e2e proof | ⏳ | — |
 | fused `.mlirbc` + Rust host (PJRT) | ⏳ | — |
 
