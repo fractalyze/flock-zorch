@@ -17,7 +17,10 @@ Reuses zorch via the challenger (`zorch.byte_transcript`). Requires
 """
 from __future__ import annotations
 
+import functools
+
 import numpy as np
+import jax
 import jax.numpy as jnp
 
 from flock_zorch import field
@@ -64,11 +67,17 @@ def partial_fold_packed_z(z_packed_bytes: bytes, m: int, k_log: int, eq_outer, m
     k = 1 << k_log
     n_outer = 1 << (m - k_log)
     n_bytes = n_outer // 8
-    zp = np.frombuffer(z_packed_bytes, np.uint8).reshape(n_bytes, k)
-    bits = (zp[:, None, :] >> np.arange(8, dtype=np.uint8)[None, :, None]) & 1  # [nb,8,k]
-    bits = jnp.asarray(bits.reshape(n_outer, k).astype(np.uint64))             # i_outer=byte·8+r
-    sel = bits[:, :, None] * eq_outer[:, None, :]            # bit·eq_outer[i_outer]
-    return _xor_reduce(sel, axis=0)                          # XOR over i_outer -> [k, 2]
+    zp = jnp.asarray(np.frombuffer(z_packed_bytes, np.uint8).reshape(n_bytes, k))
+    return _partial_fold_dev(zp, eq_outer, n_outer)         # device + jit (was eager 1GB)
+
+
+@functools.partial(jax.jit, static_argnums=(2,))
+def _partial_fold_dev(zp, eq_outer, n_outer):
+    """z_vec[i_inner] = Σ_{i_outer} bit·eq_outer[i_outer], device+jit (the eager
+    [n_outer,k,2] intermediate was ~1GB at m=26 — mirrors the ring_switch fix)."""
+    bits = ((zp[:, None, :] >> jnp.arange(8, dtype=jnp.uint8)[None, :, None]) & 1)  # [nb,8,k]
+    bits = bits.reshape(n_outer, zp.shape[1]).astype(jnp.uint64)                    # i_outer=byte·8+r
+    return _xor_reduce(bits[:, :, None] * eq_outer[:, None, :], axis=0)             # [k, 2]
 
 
 def _round_eval(c, z, mul=field.mul):
