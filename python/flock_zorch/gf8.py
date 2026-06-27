@@ -16,6 +16,7 @@ twiddle recurrence with binary-heap indexing and recursive DIF/DIT butterflies.
 from __future__ import annotations
 
 import numpy as np
+import jax
 import jax.numpy as jnp
 
 from flock_zorch import field, sumcheck
@@ -189,6 +190,81 @@ class AdditiveNttGf8:
 
 
 # ---------------------------------------------------------------------------
+# Device (GPU) F8: the same tables + additive NTT in jnp, so round1_naive runs
+# on the GPU instead of host numpy (the URM was the prover's #1 host bottleneck:
+# ~1.1 s at m=24). Byte-identical to the host path (gated by the URM oracle).
+# ---------------------------------------------------------------------------
+
+import functools  # noqa: E402
+
+_MUL_DEV = jnp.asarray(_MUL)            # [256, 256] uint8
+_PHI_DEV = jnp.asarray(PHI_8_TABLE)     # [256, 2] uint64
+
+
+def _gf8_mul_dev(a, b):
+    """Elementwise F8 multiply on device via the 256x256 table gather."""
+    return _MUL_DEV[a.astype(jnp.int32), b.astype(jnp.int32)]
+
+
+def _fft_dev(v, tw, k: int):
+    """Iterative DIF additive-NTT over F8 (device); v: uint8 [N, 2^k]. Equivalent
+    to the recursive `_fft`: level L butterflies 2^L blocks with binary-heap
+    twiddles tw[2^L-1 : 2^(L+1)-1]."""
+    n, ell = v.shape[0], 1 << k
+    for level in range(k):
+        nn, block = 1 << level, ell >> level
+        half = block // 2
+        lam = tw[(1 << level) - 1:(1 << (level + 1)) - 1]      # [nn]
+        vr = v.reshape(n, nn, 2, half)
+        lo, hi = vr[:, :, 0, :], vr[:, :, 1, :]                # [n, nn, half]
+        lam_b = jnp.broadcast_to(lam[None, :, None], lo.shape)
+        new_lo = lo ^ _gf8_mul_dev(lam_b, hi)
+        new_hi = hi ^ new_lo
+        v = jnp.stack([new_lo, new_hi], axis=2).reshape(n, ell)
+    return v
+
+
+def _ifft_dev(v, tw, k: int):
+    """Iterative DIT inverse additive-NTT over F8 (device); deepest level first."""
+    n, ell = v.shape[0], 1 << k
+    for level in reversed(range(k)):
+        nn, block = 1 << level, ell >> level
+        half = block // 2
+        lam = tw[(1 << level) - 1:(1 << (level + 1)) - 1]
+        vr = v.reshape(n, nn, 2, half)
+        lo, hi = vr[:, :, 0, :], vr[:, :, 1, :]
+        lam_b = jnp.broadcast_to(lam[None, :, None], hi.shape)
+        new_hi = hi ^ lo
+        new_lo = lo ^ _gf8_mul_dev(lam_b, new_hi)
+        v = jnp.stack([new_lo, new_hi], axis=2).reshape(n, ell)
+    return v
+
+
+@functools.partial(jax.jit, static_argnums=(3,))
+def _extend_and_phi(a, b, c, k_skip, tw_s, tw_l):
+    """Extend a/b/c from S to Lambda (inv-NTT then fwd-NTT), F8-mul a·b, and
+    phi8-embed both into F128. No field mul → jit-cacheable independent of `mul`.
+    a/b/c: uint8 [N, ell] -> (phi_ab, phi_c) uint64 [N, ell, 2]."""
+    a_l = _fft_dev(_ifft_dev(a, tw_s, k_skip), tw_l, k_skip)
+    b_l = _fft_dev(_ifft_dev(b, tw_s, k_skip), tw_l, k_skip)
+    c_l = _fft_dev(_ifft_dev(c, tw_s, k_skip), tw_l, k_skip)
+    ab = _gf8_mul_dev(a_l, b_l)
+    return _PHI_DEV[ab.astype(jnp.int32)], _PHI_DEV[c_l.astype(jnp.int32)]
+
+
+_ACCUM_CACHE: dict = {}
+
+
+def _accum(mul):
+    """jit'd eq-accumulator p[s] = Σ_x eq[x]·phi[x,s], cached per `mul` (→ clmad)."""
+    fn = _ACCUM_CACHE.get(mul)
+    if fn is None:
+        fn = jax.jit(lambda eqx, phi: sumcheck._xor_reduce(mul(eqx, phi), axis=0))
+        _ACCUM_CACHE[mul] = fn
+    return fn
+
+
+# ---------------------------------------------------------------------------
 # round1_naive — the zerocheck round-1 URM reference (== the wire round1_ab/c).
 # ---------------------------------------------------------------------------
 
@@ -203,24 +279,17 @@ def round1_naive(a_bits, b_bits, c_bits, m: int, k_skip: int, r, mul=field.mul):
     """
     ell = 1 << k_skip
     n_chunks = 1 << (m - k_skip)
-    ntt_s = AdditiveNttGf8(k_skip, 0)        # S = {0..ell-1}
-    ntt_l = AdditiveNttGf8(k_skip, ell)      # Lambda = {ell..2*ell-1}
+    # F8 NTT + a·b + phi8 on the GPU (the URM was the prover's #1 host bottleneck);
+    # twiddles are tiny (2^k-1 entries) so they're computed on host once.
+    tw_s = jnp.asarray(_compute_twiddles(k_skip, 0))     # S = {0..ell-1}
+    tw_l = jnp.asarray(_compute_twiddles(k_skip, ell))   # Lambda = {ell..2*ell-1}
+    a = jnp.asarray(np.asarray(a_bits, np.uint8).reshape(n_chunks, ell))
+    b = jnp.asarray(np.asarray(b_bits, np.uint8).reshape(n_chunks, ell))
+    c = jnp.asarray(np.asarray(c_bits, np.uint8).reshape(n_chunks, ell))
 
-    a = np.asarray(a_bits, np.uint8).reshape(n_chunks, ell)
-    b = np.asarray(b_bits, np.uint8).reshape(n_chunks, ell)
-    c = np.asarray(c_bits, np.uint8).reshape(n_chunks, ell)
-
-    a_l = ntt_l.forward(ntt_s.inverse(a))    # extend each row from S to Lambda
-    b_l = ntt_l.forward(ntt_s.inverse(b))
-    c_l = ntt_l.forward(ntt_s.inverse(c))
-    ab = gf8_mul(a_l, b_l)                    # F8 [n_chunks, ell]
-
-    phi_ab = jnp.asarray(phi8(ab))           # F128 [n_chunks, ell, 2]
-    phi_c = jnp.asarray(phi8(c_l))
+    phi_ab, phi_c = _extend_and_phi(a, b, c, k_skip, tw_s, tw_l)  # [n_chunks, ell, 2]
     r = np.asarray(r, dtype=np.uint64)
-    eq_full = sumcheck.build_eq(jnp.asarray(r[k_skip:]), mul=mul)  # [n_chunks, 2]
-    eqx = eq_full[:, None, :]                # [n_chunks, 1, 2]
+    eqx = sumcheck.build_eq(jnp.asarray(r[k_skip:]), mul=mul)[:, None, :]  # [n_chunks, 1, 2]
 
-    p_ab = sumcheck._xor_reduce(mul(eqx, phi_ab), axis=0)  # [ell, 2]
-    p_c = sumcheck._xor_reduce(mul(eqx, phi_c), axis=0)
-    return np.asarray(p_ab), np.asarray(p_c)
+    accum = _accum(mul)
+    return np.asarray(accum(eqx, phi_ab)), np.asarray(accum(eqx, phi_c))
