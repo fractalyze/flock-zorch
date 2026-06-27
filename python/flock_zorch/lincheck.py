@@ -24,7 +24,7 @@ import jax
 import jax.numpy as jnp
 
 from flock_zorch import field
-from flock_zorch.sumcheck import build_eq, _xor_reduce, ONE
+from flock_zorch.sumcheck import build_eq, build_eq_fused, _xor_reduce, ONE
 from flock_zorch.zerocheck import _lagrange_weights, _to_int, _to_lohi
 from flock_zorch.challenger import Challenger
 
@@ -113,7 +113,7 @@ def prove(z_packed_bytes, a_dense, b_dense, x_ab, m, k_log, k_skip,
     comb = fold_alpha_batched(alpha, jnp.asarray(a_dense), jnp.asarray(b_dense), eq_inner, mul)
     # SparseMatrixCircuit::new has const_pin = None -> no β step.
 
-    eq_outer = build_eq(jnp.asarray(x_ab["x_outer"]), mul=mul)
+    eq_outer = build_eq_fused(jnp.asarray(x_ab["x_outer"]), mul=mul)
     z_vec = partial_fold_packed_z(z_packed_bytes, m, k_log, eq_outer, mul)
 
     rounds = []

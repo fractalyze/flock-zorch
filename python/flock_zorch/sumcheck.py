@@ -54,6 +54,22 @@ def build_eq(r, mul=field.mul):
     return t
 
 
+_BUILD_EQ_CACHE: dict = {}
+
+
+def build_eq_fused(r, mul=field.mul):
+    """`build_eq` fused into ONE kernel (cached per `mul`). Byte-identical to
+    `build_eq`, for eager call sites (round-1 URM, lincheck `eq_outer`) where the
+    n doubling layers would otherwise dispatch eagerly with per-layer HBM
+    materialization (~5 ms at n=20 vs ~0.2 ms fused). Inside an outer jit just call
+    `build_eq` directly — it already fuses there."""
+    fn = _BUILD_EQ_CACHE.get(mul)
+    if fn is None:
+        fn = jax.jit(lambda rr: build_eq(rr, mul=mul))
+        _BUILD_EQ_CACHE[mul] = fn
+    return fn(jnp.asarray(r))
+
+
 def fold_single(a, challenge, mul=field.mul):
     """Bind the low variable of one multilinear at `challenge` (flock
     `fold_in_place_single`): `out[x] = a[2x] + challenge·(a[2x+1] + a[2x])`.

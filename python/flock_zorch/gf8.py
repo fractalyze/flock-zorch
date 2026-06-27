@@ -316,7 +316,7 @@ def round1_rows(a, b, c, m: int, k_skip: int, r, mul=field.mul):
     tw_s = jnp.asarray(_compute_twiddles(k_skip, 0))     # S = {0..ell-1}
     tw_l = jnp.asarray(_compute_twiddles(k_skip, ell))   # Lambda = {ell..2*ell-1}
     r = np.asarray(r, dtype=np.uint64)
-    eqx = sumcheck.build_eq(jnp.asarray(r[k_skip:]), mul=mul)[:, None, :]  # [n_chunks, 1, 2]
+    eqx = sumcheck.build_eq_fused(jnp.asarray(r[k_skip:]), mul=mul)[:, None, :]  # [n_chunks, 1, 2]
     p_ab, p_c = _round1_core(mul)(a, b, c, k_skip, tw_s, tw_l, eqx)  # fused extend+phi+accum
     return np.asarray(p_ab), np.asarray(p_c)
 
