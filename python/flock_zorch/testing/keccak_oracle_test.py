@@ -23,6 +23,7 @@ jax.config.update("jax_enable_x64", True)
 
 from flock_zorch import field, pcs_commit, zerocheck, prover  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
+from flock_zorch.keccak_lincheck import KeccakLincheckCircuit  # noqa: E402
 
 ART = Path(__file__).resolve().parents[3] / "artifacts"
 
@@ -79,7 +80,12 @@ def run(mul):
     wm = np.array([np.concatenate([a, b]) for a, b in g["zc"]["mlv"]])
     results.append(("zerocheck multilinear_rounds", np.array_equal(gm, wm)))
     results.append(("zerocheck final_c", np.array_equal(zc["final_c_eval"], g["zc"]["fc"])))
-    print(f"  (walker probes available for M1: {len(g['probes'])}, eq len {g['probes'][0]['eq'].shape[0]})")
+
+    # ---- Stage W: the M1 walker port — KeccakLincheckCircuit.fold_alpha_batched
+    circ = KeccakLincheckCircuit()
+    for i, p in enumerate(g["probes"]):
+        comb = circ.fold_alpha_batched(p["alpha"], p["eq"], mul=mul)
+        results.append((f"walker probe {i} (fold_alpha_batched)", np.array_equal(comb, p["comb"])))
     return m, results
 
 
@@ -89,7 +95,7 @@ def main() -> int:
     allok = True
     for nm, ok in results:
         print(f"  {'PASS' if ok else 'FAIL'}  {nm}"); allok = allok and ok
-    print(f"keccak stages A-B (commit + real-witness zerocheck) vs flock (m={m}): "
+    print(f"keccak stages A-B-W (commit + real-witness zerocheck + walker) vs flock (m={m}): "
           f"{'PASS' if allok else 'FAIL'}")
     return 0 if allok else 1
 
