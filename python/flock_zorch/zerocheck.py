@@ -16,7 +16,10 @@ PYTHONPATH.
 """
 from __future__ import annotations
 
+import functools
+
 import numpy as np
+import jax
 import jax.numpy as jnp
 
 from flock_zorch import field, gf8, sumcheck
@@ -86,18 +89,41 @@ def _interpolate_at_z_on_lambda(values_int: list[int], k_skip: int, z: int) -> i
     return acc
 
 
+@functools.partial(jax.jit, static_argnums=(1, 2))
+def _fold_at_z_dev(rows, m: int, k_skip: int, w):
+    """a_mlv[x_rest] = Σ_s witness[x_rest·ell + s]·L_s(z) (flock `fold_at_z_naive`),
+    on device. rows: uint8 [2^(m-k_skip), ell]; w: uint64 [ell, 2] -> [n_chunks, 2].
+
+    Select-and-XOR-reduce: the `[n_chunks, ell, 2]` intermediate (≈1 GB at m=26) is
+    fused on the GPU instead of materialized in host numpy (the old path's bottleneck)."""
+    masked = rows[:, :, None].astype(jnp.uint64) * w[None, :, :]  # 0 or w[s]
+    return sumcheck._xor_reduce(masked, axis=1)
+
+
 def _fold_at_z(bits, m: int, k_skip: int, weights: list[int]) -> np.ndarray:
-    """a_mlv[x_rest] = Σ_s witness[x_rest·ell + s]·L_s(z) (flock `fold_at_z_naive`).
-    Returns uint64 [2^(m-k_skip), 2]."""
     ell = 1 << k_skip
     n_chunks = 1 << (m - k_skip)
-    rows = np.asarray(bits, np.uint8).reshape(n_chunks, ell)
-    w = np.stack([_to_lohi(x) for x in weights])  # [ell, 2]
-    masked = w[None, :, :] * rows[:, :, None]      # [n_chunks, ell, 2], 0 or w[s]
-    return np.bitwise_xor.reduce(masked, axis=1).astype(np.uint64)
+    rows = jnp.asarray(np.asarray(bits, np.uint8).reshape(n_chunks, ell))
+    w = jnp.asarray(np.stack([_to_lohi(x) for x in weights]))  # [ell, 2]
+    return _fold_at_z_dev(rows, m, k_skip, w)
 
 
 _ONE = np.array([1, 0], dtype=np.uint64)
+
+# Module-level jit cache for the per-round field ops, keyed by the `mul` callable.
+# Defining these ONCE (not per prove_packed call) lets jax reuse compiled kernels
+# across proofs and across rounds of the same shape — otherwise every call makes
+# fresh lambdas and recompiles all n_mlv round kernels from scratch.
+_JIT_CACHE: dict = {}
+
+
+def _jit_round_fold(mul):
+    fns = _JIT_CACHE.get(mul)
+    if fns is None:
+        fns = (jax.jit(lambda a, b, rr: sumcheck.round_pair(a, b, rr, mul=mul)),
+               jax.jit(lambda a, b, rr: sumcheck.fold_pair(a, b, rr, mul=mul)))
+        _JIT_CACHE[mul] = fns
+    return fns
 
 
 def prove_packed(a_bits, b_bits, c_bits, m: int, domain: bytes, mul=field.mul) -> dict:
@@ -132,12 +158,17 @@ def prove_packed(a_bits, b_bits, c_bits, m: int, domain: bytes, mul=field.mul) -
     round1_c_int = [_to_int(round1_c[i]) for i in range(round1_c.shape[0])]
     final_c_eval = _to_lohi(_interpolate_at_z_on_lambda(round1_c_int, k_skip, z_int))
 
+    # Per-round field ops are jitted (values identical → byte-match preserved) so
+    # each round runs as ONE fused GPU kernel instead of eager op-by-op dispatch.
+    # Module-level cache → kernels compile once and are reused across proofs.
+    _round, _fold = _jit_round_fold(mul)
+
     # ---- round 2: fold witness at z + first multilinear message ----
     weights = _lagrange_weights(k_skip, z_int, 0)  # S-domain
     a_mlv = jnp.asarray(_fold_at_z(a_bits, m, k_skip, weights))
     b_mlv = jnp.asarray(_fold_at_z(b_bits, m, k_skip, weights))
     mlv_arg = np.concatenate([_ONE[None, :], r[k_skip + 1:m]], axis=0)  # [n_mlv, 2]
-    msg1, msginf = sumcheck.round_pair(a_mlv, b_mlv, jnp.asarray(mlv_arg), mul=mul)
+    msg1, msginf = _round(a_mlv, b_mlv, jnp.asarray(mlv_arg))
     rounds = [(np.asarray(msg1), np.asarray(msginf))]
     ch.observe_f128(rounds[0][0])
     ch.observe_f128(rounds[0][1])
@@ -146,15 +177,15 @@ def prove_packed(a_bits, b_bits, c_bits, m: int, domain: bytes, mul=field.mul) -
     # ---- rounds 3..(n_mlv+1): fold at ρ_prev, then next message ----
     for i in range(n_mlv - 1):
         r_next = np.concatenate([_ONE[None, :], r[k_skip + i + 2:m]], axis=0)
-        a_mlv, b_mlv = sumcheck.fold_pair(a_mlv, b_mlv, jnp.asarray(rhos[i]), mul=mul)
-        m1, mi = sumcheck.round_pair(a_mlv, b_mlv, jnp.asarray(r_next), mul=mul)
+        a_mlv, b_mlv = _fold(a_mlv, b_mlv, jnp.asarray(rhos[i]))
+        m1, mi = _round(a_mlv, b_mlv, jnp.asarray(r_next))
         rounds.append((np.asarray(m1), np.asarray(mi)))
         ch.observe_f128(rounds[-1][0])
         ch.observe_f128(rounds[-1][1])
         rhos.append(ch.sample_f128())
 
     # ---- final binding at ρ_last ----
-    a_mlv, b_mlv = sumcheck.fold_pair(a_mlv, b_mlv, jnp.asarray(rhos[-1]), mul=mul)
+    a_mlv, b_mlv = _fold(a_mlv, b_mlv, jnp.asarray(rhos[-1]))
     final_a_eval = np.asarray(a_mlv)[0]
     final_b_eval = np.asarray(b_mlv)[0]
     ch.observe_f128(final_a_eval)

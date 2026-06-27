@@ -22,14 +22,20 @@ def merkle_root(leaves) -> np.ndarray:
 
     leaves: uint8 [n_leaves, leaf_size] (n_leaves a power of two). Returns uint8
     [32], byte-identical to flock's `merkle_root(data, n_leaves)`.
+
+    Device-resident: nodes stay on the GPU across all log2(n_leaves) levels (only
+    one host copy of the final root). The earlier per-level `np.asarray`/`jnp.asarray`
+    round-trip was catastrophic (~5 s for 2048 leaves — re-pad on host each level).
     """
-    nodes = sha256.digest(leaves)  # [n_leaves, 32]  (leaf hashes)
-    n = nodes.shape[0]
+    leaves = jnp.asarray(leaves, dtype=jnp.uint8)
+    leaf_size = int(leaves.shape[1])
+    nodes = sha256.digest_device(leaves, leaf_size)  # [n, 32] device
+    n = int(nodes.shape[0])
     while n > 1:
-        pairs = jnp.asarray(nodes).reshape(n // 2, 64)  # left ‖ right (64-byte preimage)
-        nodes = sha256.digest(pairs)                    # [n/2, 32]
+        pairs = nodes.reshape(n // 2, 64)               # left ‖ right (stays on device)
+        nodes = sha256.digest_device(pairs, 64)         # [n/2, 32] device
         n //= 2
-    return np.asarray(nodes).reshape(32)
+    return np.asarray(nodes).reshape(32)                # single host copy of the root
 
 
 def merkle_root_from_flat(data, n_leaves: int) -> np.ndarray:
