@@ -15,46 +15,65 @@ r_dprime[7]. Requires `jax_enable_x64`.
 """
 from __future__ import annotations
 
+import functools
+
 import numpy as np
+import jax
 import jax.numpy as jnp
 
 from flock_zorch import field, sumcheck
 from flock_zorch.challenger import Challenger
 
+U64 = jnp.uint64
 LOG_PACKING = 7
 LABEL = b"flock-ring-switch-v0"
 _W64 = (np.uint64(1) << np.arange(64, dtype=np.uint64))
 
 
+def _to_bits_dev(arr):
+    """jnp uint64 [n, 2] F128 -> uint64 [n, 128]: bit r (r<64 from lo, else hi). Device."""
+    r = jnp.arange(64, dtype=U64)
+    lo = (arr[:, 0:1] >> r) & U64(1)
+    hi = (arr[:, 1:2] >> r) & U64(1)
+    return jnp.concatenate([lo, hi], axis=1)   # [n, 128]
+
+
 def _to_bits(arr: np.ndarray) -> np.ndarray:
-    """uint64 [n, 2] F128 -> uint8 [n, 128]: bit (r<64 from lo, else hi)."""
+    """uint64 [n, 2] -> uint8 [n, 128] (host; only for the tiny 128×128 transpose)."""
     lo = ((arr[:, 0:1] >> np.arange(64, dtype=np.uint64)) & 1).astype(np.uint8)
     hi = ((arr[:, 1:2] >> np.arange(64, dtype=np.uint64)) & 1).astype(np.uint8)
-    return np.concatenate([lo, hi], axis=1)   # [n, 128]
+    return np.concatenate([lo, hi], axis=1)
 
 
 def _from_bits(bits: np.ndarray) -> np.ndarray:
-    """uint8 [n, 128] -> uint64 [n, 2] F128 (bit r at position r)."""
+    """uint8 [n, 128] -> uint64 [n, 2] F128 (bit r at position r) — host (small, 128×)."""
     b = bits.astype(np.uint64)
     lo = (b[:, :64] * _W64).sum(axis=1, dtype=np.uint64)
     hi = (b[:, 64:] * _W64).sum(axis=1, dtype=np.uint64)
     return np.stack([lo, hi], axis=1)
 
 
-def fold_1b_rows(packed_witness: np.ndarray, suffix_tensor, mul=field.mul) -> np.ndarray:
-    """s_hat_v[r] = Σ_i bit_r(witness[i]) · suffix_tensor[i]. Returns uint64 [128, 2]."""
-    bits = jnp.asarray(_to_bits(np.asarray(packed_witness)).astype(np.uint64))  # [n,128]
-    st = jnp.asarray(suffix_tensor)                                             # [n,2]
-    sel = bits[:, :, None] * st[:, None, :]    # bit_r·suffix[i]  [n,128,2]
-    return np.asarray(sumcheck._xor_reduce(sel, axis=0))                        # [128,2]
+@jax.jit
+def _fold_1b_rows_dev(witness, suffix):
+    """s_hat_v[r] = Σ_i bit_r(witness[i])·suffix[i]. witness/suffix [n,2] -> [128,2].
+    Device + jit (was eager over a ~1GB [n,128,2] intermediate — ring_switch's 84%)."""
+    bits = _to_bits_dev(witness)                       # [n,128]
+    return sumcheck._xor_reduce(bits[:, :, None] * suffix[:, None, :], axis=0)
+
+
+@jax.jit
+def _fold_b128_elems_dev(suffix, eq):
+    """rs_eq_ind[i] = Σ_b bit_b(suffix[i])·eq[b]. suffix [n,2], eq [128,2] -> [n,2]."""
+    bits = _to_bits_dev(suffix)                        # [n,128]
+    return sumcheck._xor_reduce(bits[:, :, None] * eq[None, :, :], axis=1)
+
+
+def fold_1b_rows(packed_witness, suffix_tensor, mul=field.mul) -> np.ndarray:
+    return np.asarray(_fold_1b_rows_dev(jnp.asarray(packed_witness), jnp.asarray(suffix_tensor)))
 
 
 def fold_b128_elems(suffix_tensor, eq_r_dprime, mul=field.mul) -> np.ndarray:
-    """rs_eq_ind[i] = Σ_b bit_b(suffix_tensor[i]) · eq_r_dprime[b]. uint64 [n, 2]."""
-    bits = jnp.asarray(_to_bits(np.asarray(suffix_tensor)).astype(np.uint64))   # [n,128]
-    eq = jnp.asarray(eq_r_dprime)                                               # [128,2]
-    sel = bits[:, :, None] * eq[None, :, :]    # [n,128,2]
-    return np.asarray(sumcheck._xor_reduce(sel, axis=1))                        # [n,2]
+    return np.asarray(_fold_b128_elems_dev(jnp.asarray(suffix_tensor), jnp.asarray(eq_r_dprime)))
 
 
 def tensor_algebra_transpose(s_hat_v) -> np.ndarray:
