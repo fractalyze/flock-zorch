@@ -11,31 +11,33 @@ width. Levels are sequential (log2(n_leaves) of them).
 """
 from __future__ import annotations
 
+import functools
+
 import numpy as np
+import jax
 import jax.numpy as jnp
 
 from flock_zorch import sha256
 
 
-def merkle_root(leaves) -> np.ndarray:
-    """32-byte Merkle root of `n_leaves` equal-sized leaves.
-
-    leaves: uint8 [n_leaves, leaf_size] (n_leaves a power of two). Returns uint8
-    [32], byte-identical to flock's `merkle_root(data, n_leaves)`.
-
-    Device-resident: nodes stay on the GPU across all log2(n_leaves) levels (only
-    one host copy of the final root). The earlier per-level `np.asarray`/`jnp.asarray`
-    round-trip was catastrophic (~5 s for 2048 leaves — re-pad on host each level).
-    """
-    leaves = jnp.asarray(leaves, dtype=jnp.uint8)
-    leaf_size = int(leaves.shape[1])
-    nodes = sha256.digest_device(leaves, leaf_size)  # [n, 32] device
-    n = int(nodes.shape[0])
+@functools.partial(jax.jit, static_argnums=(1, 2))
+def _root_dev(leaves, leaf_size: int, n_leaves: int):
+    """All log2(n) levels fused into ONE jit (the team's 'depth-d tree = d launches
+    → single While HLO' optimization). Each level is otherwise a separate jit launch
+    + a 64-round sequential compression → ~2 ms/level latency; fusing pipelines them."""
+    nodes = sha256._digest_words(sha256._pad_device(leaves, leaf_size))
+    n = n_leaves
     while n > 1:
-        pairs = nodes.reshape(n // 2, 64)               # left ‖ right (stays on device)
-        nodes = sha256.digest_device(pairs, 64)         # [n/2, 32] device
+        nodes = sha256._digest_words(sha256._pad_device(nodes.reshape(n // 2, 64), 64))
         n //= 2
-    return np.asarray(nodes).reshape(32)                # single host copy of the root
+    return nodes.reshape(32)
+
+
+def merkle_root(leaves) -> np.ndarray:
+    """32-byte Merkle root of `n_leaves` equal-sized leaves. uint8 [n_leaves, leaf_size]
+    -> uint8 [32], byte-identical to flock. All levels fused in one jit (`_root_dev`)."""
+    leaves = jnp.asarray(leaves, dtype=jnp.uint8)
+    return np.asarray(_root_dev(leaves, int(leaves.shape[1]), int(leaves.shape[0])))
 
 
 def merkle_root_from_flat(data, n_leaves: int) -> np.ndarray:
@@ -51,15 +53,20 @@ def merkle_tree(leaves) -> np.ndarray:
     leaves: uint8 [n, leaf_size] (n a power of two). Returns uint8 [2n-1, 32].
     Device-resident per level (one host copy of the concatenated tree)."""
     leaves = jnp.asarray(leaves, dtype=jnp.uint8)
-    leaf_size = int(leaves.shape[1])
-    nodes = sha256.digest_device(leaves, leaf_size)   # [n, 32] device
+    return np.asarray(_build_tree_dev(leaves, int(leaves.shape[1]), int(leaves.shape[0])))
+
+
+@functools.partial(jax.jit, static_argnums=(1, 2))
+def _build_tree_dev(leaves, leaf_size: int, n_leaves: int):
+    """Full flat tree, all levels fused into one jit (one launch instead of d)."""
+    nodes = sha256._digest_words(sha256._pad_device(leaves, leaf_size))   # [n,32]
     levels = [nodes]
-    n = int(nodes.shape[0])
+    n = n_leaves
     while n > 1:
-        nodes = sha256.digest_device(nodes.reshape(n // 2, 64), 64)  # [n/2, 32]
+        nodes = sha256._digest_words(sha256._pad_device(nodes.reshape(n // 2, 64), 64))
         levels.append(nodes)
         n //= 2
-    return np.asarray(jnp.concatenate(levels, axis=0))   # [2*n_leaves - 1, 32]
+    return jnp.concatenate(levels, axis=0)               # [2*n_leaves - 1, 32]
 
 
 def merkle_multi_proof(tree: np.ndarray, num_leaves: int, positions) -> np.ndarray:
