@@ -132,8 +132,64 @@ def _phi_bool(v):
     return _xr(v[_PRE_FWD], axis=1)
 
 
+def accumulate_subkeccak(eq, comb_a, comb_b, col_state0, col_state24, rows_t, z_const):
+    """One sub-keccak's contribution (walker phases 2-7, everything but the shared
+    const row) into the unscaled buffers `comb_a` (α-scaled side) and `comb_b`
+    (plain side). `col_state0`/`col_state24` (STATE_BITS,) and `rows_t` (N_T,
+    STATE_BITS) are the witness column positions for this sub-keccak; `z_const` is
+    the shared constant column. Shared by the single-keccak and keccak3 walkers
+    (flock keccak.rs `fold_alpha_batched` body == keccak3.rs `accumulate_subkeccak`)."""
+    # ---- state_0 input self-loops: A = [row], B = [z_const].
+    e_s0 = eq[col_state0]                  # (STATE_BITS, 2)
+    comb_a[col_state0] ^= e_s0             # col_state0 is a bijection → safe ^=
+    comb_b[z_const] ^= _xr(e_s0)
+
+    # ---- state_24 pin rows: A = L_24[j], B = [z_const]. vec_pin[j] = eq[row].
+    vec_pin = eq[col_state24]              # (STATE_BITS, 2)
+    comb_b[z_const] ^= _xr(vec_pin)
+
+    # ---- t-AND rows: per-round χ marginals on state_r positions.
+    e_t = eq[rows_t]                       # (N_T, STATE_BITS, 2)
+    chi_a = np.zeros((N_T, STATE_BITS, 2), np.uint64)
+    chi_b = np.zeros((N_T, STATE_BITS, 2), np.uint64)
+    for r in range(N_T):
+        np.bitwise_xor.at(chi_a[r], _PRE_A.ravel(), np.repeat(e_t[r], 11, axis=0))
+        np.bitwise_xor.at(chi_b[r], _PRE_B.ravel(), np.repeat(e_t[r], 11, axis=0))
+    comb_a[z_const] ^= _xr(e_t.reshape(-1, 2))   # α · sum_eq_t
+
+    # ---- Round-constant accumulation (GF(2) state machine → RC_24).
+    rc = np.zeros(STATE_BITS, np.uint64)   # current RC_r as a 0/1 mask
+    rc_a = np.zeros(2, np.uint64)
+    rc_b = np.zeros(2, np.uint64)
+    for r in range(N_T):
+        mask = rc[:, None]
+        rc_a ^= _xr(chi_a[r] * mask)
+        rc_b ^= _xr(chi_b[r] * mask)
+        rc = _phi_bool(rc)
+        rc[_RC_TOGGLE_IDX] ^= (np.uint64(ROUND_CONSTANTS[r]) >> _Z_BITS) & np.uint64(1)
+    rc_pin = _xr(vec_pin * rc[:, None])
+    comb_a[z_const] ^= rc_a
+    comb_b[z_const] ^= rc_b
+    comb_a[z_const] ^= rc_pin
+
+    # ---- Transpose recurrence, A side. K^A_24 = vec_pin → t_23 col.
+    comb_a[rows_t[N_T - 1]] ^= vec_pin
+    k_a = _phi_t(vec_pin) ^ chi_a[N_T - 1]          # K^A_23 = φᵀ(K^A_24) ⊕ χ_{23,A}
+    for r in range(N_T - 1, 0, -1):                  # r = 23 .. 1
+        comb_a[rows_t[r - 1]] ^= k_a                 # K^A_r → t_{r-1} col
+        k_a = _phi_t(k_a) ^ chi_a[r - 1]
+    comb_a[col_state0] ^= k_a                        # K^A_0 → state_0 col
+
+    # ---- Transpose recurrence, B side. K^B_24 = 0, so K^B_23 = χ_{23,B}.
+    k_b = chi_b[N_T - 1].copy()
+    for r in range(N_T - 1, 0, -1):
+        comb_b[rows_t[r - 1]] ^= k_b
+        k_b = _phi_t(k_b) ^ chi_b[r - 1]
+    comb_b[col_state0] ^= k_b
+
+
 class KeccakLincheckCircuit:
-    """The procedural Keccak lincheck walker (flock `KeccakLincheckCircuit`)."""
+    """The procedural single-keccak lincheck walker (flock `KeccakLincheckCircuit`)."""
 
     n_cols = K
     const_pin = Z_CONST  # const-wire pin column (lincheck.prove applies +β here)
@@ -144,58 +200,13 @@ class KeccakLincheckCircuit:
         comb_a = np.zeros((K, 2), np.uint64)  # α-scaled (A-side), accumulated unscaled
         comb_b = np.zeros((K, 2), np.uint64)  # plain (B-side)
 
-        # ---- Row 0 (const): A = [Z_CONST], B = [Z_CONST].
+        accumulate_subkeccak(eq, comb_a, comb_b, _COL_STATE0, _COL_STATE24, _ROWS_T, Z_CONST)
+
+        # ---- Row 0 (const): A = [Z_CONST], B = [Z_CONST]. (XOR is commutative, so
+        # adding it after the sub-keccak body is bit-identical to flock's row-0-first.)
         e0 = eq[Z_CONST]
         comb_a[Z_CONST] ^= e0
         comb_b[Z_CONST] ^= e0
-
-        # ---- state_0 input self-loops: A = [row], B = [Z_CONST].
-        e_s0 = eq[_COL_STATE0]                 # (STATE_BITS, 2)
-        comb_a[_COL_STATE0] ^= e_s0            # _COL_STATE0 is a bijection → safe ^=
-        comb_b[Z_CONST] ^= _xr(e_s0)
-
-        # ---- state_24 pin rows: A = L_24[j], B = [Z_CONST]. vec_pin[j] = eq[row].
-        vec_pin = eq[_COL_STATE24]             # (STATE_BITS, 2)
-        comb_b[Z_CONST] ^= _xr(vec_pin)
-
-        # ---- t-AND rows: per-round χ marginals on state_r positions.
-        e_t = eq[_ROWS_T]                      # (N_T, STATE_BITS, 2)
-        chi_a = np.zeros((N_T, STATE_BITS, 2), np.uint64)
-        chi_b = np.zeros((N_T, STATE_BITS, 2), np.uint64)
-        for r in range(N_T):
-            np.bitwise_xor.at(chi_a[r], _PRE_A.ravel(), np.repeat(e_t[r], 11, axis=0))
-            np.bitwise_xor.at(chi_b[r], _PRE_B.ravel(), np.repeat(e_t[r], 11, axis=0))
-        comb_a[Z_CONST] ^= _xr(e_t.reshape(-1, 2))   # α · sum_eq_t
-
-        # ---- Round-constant accumulation (GF(2) state machine → RC_24).
-        rc = np.zeros(STATE_BITS, np.uint64)   # current RC_r as a 0/1 mask
-        rc_a = np.zeros(2, np.uint64)
-        rc_b = np.zeros(2, np.uint64)
-        for r in range(N_T):
-            mask = rc[:, None]
-            rc_a ^= _xr(chi_a[r] * mask)
-            rc_b ^= _xr(chi_b[r] * mask)
-            rc = _phi_bool(rc)
-            rc[_RC_TOGGLE_IDX] ^= (np.uint64(ROUND_CONSTANTS[r]) >> _Z_BITS) & np.uint64(1)
-        rc_pin = _xr(vec_pin * rc[:, None])
-        comb_a[Z_CONST] ^= rc_a
-        comb_b[Z_CONST] ^= rc_b
-        comb_a[Z_CONST] ^= rc_pin
-
-        # ---- Transpose recurrence, A side. K^A_24 = vec_pin → t_23 col.
-        comb_a[_ROWS_T[N_T - 1]] ^= vec_pin
-        k_a = _phi_t(vec_pin) ^ chi_a[N_T - 1]          # K^A_23 = φᵀ(K^A_24) ⊕ χ_{23,A}
-        for r in range(N_T - 1, 0, -1):                  # r = 23 .. 1
-            comb_a[_ROWS_T[r - 1]] ^= k_a                # K^A_r → t_{r-1} col
-            k_a = _phi_t(k_a) ^ chi_a[r - 1]
-        comb_a[_COL_STATE0] ^= k_a                       # K^A_0 → state_0 col
-
-        # ---- Transpose recurrence, B side. K^B_24 = 0, so K^B_23 = χ_{23,B}.
-        k_b = chi_b[N_T - 1].copy()
-        for r in range(N_T - 1, 0, -1):
-            comb_b[_ROWS_T[r - 1]] ^= k_b
-            k_b = _phi_t(k_b) ^ chi_b[r - 1]
-        comb_b[_COL_STATE0] ^= k_b
 
         # comb = α·comb_a ⊕ comb_b — one field mul (GF(2¹²⁸) mul distributes over XOR).
         comb = field.add(mul(jnp.asarray(alpha), jnp.asarray(comb_a)), jnp.asarray(comb_b))
