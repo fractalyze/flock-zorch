@@ -20,7 +20,6 @@ import numpy as np
 import jax.numpy as jnp
 
 from flock_zorch import field, sumcheck, merkle, ntt as ntt_mod, pcs_open
-from flock_zorch.challenger import Challenger
 
 LABEL = b"flock-basefold-v0"
 
@@ -46,10 +45,11 @@ def _root_f128(root):
 
 
 def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_size,
-          n_queries, domain=b"flock-basefold-test", mul=field.mul) -> dict:
-    """Run BaseFold open. z_packed=a_init uint64 [2^log_msg,2]; b same; codeword
-    uint64 [2^k_code · num_ntts, 2]; initial_tree uint8 [2·n_leaves-1, 32] (from
-    commit). Returns the BaseFoldProof fields, byte-identical to flock."""
+          n_queries, ch, mul=field.mul) -> dict:
+    """Run BaseFold open on the SHARED challenger `ch` (so it composes in
+    pcs::open after ring-switch). z_packed=a_init uint64 [2^log_msg,2]; b same;
+    codeword uint64 [2^k_code · num_ntts, 2]; initial_tree uint8 [2·n_leaves-1, 32]
+    (from commit). Returns the BaseFoldProof fields, byte-identical to flock."""
     log_dim = k_code - log_inv_rate
     log_msg = log_batch_size + log_dim
     num_ntts = 1 << log_batch_size
@@ -60,7 +60,6 @@ def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_s
     post_rb_leaf_f128 = 1 << arity_0
     twiddles = jnp.asarray(ntt_mod.compute_twiddles(k_code)) if log_dim > 0 else None
 
-    ch = Challenger(domain)
     ch.observe_label(LABEL)
 
     a = jnp.asarray(z_packed)
