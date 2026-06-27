@@ -174,13 +174,17 @@ def _jit_round_fold(mul):
     return fns
 
 
-def prove_packed(a_bits, b_bits, c_bits, m: int, domain: bytes, mul=field.mul) -> dict:
+def prove_packed(a_bits, b_bits, c_bits, m: int, domain: bytes = None, mul=field.mul, ch=None) -> dict:
     """Returns the ZerocheckProof fields + the claim's z / mlv_challenges / r_rest
-    (the latter for the oracle's localization cross-checks)."""
+    (the latter for the oracle's localization cross-checks).
+
+    Pass a shared `ch` (the e2e challenger carrying commit/bind state) to thread
+    Fiat-Shamir through the fused prover; else a fresh Challenger(domain) is made."""
     k_skip, n_mlv = K_SKIP, m - K_SKIP
     assert m >= k_skip + N_INNER, f"m must be >= {k_skip + N_INNER}"
 
-    ch = Challenger(domain)
+    if ch is None:
+        ch = Challenger(domain)
     ch.observe_label(LABEL)
     r_skip = ch.sample_f128_vec(k_skip)               # [6, 2]
     r_outer = ch.sample_f128_vec(m - k_skip - N_INNER)  # [m-13, 2]

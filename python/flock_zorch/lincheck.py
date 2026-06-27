@@ -100,23 +100,31 @@ def _bind_top(v, r, mul=field.mul):
 
 
 def prove(z_packed_bytes, a_dense, b_dense, x_ab, m, k_log, k_skip,
-          domain=b"flock-test-v0", mul=field.mul):
+          domain=b"flock-test-v0", mul=field.mul, ch=None, capture=False):
     """Run lincheck. x_ab = dict(z_skip:[2], x_inner_rest:[*,2], x_outer:[*,2]).
-    Returns (rounds: list[(e1,einf)], z_partial: [2^k_skip, 2]). Byte-identical to
-    flock `lincheck::prove` (SparseMatrixCircuit, no const-pin)."""
+    Byte-identical to flock `lincheck::prove`/`prove_padded_capture_z_vec`
+    (SparseMatrixCircuit/CscCircuit, no const-pin).
+
+    Default returns (rounds, z_partial). With `capture=True` (the e2e fused
+    prover) also returns the post-sumcheck claim and the pre-sumcheck z_vec:
+    (rounds, z_partial, claim, z_vec_pre), where claim = dict(r_inner_skip,
+    r_inner_rest, w). Pass a shared `ch` (the e2e challenger carrying commit/
+    bind/zerocheck state) to thread Fiat-Shamir; else a fresh Challenger(domain)."""
     inner_rest = k_log - k_skip
-    ch = Challenger(domain)
+    if ch is None:
+        ch = Challenger(domain)
     ch.observe_label(LABEL)
     alpha = jnp.asarray(ch.sample_f128())
 
     eq_inner = build_quirky_eq_table(_to_int(x_ab["z_skip"]), x_ab["x_inner_rest"], k_skip, mul)
     comb = fold_alpha_batched(alpha, jnp.asarray(a_dense), jnp.asarray(b_dense), eq_inner, mul)
-    # SparseMatrixCircuit::new has const_pin = None -> no β step.
+    # SparseMatrixCircuit::new / CscCircuit have const_pin = None -> no β step.
 
     eq_outer = build_eq_fused(jnp.asarray(x_ab["x_outer"]), mul=mul)
     z_vec = partial_fold_packed_z(z_packed_bytes, m, k_log, eq_outer, mul)
+    z_vec_pre = np.asarray(z_vec) if capture else None  # pre-sumcheck (PCS open reuse)
 
-    rounds = []
+    rounds, r_rounds = [], []
     if inner_rest > 0:
         e1, einf = _round_eval(comb, z_vec, mul)
         for t in range(inner_rest):
@@ -124,8 +132,23 @@ def prove(z_packed_bytes, a_dense, b_dense, x_ab, m, k_log, k_skip,
             ch.observe_f128(einf)
             r = jnp.asarray(ch.sample_f128())
             rounds.append((np.asarray(e1), np.asarray(einf)))
+            r_rounds.append(r)
             comb = _bind_top(comb, r, mul)
             z_vec = _bind_top(z_vec, r, mul)
             if t + 1 < inner_rest:
                 e1, einf = _round_eval(comb, z_vec, mul)
-    return rounds, np.asarray(z_vec)
+    z_partial = np.asarray(z_vec)
+    if not capture:
+        return rounds, z_partial
+
+    # ---- claim derivation (flock prove_padded_inner steps 6-9) ----
+    ch.observe_f128_slice(z_partial)                      # 6. observe z_partial
+    r_inner_skip = ch.sample_f128()                       # 7. fresh z_skip AFTER
+    lam = _lagrange_weights(k_skip, _to_int(r_inner_skip), 0)  # 8. φ8 S-domain weights
+    lam_arr = jnp.asarray(np.stack([_to_lohi(x) for x in lam]))
+    w = np.asarray(_xor_reduce(mul(lam_arr, jnp.asarray(z_partial)), axis=0))  # inner_product
+    r_inner_rest = [np.asarray(r) for r in reversed(r_rounds)]  # 9. LSB-first
+    claim = {"r_inner_skip": np.asarray(r_inner_skip),
+             "r_inner_rest": np.stack(r_inner_rest) if r_inner_rest else np.zeros((0, 2), np.uint64),
+             "w": w}
+    return rounds, z_partial, claim, z_vec_pre

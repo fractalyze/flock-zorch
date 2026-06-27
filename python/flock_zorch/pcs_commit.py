@@ -39,6 +39,37 @@ def pack_witness(z_bits: np.ndarray, m: int) -> np.ndarray:
     return np.stack([lo, hi], axis=1)  # [n_packed, 2]
 
 
+def _encode_codeword(z_packed, m: int, log_inv_rate: int, log_batch_size: int, mul=field.mul):
+    """z_packed -> (codeword uint64 [2^k_code · num_ntts, 2], n_pos_code, num_ntts).
+    Zero-pad to 2^k_code positions, interleaved forward NTT (the shared commit/open
+    encode). Used by both `commit_root` and `commit`."""
+    log_msg = m - LOG_PACKING
+    log_dim = log_msg - log_batch_size
+    k_code = log_dim + log_inv_rate
+    num_ntts = 1 << log_batch_size
+    n_pos_msg = 1 << log_dim
+    n_pos_code = 1 << k_code
+
+    x = jnp.asarray(z_packed).reshape(n_pos_msg, num_ntts, 2)
+    pad = jnp.zeros((n_pos_code - n_pos_msg, num_ntts, 2), dtype=x.dtype)
+    codeword = jnp.concatenate([x, pad], axis=0).reshape(n_pos_code * num_ntts, 2)
+    tw = jnp.asarray(ntt_mod.compute_twiddles(k_code))
+    codeword = ntt_mod.forward_transform_interleaved(codeword, tw, k_code, num_ntts, mul=mul)
+    return codeword, n_pos_code, num_ntts
+
+
+def commit(z_packed, m: int, log_inv_rate: int, log_batch_size: int, mul=field.mul,
+           use_host_sha: bool = False):
+    """Full PCS commit: returns (root uint8[32], codeword uint64[.,2], tree uint8[2n-1,32]).
+    The codeword + tree are the prover_data the PCS open consumes. Byte-identical
+    to flock `pcs::commit` (root) + its ProverData (codeword, merkle_tree)."""
+    codeword, n_pos_code, num_ntts = _encode_codeword(z_packed, m, log_inv_rate, log_batch_size, mul)
+    cw_np = np.asarray(codeword)
+    leaves = cw_np.reshape(n_pos_code, num_ntts * 2).view(np.uint8)
+    tree = merkle.merkle_tree(leaves, use_host_sha=use_host_sha)
+    return tree[-1], cw_np, tree
+
+
 def commit_root(z_packed, m: int, log_inv_rate: int, log_batch_size: int, mul=field.mul,
                 use_host_sha: bool = False) -> np.ndarray:
     """32-byte Merkle root of the PCS commitment to `z_packed`.
