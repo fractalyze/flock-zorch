@@ -15,6 +15,10 @@ crate-type = ["rlib", "cdylib"]
 # and reference arithmetic ARE the oracle. flock-core is edition 2024 and
 # inherits from flock's own workspace.
 flock-core = { path = "../flock/crates/flock-core" }
+# The SHA-256 hash R1CS circuit + witness generator (and the BaseFold `prove`
+# entry) live in flock-prover; used by `dump_sha2` to produce the real-R1CS
+# golden + the ingested witness/matrices for the GPU sha256 prover.
+flock-prover = { path = "../flock/crates/flock-prover" }
 
 # Only for the CPU-baseline bench examples: hash leaves in parallel the way
 # flock's `merkle_tree` does (rayon par_iter over `hash_leaf`), so the SHA-256

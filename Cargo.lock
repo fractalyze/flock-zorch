@@ -162,10 +162,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "flock-prover"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "blake3",
+ "flock-core",
+ "rayon",
+ "serde",
+ "sha2",
+]
+
+[[package]]
 name = "flock-zorch"
 version = "0.1.0"
 dependencies = [
  "flock-core",
+ "flock-prover",
  "rayon",
 ]
 
