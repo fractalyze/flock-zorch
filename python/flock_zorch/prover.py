@@ -13,7 +13,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from flock_zorch import field, ring_switch, basefold, pcs_open, pcs_commit, zerocheck, lincheck
+from flock_zorch import field, ring_switch, basefold, pcs_open, pcs_commit, zerocheck, lincheck, ligerito
 from flock_zorch.challenger import Challenger  # noqa: F401  (re-exported for callers)
 
 
@@ -62,6 +62,27 @@ def open_batch(z_packed, codeword, init_tree, x_outers, k_code, log_inv_rate,
                         log_inv_rate, log_batch_size, n_queries, ch, mul=mul,
                         use_host_sha=use_host_sha)
     return {"ring_switches": s_hat_vs, "basefold": bf}
+
+
+def open_batch_ligerito(config, z_packed, codeword, init_tree, x_outers, ch,
+                        mul=field.mul, use_host_sha=False) -> dict:
+    """Batched dual-claim PCS open with the LIGERITO backend (flock
+    `open_batch_mixed_ligerito_with_precomputed_s_hat_v`) — the headline path.
+    Same combine as open_batch (Σ_i γ_i·rs_eq_ind_i → b_combined) but drives the
+    recursive Ligerito prover instead of a single BaseFold. target_combined =
+    Σ_i γ_i·sumcheck_claim_i. Returns {ring_switches, ligerito: LigeritoProof}."""
+    ch.observe_label(b"flock-pcs-open-batch-v0")
+    s_hat_vs, rs_eq_inds, sumcheck_claims, gammas = ring_switch.prove_batched(z_packed, x_outers, ch, mul=mul)
+    b_combined = jnp.asarray(rs_eq_inds[0])
+    for r in rs_eq_inds[1:]:
+        b_combined = field.add(b_combined, jnp.asarray(r))
+    target = jnp.zeros(2, jnp.uint64)
+    for g, sc in zip(gammas, sumcheck_claims):
+        target = field.add(target, mul(jnp.asarray(g), jnp.asarray(sc)))
+    lig = ligerito.recursive_prover_with_basis(
+        config, np.asarray(z_packed), np.asarray(b_combined), np.asarray(target),
+        codeword, init_tree, ch, mul=mul, use_host_sha=use_host_sha)
+    return {"ring_switches": s_hat_vs, "ligerito": lig}
 
 
 def prove_fast(z_packed, m, k_log, k_skip, useful_bits, a0, b0, z_lincheck, statement_digest,
