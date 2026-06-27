@@ -66,7 +66,7 @@ def _prod_axis1(mat):
     n = mat.shape[1]
     while n > 1:
         h = n // 2
-        prod = field.mul(mat[:, :h, :], mat[:, h:2 * h, :])
+        prod = _LMUL(mat[:, :h, :], mat[:, h:2 * h, :])
         if n % 2:
             prod = jnp.concatenate([prod, mat[:, 2 * h:, :]], axis=1)
         mat = prod
@@ -87,7 +87,7 @@ def _lag_numden(s, zf):
 
 @jax.jit
 def _lag_w(num, inv_den):
-    return field.mul(num, inv_den)
+    return _LMUL(num, inv_den)
 
 
 @jax.jit
@@ -97,8 +97,8 @@ def _batch_inv(a):
     sq = a
     result = jnp.broadcast_to(jnp.asarray(_ONE), a.shape)
     for _ in range(127):
-        sq = field.mul(sq, sq)
-        result = field.mul(result, sq)
+        sq = _LMUL(sq, sq)
+        result = _LMUL(result, sq)
     return result
 
 
@@ -145,6 +145,15 @@ def _fold_at_z(bits, m: int, k_skip: int, weights: list[int]) -> np.ndarray:
 
 
 _ONE = np.array([1, 0], dtype=np.uint64)
+
+# The small fixed-size Lagrange/inverse helpers below are deeply sequential
+# (254 muls for the Fermat inverse); the software fori_loop mul makes them ~190ms.
+# Route them through clmad when available (one hardware carryless-mul per step).
+try:
+    from flock_zorch import field_clmad as _fc
+    _LMUL = _fc.mul if _fc.available() else field.mul
+except Exception:  # noqa: BLE001
+    _LMUL = field.mul
 
 # Module-level jit cache for the per-round field ops, keyed by the `mul` callable.
 # Defining these ONCE (not per prove_packed call) lets jax reuse compiled kernels
