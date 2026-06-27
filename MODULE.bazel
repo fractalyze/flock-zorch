@@ -1,0 +1,56 @@
+"""flock-zorch — a GPU flock prover built on zorch's scheme-agnostic blocks.
+
+bzlmod module (bazel 9 dropped WORKSPACE). Mirrors the sp1-zorch / whir-zorch
+shape: a thin consumer repo that depends on fractalyze/zorch for the
+scheme-agnostic SNARK spine (SHA-256 Fiat-Shamir duplex, byte-SHA-256, Merkle
+commitment, sumcheck fold primitives, poly/eq, pcs fold/basefold skeleton) and
+adds ONLY the flock-specific pieces: the GHASH-basis GF(2^128) field (+ clmad
+FFI), the additive NTT over the φ8 basis, the F8 round-1 univariate skip, and
+the prove_packed / lincheck / open / proof assembly. Nothing flock-specific
+belongs in zorch — it lives here.
+
+Byte-identity to unmodified succinct flock is the non-negotiable gate; the
+golden fixtures are dumped from flock-core by the Rust `examples/dump_*.rs`.
+
+Note: GPU byte-match gates run under the zorch venv via `PYTHONPATH`, NOT under
+hermetic Bazel (the jax/zkx CUDA wheels + the clmad cubin are not hermetic — the
+same reason sp1-zorch's GPU checks are `verify_*` py_binary runnables, not
+hermetic `py_test`s). See README "Run the gates".
+"""
+
+module(
+    name = "flock_zorch",
+    version = "0.0.0",
+)
+
+bazel_dep(name = "rules_python", version = "1.7.0")
+
+# zorch is not published on a Bazel registry; pin it from GitHub so CI builds
+# are reproducible. For local dev against a working copy, add to .bazelrc.user
+# (gitignored):
+#   common --override_module=zorch=/home/jooman/fractalyze/zorch
+bazel_dep(name = "zorch", version = "0.0.0")
+git_override(
+    module_name = "zorch",
+    remote = "https://github.com/fractalyze/zorch.git",
+    # Keep the requirements.in wheel set in lockstep with this pin: the zkx
+    # binary-field GPU contract is a hard cut and CPU-only CI can't catch a
+    # desync. (Same pin sp1-zorch carries against the same venv wheel set.)
+    commit = "ea6248792d223bcb0492b2e5930d3001932c45da",
+)
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(
+    is_default = True,
+    python_version = "3.11",
+)
+
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+pip.parse(
+    # jax / jaxlib / zkx-cuda-pjrt are published on the Fractalyze index.
+    extra_pip_args = ["--extra-index-url=https://fractalyze.github.io/pypi/simple/"],
+    hub_name = "flock_zorch_pip",
+    python_version = "3.11",
+    requirements_lock = "//:requirements_lock_3_11.txt",
+)
+use_repo(pip, "flock_zorch_pip")

@@ -5,3 +5,6 @@ __pycache__/
 *.mlirbc
 *.pyc
 .mypy_cache/
+# Local, machine-specific Bazel overrides (the local zorch override).
+.bazelrc.user
+bazel-*

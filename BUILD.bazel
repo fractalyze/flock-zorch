@@ -1,0 +1,10 @@
+load("@rules_python//python:pip.bzl", "compile_pip_requirements")
+
+# `bazel run //:requirements` regenerates the lock from requirements.in.
+compile_pip_requirements(
+    name = "requirements",
+    src = "requirements.in",
+    requirements_txt = "requirements_lock_3_11.txt",
+)
+
+exports_files(["requirements_lock_3_11.txt"])
