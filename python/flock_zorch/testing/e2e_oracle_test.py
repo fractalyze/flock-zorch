@@ -167,6 +167,16 @@ def run(mul):
         all(np.array_equal(a, b) for a, b in zip(bf["epoch_multi_proofs"], g_bf["emp"]))
     results.append(("open bf epoch_multi_proofs", emp_ok))
 
+    # ---- Stage F: packaged prover.prove_fast reproduces the staged proof ----
+    a0 = np.eye(1 << k_log, dtype=np.uint64)
+    pf = prover.prove_fast(z_packed, m, k_log, k_skip, ub, a0, a0, zlc, stmt,
+                           LIR, LBS, mul=mul, use_host_sha=False)
+    _eq("prove_fast zc round1_ab", pf["zerocheck"]["round1_ab"], g_zc["r1ab"], results)
+    _eq("prove_fast lc z_partial", pf["lincheck"][1], g_lc["zp"], results)
+    _eq("prove_fast open ring_switch[1]", pf["pcs_open"]["ring_switches"][1], g_rs[1], results)
+    _eq("prove_fast open bf final_a", pf["pcs_open"]["basefold"]["final_a"], g_bf["fa"], results)
+    _eq("prove_fast claim_ab_value", pf["claim_ab_value"], g_ab["v"], results)
+
     return m, results
 
 
