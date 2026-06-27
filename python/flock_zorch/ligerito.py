@@ -18,7 +18,83 @@ from __future__ import annotations
 import numpy as np
 import jax.numpy as jnp
 
-from flock_zorch import field, ntt as ntt_mod, merkle
+from flock_zorch import field, ntt as ntt_mod, merkle, sumcheck, basefold
+
+
+def ceil_log2(x: int) -> int:
+    return (x - 1).bit_length()
+
+
+def sample_distinct_queries(ch, block_len: int, count: int) -> list[int]:
+    """flock `sample_distinct_queries`: sample F128, take (v.lo % block_len) until
+    `count` distinct, then sort ascending. Same challenger draw order as flock."""
+    assert count <= block_len
+    seen, out = set(), []
+    while len(out) < count:
+        v = ch.sample_f128()
+        q = int(v[0]) % block_len
+        if q not in seen:
+            seen.add(q); out.append(q)
+    out.sort()
+    return out
+
+
+class SumcheckProver:
+    """flock `pcs::ligerito::SumcheckProver` — the stateful interleaved sumcheck
+    driver over (f, combined_basis, t_r). Round message (u_0,u_2) == basefold._prime
+    (LSB even/odd split); fold == sumcheck.fold_single (LSB). introduce_new stages a
+    fresh basis; glue folds it into combined_basis with separation α."""
+
+    def __init__(self, f, b1, h1, mul):
+        self.mul = mul
+        self.f = jnp.asarray(f)
+        self.combined_basis = jnp.asarray(b1)
+        self.t_r = np.asarray(h1, np.uint64).reshape(2)
+        self.transcript: list = []
+        self._pending = None
+
+    def _msg(self, a, b):
+        u0, u2 = basefold._prime(a, b, self.mul)
+        m = (np.asarray(u0), np.asarray(u2))
+        self.transcript.append(m)
+        return m
+
+    @classmethod
+    def new(cls, f, b1, h1, mul):
+        s = cls(f, b1, h1, mul)
+        return s, s._msg(s.f, s.combined_basis)
+
+    @classmethod
+    def new_with_first_msg(cls, f, b1, h1, first_msg, mul):
+        s = cls(f, b1, h1, mul)
+        s.transcript.append(first_msg)
+        return s, first_msg
+
+    def fold(self, r):
+        rj = jnp.asarray(r)
+        self.f = sumcheck.fold_single(self.f, rj, self.mul)
+        self.combined_basis = sumcheck.fold_single(self.combined_basis, rj, self.mul)
+        return self._msg(self.f, self.combined_basis)
+
+    def introduce_new(self, b_new, h_new):
+        bn = jnp.asarray(b_new)
+        msg = self._msg(self.f, bn)
+        self._pending = (bn, np.asarray(h_new, np.uint64).reshape(2))
+        return msg
+
+    def introduce_new_with_eval(self, b_new):
+        bn = jnp.asarray(b_new)
+        h_new = np.asarray(sumcheck._xor_reduce(self.mul(self.f, bn), axis=0))  # Σ f·b_new
+        msg = self._msg(self.f, bn)
+        self._pending = (bn, h_new)
+        return msg, h_new
+
+    def glue(self, alpha):
+        bn, h_new = self._pending
+        self._pending = None
+        a = jnp.asarray(alpha)
+        self.combined_basis = field.add(self.combined_basis, self.mul(a, bn))
+        self.t_r = np.asarray(field.add(jnp.asarray(self.t_r), self.mul(a, jnp.asarray(h_new))))
 
 
 def ligero_commit(poly, log_msg_cols: int, log_num_interleaved: int, log_inv_rate: int,

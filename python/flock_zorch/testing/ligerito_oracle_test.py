@@ -20,6 +20,7 @@ import jax
 jax.config.update("jax_enable_x64", True)
 
 from flock_zorch import field, ligerito  # noqa: E402
+from flock_zorch.challenger import Challenger  # noqa: E402
 
 ART = Path(__file__).resolve().parents[3] / "artifacts"
 
@@ -39,6 +40,9 @@ class R:
     def fv(self): n = self.u(); return np.frombuffer(self.take(16 * n), np.uint64).reshape(n, 2).copy()
     def raw(self, n): return np.frombuffer(self.take(n), np.uint8).copy()
     def hv(self): n = self.u(); return np.frombuffer(self.take(32 * n), np.uint8).reshape(n, 32).copy()
+    def u64v(self): return [self.u() for _ in range(self.u())]
+    def rows(self): n = self.u(); return [self.fv() for _ in range(n)]
+    def pair(self): n = self.u(); return [(self.f(), self.f()) for _ in range(n)]
 
 
 def load():
@@ -53,6 +57,15 @@ def load():
     g["f"] = rd.fv(); g["b"] = rd.fv(); g["target"] = rd.f()
     g["l0_codeword"] = rd.fv(); g["l0_tree"] = rd.hv()
     g["initial_root"] = rd.raw(32)
+    # LigeritoProof
+    g["initial_proof"] = dict(opened_rows=rd.rows(), merkle_proof=rd.hv())
+    g["recursive_roots"] = rd.hv()
+    nrp = rd.u(); g["recursive_proofs"] = [dict(opened_rows=rd.rows(), merkle_proof=rd.hv()) for _ in range(nrp)]
+    g["final_proof"] = dict(yr=rd.fv(), opened_rows=rd.rows(), merkle_proof=rd.hv())
+    g["sumcheck_transcript"] = rd.pair()
+    g["grinding_nonces"] = rd.u64v()
+    g["ood_values"] = rd.fv()
+    g["fold_grinding_nonces"] = rd.u64v()
     return rd, g
 
 
@@ -67,6 +80,35 @@ def run(mul):
         cfg["log_inv_rates"][0], mul=mul)
     results.append(("ligero_commit L0 codeword", np.array_equal(mat, g["l0_codeword"])))
     results.append(("ligero_commit L0 root == initial_root", np.array_equal(tree[-1], g["initial_root"])))
+
+    # M1: lane folds (initial_k) + commit f^1 — shared challenger
+    log_n = g["log_n"]; initial_k = cfg["initial_k"]
+    ch = Challenger(b"flock-ligerito-test")
+    ch.observe_label(b"flock-ligerito-basis-v0")
+    ch.observe_f128(g["target"])
+    ch.observe_bytes(bytes(g["initial_root"]))
+    sc, start = ligerito.SumcheckProver.new(g["f"], g["b"], g["target"], mul)
+    ch.observe_f128(start[0]); ch.observe_f128(start[1])
+    fold_nonces = []
+    fb0 = cfg["fold_grinding_bits"][0]
+    for j in range(initial_k):
+        bits = max(fb0 - j, 0)
+        if bits > 0:
+            fold_nonces.append(ch.grind_pow(bits))
+        r = ch.sample_f128()
+        msg = sc.fold(r)
+        ch.observe_f128(msg[0]); ch.observe_f128(msg[1])
+    # commit f^1
+    n1 = log_n - initial_k
+    lni1 = cfg["recursive_ks"][0]
+    mat1, tree1 = ligerito.ligero_commit(sc.f, n1 - lni1, lni1, cfg["log_inv_rates"][1], mul=mul)
+
+    # gate the first initial_k+1 sumcheck messages + L1 root + lane fold nonces
+    got_tr = np.array([np.concatenate([a, b]) for a, b in sc.transcript])
+    want_tr = np.array([np.concatenate([a, b]) for a, b in g["sumcheck_transcript"][:initial_k + 1]])
+    results.append(("M1 lane-fold sumcheck msgs", np.array_equal(got_tr, want_tr)))
+    results.append(("M1 recursive_roots[0] (f^1 commit)", np.array_equal(tree1[-1], g["recursive_roots"][0])))
+    results.append(("M1 lane fold_grinding_nonces", fold_nonces == g["fold_grinding_nonces"][:len(fold_nonces)]))
     return g, results
 
 
