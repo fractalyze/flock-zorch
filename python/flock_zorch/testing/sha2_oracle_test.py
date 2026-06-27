@@ -21,7 +21,7 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
-from flock_zorch import field, pcs_commit, zerocheck, prover  # noqa: E402
+from flock_zorch import field, pcs_commit, zerocheck, lincheck, prover  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 
 ART = Path(__file__).resolve().parents[3] / "artifacts"
@@ -41,6 +41,7 @@ class R:
     def fv(self): n = self.u(); return np.frombuffer(self.take(16 * n), np.uint64).reshape(n, 2).copy()
     def pair(self): n = self.u(); return [(self.f(), self.f()) for _ in range(n)]
     def raw(self, n): return np.frombuffer(self.take(n), np.uint8).copy()
+    def hv(self): n = self.u(); return np.frombuffer(self.take(32 * n), np.uint8).reshape(n, 32).copy()
     def rows(self):
         nr = self.u(); out = []
         for _ in range(nr):
@@ -71,6 +72,13 @@ def load():
     zlc_n = rd.u(); g["zlc"] = bytes(rd.raw(zlc_n))
     g["a0_rows"] = rd.rows(); g["b0_rows"] = rd.rows()
     g["zc"] = dict(r1ab=rd.fv(), r1c=rd.fv(), mlv=rd.pair(), fa=rd.f(), fb=rd.f(), fc=rd.f())
+    g["lc"] = dict(rounds=rd.pair(), zp=rd.fv())
+    g["rs"] = [rd.fv() for _ in range(rd.u())]
+    bf = dict(rm=rd.pair(), post_rb_root=rd.raw(32), rc=rd.hv(), fa=rd.f(), fb=rd.f(), fcw=rd.fv())
+    nq = rd.u()
+    bf["queries"] = [(rd.u(), rd.fv(), rd.fv(), [rd.fv() for _ in range(rd.u())]) for _ in range(nq)]
+    bf["imp"] = rd.hv(); bf["prmp"] = rd.hv(); bf["emp"] = [rd.hv() for _ in range(rd.u())]
+    g["bf"] = bf
     return rd, g
 
 
@@ -96,6 +104,47 @@ def run(mul):
     _eq("zc final_a", zc["final_a_eval"], g["zc"]["fa"], results)
     _eq("zc final_b", zc["final_b_eval"], g["zc"]["fb"], results)
     _eq("zc final_c", zc["final_c_eval"], g["zc"]["fc"], results)
+
+    # Stage C: CSC sparse lincheck (k=32768, const_pin=31400, inner_rest=9) — shared challenger
+    k = 1 << g["meta"]["k_log"]
+    csc = lincheck.CscCircuit(g["a0_rows"], g["b0_rows"], k, const_pin=g["meta"]["const_pin"])
+    ir = g["meta"]["k_log"] - g["meta"]["k_skip"]
+    x_ab = {"z_skip": zc["z"], "x_inner_rest": zc["mlv_challenges"][:ir], "x_outer": zc["mlv_challenges"][ir:]}
+    lc_rounds, lc_zp, lc_claim, _zvp = lincheck.prove(
+        g["zlc"], None, None, x_ab, m, g["meta"]["k_log"], g["meta"]["k_skip"],
+        mul=mul, ch=ch, capture=True, circuit=csc)
+    got_lcr = np.array([np.concatenate([a, b]) for a, b in lc_rounds]) if lc_rounds else np.zeros((0, 4), np.uint64)
+    want_lcr = np.array([np.concatenate([a, b]) for a, b in g["lc"]["rounds"]]) if g["lc"]["rounds"] else np.zeros((0, 4), np.uint64)
+    results.append(("lc rounds (CSC, inner_rest=9)", got_lcr.shape == want_lcr.shape and np.array_equal(got_lcr, want_lcr)))
+    _eq("lc z_partial", lc_zp, g["lc"]["zp"], results)
+
+    # Stage D: batched dual-claim open (ab from lincheck, c from zerocheck)
+    ab_full = np.concatenate([lc_claim["r_inner_rest"], x_ab["x_outer"]], axis=0)
+    c_full = np.concatenate([zc["r_rest"][:ir], zc["r_rest"][ir:]], axis=0)
+    out = prover.open_batch(g["z"], codeword, tree, [ab_full, c_full], (m - 7 - lbs) + lir,
+                            lir, lbs, ch, mul=mul)
+    for i in range(2):
+        _eq(f"open ring_switch[{i}]", out["ring_switches"][i], g["rs"][i], results)
+    bf = out["basefold"]; gbf = g["bf"]
+    got_rm = np.array([np.concatenate([a, b]) for a, b in bf["round_messages"]])
+    want_rm = np.array([np.concatenate([a, b]) for a, b in gbf["rm"]])
+    _eq("open bf round_messages", got_rm, want_rm, results)
+    _eq("open bf post_rb_commit", bf["post_row_batch_commit"], gbf["post_rb_root"], results)
+    rc = np.stack(bf["round_commitments"]) if len(bf["round_commitments"]) else np.zeros((0, 32), np.uint8)
+    results.append(("open bf round_commitments", rc.shape == gbf["rc"].shape and np.array_equal(rc, gbf["rc"])))
+    _eq("open bf final_a", bf["final_a"], gbf["fa"], results)
+    _eq("open bf final_b", bf["final_b"], gbf["fb"], results)
+    _eq("open bf final_codeword", bf["final_codeword"], gbf["fcw"], results)
+    q_ok = len(bf["queries"]) == len(gbf["queries"])
+    for (gp, gil, gprl, gel), (pos, il, prl, el) in zip(gbf["queries"], bf["queries"]):
+        q_ok = q_ok and pos == gp and np.array_equal(il, gil) and np.array_equal(prl, gprl)
+        q_ok = q_ok and len(el) == len(gel) and all(np.array_equal(a, b) for a, b in zip(el, gel))
+    results.append(("open bf queries", q_ok))
+    _eq("open bf initial_multi_proof", bf["initial_multi_proof"], gbf["imp"], results)
+    _eq("open bf post_rb_multi_proof", bf["post_row_batch_multi_proof"], gbf["prmp"], results)
+    emp_ok = len(bf["epoch_multi_proofs"]) == len(gbf["emp"]) and \
+        all(np.array_equal(a, b) for a, b in zip(bf["epoch_multi_proofs"], gbf["emp"]))
+    results.append(("open bf epoch_multi_proofs", emp_ok))
     return m, results
 
 
@@ -105,8 +154,8 @@ def main() -> int:
     allok = True
     for nm, ok in results:
         print(f"  {'PASS' if ok else 'FAIL'}  {nm}"); allok = allok and ok
-    print(f"sha2 stages A-B (commit + real-witness zerocheck) vs flock (m={m}): "
-          f"{'PASS' if allok else 'FAIL'}")
+    print(f"sha2 FULL prove (commit+zerocheck+CSC lincheck+batched open) vs flock BaseFold "
+          f"(m={m}): {'PASS' if allok else 'FAIL'}")
     return 0 if allok else 1
 
 

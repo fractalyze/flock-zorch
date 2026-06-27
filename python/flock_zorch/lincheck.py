@@ -58,6 +58,40 @@ def fold_alpha_batched(alpha, a_dense, b_dense, eq_inner, mul=field.mul):
     return field.add(mul(alpha, ae), be)
 
 
+def _flatten_nz(rows):
+    """Row-major sparse {0,1} matrix (rows[r] = cols with a 1 in row r) -> flat
+    nonzero (col, row) index arrays, for a transposed XOR-gather fold."""
+    if not rows:
+        return np.zeros(0, np.int64), np.zeros(0, np.int64)
+    cols = np.concatenate([np.asarray(r, np.int64) for r in rows])
+    rowi = np.concatenate([np.full(len(r), i, np.int64) for i, r in enumerate(rows)])
+    return cols, rowi
+
+
+class CscCircuit:
+    """Sparse lincheck circuit (flock `CscCircuit`) for real hash R1CS where k =
+    2^k_log is too large for dense [k,k] matrices (sha2 k=32768). Holds A₀/B₀ as
+    flat nonzero (col,row) pairs; `fold_alpha_batched` is the transposed binary
+    matvec out[c] = α·Σ_{r:A[r,c]=1} eq[r] ⊕ Σ_{r:B[r,c]=1} eq[r], done as an
+    XOR-scatter (`np.bitwise_xor.at`) on the host — handles the skewed const_pin
+    column degree a padded gather can't. `const_pin` carries the +β pin column."""
+
+    def __init__(self, a0_rows, b0_rows, k: int, const_pin=None):
+        self.k = k
+        self.const_pin = const_pin
+        self.a_col, self.a_row = _flatten_nz(a0_rows)
+        self.b_col, self.b_row = _flatten_nz(b0_rows)
+
+    def fold_alpha_batched(self, alpha, eq_inner, mul=field.mul):
+        eq = np.asarray(eq_inner, np.uint64).reshape(-1, 2)
+        out_a = np.zeros((self.k, 2), np.uint64)
+        np.bitwise_xor.at(out_a, self.a_col, eq[self.a_row])
+        out_b = np.zeros((self.k, 2), np.uint64)
+        np.bitwise_xor.at(out_b, self.b_col, eq[self.b_row])
+        comb = field.add(mul(jnp.asarray(alpha), jnp.asarray(out_a)), jnp.asarray(out_b))
+        return np.asarray(comb)
+
+
 def partial_fold_packed_z(z_packed_bytes: bytes, m: int, k_log: int, eq_outer, mul=field.mul):
     """z_vec[i_inner] = Σ_{i_outer} z(i_inner, i_outer)·eq_outer[i_outer]
     (flock `partial_fold_packed_z`, useful_bits = 2^k_log).
@@ -100,16 +134,15 @@ def _bind_top(v, r, mul=field.mul):
 
 
 def prove(z_packed_bytes, a_dense, b_dense, x_ab, m, k_log, k_skip,
-          domain=b"flock-test-v0", mul=field.mul, ch=None, capture=False):
+          domain=b"flock-test-v0", mul=field.mul, ch=None, capture=False, circuit=None):
     """Run lincheck. x_ab = dict(z_skip:[2], x_inner_rest:[*,2], x_outer:[*,2]).
-    Byte-identical to flock `lincheck::prove`/`prove_padded_capture_z_vec`
-    (SparseMatrixCircuit/CscCircuit, no const-pin).
+    Byte-identical to flock `lincheck::prove`/`prove_padded_capture_z_vec`.
 
-    Default returns (rounds, z_partial). With `capture=True` (the e2e fused
-    prover) also returns the post-sumcheck claim and the pre-sumcheck z_vec:
-    (rounds, z_partial, claim, z_vec_pre), where claim = dict(r_inner_skip,
-    r_inner_rest, w). Pass a shared `ch` (the e2e challenger carrying commit/
-    bind/zerocheck state) to thread Fiat-Shamir; else a fresh Challenger(domain)."""
+    `circuit`: a `CscCircuit` for real hash R1CS (sparse A₀/B₀ at large k, with an
+    optional const_pin +β column); when None, the dense `a_dense`/`b_dense` path is
+    used (small test R1CS). Default returns (rounds, z_partial). With `capture=True`
+    (the e2e fused prover) also returns the post-sumcheck claim and the pre-sumcheck
+    z_vec. Pass a shared `ch` to thread Fiat-Shamir; else a fresh Challenger(domain)."""
     inner_rest = k_log - k_skip
     if ch is None:
         ch = Challenger(domain)
@@ -117,8 +150,14 @@ def prove(z_packed_bytes, a_dense, b_dense, x_ab, m, k_log, k_skip,
     alpha = jnp.asarray(ch.sample_f128())
 
     eq_inner = build_quirky_eq_table(_to_int(x_ab["z_skip"]), x_ab["x_inner_rest"], k_skip, mul)
-    comb = fold_alpha_batched(alpha, jnp.asarray(a_dense), jnp.asarray(b_dense), eq_inner, mul)
-    # SparseMatrixCircuit::new / CscCircuit have const_pin = None -> no β step.
+    if circuit is not None:
+        comb = jnp.asarray(circuit.fold_alpha_batched(alpha, eq_inner, mul))
+        if circuit.const_pin is not None:
+            beta = jnp.asarray(ch.sample_f128())          # sampled AFTER alpha (flock order)
+            col = circuit.const_pin
+            comb = comb.at[col].set(field.add(comb[col], beta))
+    else:
+        comb = fold_alpha_batched(alpha, jnp.asarray(a_dense), jnp.asarray(b_dense), eq_inner, mul)
 
     eq_outer = build_eq_fused(jnp.asarray(x_ab["x_outer"]), mul=mul)
     z_vec = partial_fold_packed_z(z_packed_bytes, m, k_log, eq_outer, mul)
