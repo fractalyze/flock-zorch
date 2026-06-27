@@ -8,6 +8,7 @@ Run:
   JAX_PLATFORMS=cuda PYTHONPATH=python:/home/jooman/fractalyze/zorch <venv> \
       python/flock_zorch/testing/pcs_open_oracle_test.py
 """
+import os
 import sys
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from flock_zorch import field, pcs_open, merkle  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 
 ART = Path(__file__).resolve().parents[3] / "artifacts"
+_HOST = os.environ.get("FLOCK_HOST_SHA") == "1"  # gate the host SHA-NI Merkle path too
 
 
 class R:
@@ -50,9 +52,11 @@ def _check(mul, name):
 
     k_code = (m - 7 - lbs) + lir
     num_ntts = 1 << lbs
-    init_tree = merkle.merkle_tree(codeword.reshape(1 << k_code, num_ntts * 2).view(np.uint8))
+    init_tree = merkle.merkle_tree(codeword.reshape(1 << k_code, num_ntts * 2).view(np.uint8),
+                                   use_host_sha=_HOST)
     ch = Challenger(b"flock-pcs-open-test")
-    out = pcs_open.open(z_packed, codeword, init_tree, x_outer, k_code, lir, lbs, ch, mul=mul)
+    out = pcs_open.open(z_packed, codeword, init_tree, x_outer, k_code, lir, lbs, ch, mul=mul,
+                        use_host_sha=_HOST)
     p = out["basefold"]
 
     def eq(x, y): return np.array_equal(np.asarray(x), np.asarray(y))

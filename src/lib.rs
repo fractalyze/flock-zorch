@@ -15,3 +15,10 @@
 //! See `CLAUDE.md` for the non-negotiables.
 
 // Host driver modules (gpu/prove/...) land as the PJRT path is built out.
+
+// Host SHA-NI Merkle FFI — the "SHA-256 Merkle off-GPU" optimization. Re-exports
+// flock-core's rayon+SHA-NI `merkle::merkle_tree` over a C ABI (`flock_merkle_tree`
+// / `flock_merkle_root`) so the jax prover can build Merkle trees on the host
+// (byte-identical to the GPU path) via ctypes. See the module header for wiring.
+#[path = "../optim/merkle_ffi/merkle_ffi.rs"]
+pub mod merkle_ffi;

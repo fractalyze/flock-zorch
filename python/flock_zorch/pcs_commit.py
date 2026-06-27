@@ -39,7 +39,8 @@ def pack_witness(z_bits: np.ndarray, m: int) -> np.ndarray:
     return np.stack([lo, hi], axis=1)  # [n_packed, 2]
 
 
-def commit_root(z_packed, m: int, log_inv_rate: int, log_batch_size: int, mul=field.mul) -> np.ndarray:
+def commit_root(z_packed, m: int, log_inv_rate: int, log_batch_size: int, mul=field.mul,
+                use_host_sha: bool = False) -> np.ndarray:
     """32-byte Merkle root of the PCS commitment to `z_packed`.
 
     z_packed: uint64 [2^(m-7), 2]. Returns uint8 [32], byte-identical to
@@ -64,4 +65,4 @@ def commit_root(z_packed, m: int, log_inv_rate: int, log_batch_size: int, mul=fi
     # Each leaf = one position's num_ntts F128 = num_ntts*16 LE bytes (F128 is
     # lo||hi little-endian, same as a uint64 array viewed as bytes on x86).
     leaves = np.asarray(codeword).reshape(n_pos_code, num_ntts * 2).view(np.uint8)
-    return merkle.merkle_root(leaves)
+    return merkle.merkle_root(leaves, use_host_sha=use_host_sha)

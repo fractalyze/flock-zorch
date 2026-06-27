@@ -9,6 +9,7 @@ Run:
   cargo run --release --example dump_merkle -- 4096 64 artifacts/merkle_golden.bin
   JAX_PLATFORMS=cuda PYTHONPATH=python <venv> python/flock_zorch/testing/merkle_oracle_test.py
 """
+import os
 import sys
 import time
 from pathlib import Path
@@ -32,10 +33,14 @@ def _load_golden():
     return n_leaves, leaf_size, data, root
 
 
+_HOST = os.environ.get("FLOCK_HOST_SHA") == "1"  # gate the host SHA-NI path too
+
+
 def main() -> int:
     n_leaves, leaf_size, data, golden_root = _load_golden()
-    print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()}")
-    got = merkle.merkle_root(data)
+    print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()}"
+          f"{' | HOST SHA-NI path' if _HOST else ''}")
+    got = merkle.merkle_root(data, use_host_sha=_HOST)
     ok = np.array_equal(got, golden_root)
     print(f"Merkle root byte-identity vs flock ({n_leaves} x {leaf_size}B leaves): "
           f"{'PASS' if ok else 'FAIL'}")
@@ -47,7 +52,7 @@ def main() -> int:
     # Informational GPU timing (best-of-N).
     t0 = time.perf_counter()
     for _ in range(20):
-        merkle.merkle_root(data)
+        merkle.merkle_root(data, use_host_sha=_HOST)
     print(f"GPU merkle_root ({n_leaves} leaves): {(time.perf_counter()-t0)/20*1e3:.3f} ms "
           f"(informational; Merkle is <1% of PCS commit)")
     return 0

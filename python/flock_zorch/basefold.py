@@ -68,7 +68,7 @@ def _root_f128(root):
 
 
 def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_size,
-          n_queries, ch, mul=field.mul) -> dict:
+          n_queries, ch, mul=field.mul, use_host_sha: bool = False) -> dict:
     """Run BaseFold open on the SHARED challenger `ch` (so it composes in
     pcs::open after ring-switch). z_packed=a_init uint64 [2^log_msg,2]; b same;
     codeword uint64 [2^k_code · num_ntts, 2]; initial_tree uint8 [2·n_leaves-1, 32]
@@ -112,7 +112,8 @@ def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_s
                 if arities:
                     cw_np = np.asarray(cw_active)
                     n_leaves = cw_np.shape[0] // post_rb_leaf_f128
-                    post_rb_tree = merkle.merkle_tree(_leaf_bytes(cw_np, n_leaves, post_rb_leaf_f128))
+                    post_rb_tree = merkle.merkle_tree(_leaf_bytes(cw_np, n_leaves, post_rb_leaf_f128),
+                                                      use_host_sha=use_host_sha)
                     post_rb_root = post_rb_tree[-1]
                     ch.observe_f128(_root_f128(post_rb_root))
                     post_rb_codeword = cw_np
@@ -126,7 +127,8 @@ def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_s
                     leaf_f128 = 1 << arities[current_epoch + 1]
                     cw_np = np.asarray(cw_active)
                     n_leaves = cw_np.shape[0] // leaf_f128
-                    tree = merkle.merkle_tree(_leaf_bytes(cw_np, n_leaves, leaf_f128))
+                    tree = merkle.merkle_tree(_leaf_bytes(cw_np, n_leaves, leaf_f128),
+                                              use_host_sha=use_host_sha)
                     ch.observe_f128(_root_f128(tree[-1]))
                     round_commitments.append(tree[-1])
                     epoch_codewords.append(cw_np)
