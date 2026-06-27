@@ -15,6 +15,8 @@ twiddle recurrence with binary-heap indexing and recursive DIF/DIT butterflies.
 """
 from __future__ import annotations
 
+import functools
+
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -119,9 +121,11 @@ def _next_s(s: int, root: int) -> int:
     return int(gf8_mul(s, s)) ^ int(gf8_mul(root, s))
 
 
+@functools.lru_cache(maxsize=None)
 def _compute_twiddles(k: int, beta: int) -> np.ndarray:
     """Binary-heap twiddle table, uint8 [2^k - 1]. Level-L twiddles at offset
-    2^L - 1. Distinct from the F128 NTT's layer-major table."""
+    2^L - 1. Distinct from the F128 NTT's layer-major table. Memoized on (k, beta)
+    — data-independent; the result is consumed read-only (jnp.asarray'd)."""
     if k == 0:
         return np.zeros(0, dtype=np.uint8)
     n = 1 << k
@@ -194,8 +198,6 @@ class AdditiveNttGf8:
 # on the GPU instead of host numpy (the URM was the prover's #1 host bottleneck:
 # ~1.1 s at m=24). Byte-identical to the host path (gated by the URM oracle).
 # ---------------------------------------------------------------------------
-
-import functools  # noqa: E402
 
 _MUL_DEV = jnp.asarray(_MUL)            # [256, 256] uint8
 _PHI_DEV = jnp.asarray(PHI_8_TABLE)     # [256, 2] uint64
@@ -294,6 +296,31 @@ def _round1_core(mul):
 # ---------------------------------------------------------------------------
 
 
+def witness_to_rows(bits, m: int, k_skip: int):
+    """Witness uint8 [2^m] (0/1) -> device uint8 [2^(m-k_skip), 2^k_skip]. Accepts a
+    numpy array (transferred once) or an already-device array (reshaped, no copy) so
+    callers can keep the witness device-resident across round1 + fold_at_z."""
+    n_chunks, ell = 1 << (m - k_skip), 1 << k_skip
+    if isinstance(bits, jax.Array):
+        return bits.reshape(n_chunks, ell)
+    return jnp.asarray(np.asarray(bits, np.uint8).reshape(n_chunks, ell))
+
+
+def round1_rows(a, b, c, m: int, k_skip: int, r, mul=field.mul):
+    """Round-1 URM from device witness rows (uint8 [2^(m-k_skip), 2^k_skip]). The
+    compute half of `round1_naive`, so the witness can be transferred once and
+    reused by `zerocheck._fold_at_z`. Returns (P^AB, P^C) as numpy."""
+    ell = 1 << k_skip
+    # F8 NTT + a·b + phi8 on the GPU (the URM was the prover's #1 host bottleneck);
+    # twiddles are tiny (2^k-1 entries), memoized on host.
+    tw_s = jnp.asarray(_compute_twiddles(k_skip, 0))     # S = {0..ell-1}
+    tw_l = jnp.asarray(_compute_twiddles(k_skip, ell))   # Lambda = {ell..2*ell-1}
+    r = np.asarray(r, dtype=np.uint64)
+    eqx = sumcheck.build_eq(jnp.asarray(r[k_skip:]), mul=mul)[:, None, :]  # [n_chunks, 1, 2]
+    p_ab, p_c = _round1_core(mul)(a, b, c, k_skip, tw_s, tw_l, eqx)  # fused extend+phi+accum
+    return np.asarray(p_ab), np.asarray(p_c)
+
+
 def round1_naive(a_bits, b_bits, c_bits, m: int, k_skip: int, r, mul=field.mul):
     """Round-1 univariate-skip message (P^AB, P^C), each F128 [2^k_skip] on Λ.
 
@@ -302,17 +329,7 @@ def round1_naive(a_bits, b_bits, c_bits, m: int, k_skip: int, r, mul=field.mul):
     eq(r[k_skip:], x) · φ₈(a·b) and · φ₈(c). Byte-identical to flock's
     `round1_naive`; equals the wire `round1_ab`/`round1_c`.
     """
-    ell = 1 << k_skip
-    n_chunks = 1 << (m - k_skip)
-    # F8 NTT + a·b + phi8 on the GPU (the URM was the prover's #1 host bottleneck);
-    # twiddles are tiny (2^k-1 entries) so they're computed on host once.
-    tw_s = jnp.asarray(_compute_twiddles(k_skip, 0))     # S = {0..ell-1}
-    tw_l = jnp.asarray(_compute_twiddles(k_skip, ell))   # Lambda = {ell..2*ell-1}
-    a = jnp.asarray(np.asarray(a_bits, np.uint8).reshape(n_chunks, ell))
-    b = jnp.asarray(np.asarray(b_bits, np.uint8).reshape(n_chunks, ell))
-    c = jnp.asarray(np.asarray(c_bits, np.uint8).reshape(n_chunks, ell))
-
-    r = np.asarray(r, dtype=np.uint64)
-    eqx = sumcheck.build_eq(jnp.asarray(r[k_skip:]), mul=mul)[:, None, :]  # [n_chunks, 1, 2]
-    p_ab, p_c = _round1_core(mul)(a, b, c, k_skip, tw_s, tw_l, eqx)  # fused extend+phi+accum
-    return np.asarray(p_ab), np.asarray(p_c)
+    a = witness_to_rows(a_bits, m, k_skip)
+    b = witness_to_rows(b_bits, m, k_skip)
+    c = witness_to_rows(c_bits, m, k_skip)
+    return round1_rows(a, b, c, m, k_skip, r, mul=mul)
