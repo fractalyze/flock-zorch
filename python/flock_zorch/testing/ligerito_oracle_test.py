@@ -81,34 +81,30 @@ def run(mul):
     results.append(("ligero_commit L0 codeword", np.array_equal(mat, g["l0_codeword"])))
     results.append(("ligero_commit L0 root == initial_root", np.array_equal(tree[-1], g["initial_root"])))
 
-    # M1: lane folds (initial_k) + commit f^1 — shared challenger
-    log_n = g["log_n"]; initial_k = cfg["initial_k"]
+    # Full driver → byte-gate every LigeritoProof field
     ch = Challenger(b"flock-ligerito-test")
-    ch.observe_label(b"flock-ligerito-basis-v0")
-    ch.observe_f128(g["target"])
-    ch.observe_bytes(bytes(g["initial_root"]))
-    sc, start = ligerito.SumcheckProver.new(g["f"], g["b"], g["target"], mul)
-    ch.observe_f128(start[0]); ch.observe_f128(start[1])
-    fold_nonces = []
-    fb0 = cfg["fold_grinding_bits"][0]
-    for j in range(initial_k):
-        bits = max(fb0 - j, 0)
-        if bits > 0:
-            fold_nonces.append(ch.grind_pow(bits))
-        r = ch.sample_f128()
-        msg = sc.fold(r)
-        ch.observe_f128(msg[0]); ch.observe_f128(msg[1])
-    # commit f^1
-    n1 = log_n - initial_k
-    lni1 = cfg["recursive_ks"][0]
-    mat1, tree1 = ligerito.ligero_commit(sc.f, n1 - lni1, lni1, cfg["log_inv_rates"][1], mul=mul)
+    p = ligerito.recursive_prover_with_basis(cfg, g["f"], g["b"], g["target"],
+                                             g["l0_codeword"], g["l0_tree"], ch, mul=mul)
 
-    # gate the first initial_k+1 sumcheck messages + L1 root + lane fold nonces
-    got_tr = np.array([np.concatenate([a, b]) for a, b in sc.transcript])
-    want_tr = np.array([np.concatenate([a, b]) for a, b in g["sumcheck_transcript"][:initial_k + 1]])
-    results.append(("M1 lane-fold sumcheck msgs", np.array_equal(got_tr, want_tr)))
-    results.append(("M1 recursive_roots[0] (f^1 commit)", np.array_equal(tree1[-1], g["recursive_roots"][0])))
-    results.append(("M1 lane fold_grinding_nonces", fold_nonces == g["fold_grinding_nonces"][:len(fold_nonces)]))
+    def pairs(t): return np.array([np.concatenate([a, b]) for a, b in t]) if t else np.zeros((0, 4), np.uint64)
+    def rows_eq(a, b): return len(a) == len(b) and all(np.array_equal(np.asarray(x), np.asarray(y)) for x, y in zip(a, b))
+    def stk(v): return np.stack([np.asarray(x).reshape(2) for x in v]) if len(v) else np.zeros((0, 2), np.uint64)
+
+    results.append(("initial_root", np.array_equal(p["initial_root"], g["initial_root"])))
+    results.append(("sumcheck_transcript", np.array_equal(pairs(p["sumcheck_transcript"]), pairs(g["sumcheck_transcript"]))))
+    results.append(("recursive_roots", np.array_equal(np.asarray(p["recursive_roots"]), g["recursive_roots"])))
+    results.append(("ood_values", np.array_equal(stk(p["ood_values"]), g["ood_values"])))
+    results.append(("grinding_nonces", list(map(int, p["grinding_nonces"])) == list(g["grinding_nonces"])))
+    results.append(("fold_grinding_nonces", list(map(int, p["fold_grinding_nonces"])) == list(g["fold_grinding_nonces"])))
+    results.append(("initial_proof.opened_rows", rows_eq(p["initial_proof"]["opened_rows"], g["initial_proof"]["opened_rows"])))
+    results.append(("initial_proof.merkle_proof", np.array_equal(p["initial_proof"]["merkle_proof"], g["initial_proof"]["merkle_proof"])))
+    rp_ok = len(p["recursive_proofs"]) == len(g["recursive_proofs"])
+    for pr, gr in zip(p["recursive_proofs"], g["recursive_proofs"]):
+        rp_ok = rp_ok and rows_eq(pr["opened_rows"], gr["opened_rows"]) and np.array_equal(pr["merkle_proof"], gr["merkle_proof"])
+    results.append(("recursive_proofs", rp_ok))
+    results.append(("final_proof.yr", np.array_equal(np.asarray(p["final_proof"]["yr"]), g["final_proof"]["yr"])))
+    results.append(("final_proof.opened_rows", rows_eq(p["final_proof"]["opened_rows"], g["final_proof"]["opened_rows"])))
+    results.append(("final_proof.merkle_proof", np.array_equal(p["final_proof"]["merkle_proof"], g["final_proof"]["merkle_proof"])))
     return g, results
 
 
