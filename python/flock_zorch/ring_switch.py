@@ -100,3 +100,35 @@ def prove(packed_witness, x_outer, ch: Challenger, mul=field.mul):
     sumcheck_claim = inner_product(s_hat_u, eq_r_dprime, mul)  # [2]
     rs_eq_ind = fold_b128_elems(suffix_tensor, eq_r_dprime, mul)  # [2^L,2]
     return s_hat_v, rs_eq_ind, sumcheck_claim
+
+
+def prove_batched(packed_witness, x_outers, ch: Challenger, mul=field.mul):
+    """Batched ring-switch over N opening points — byte-identical to flock
+    `ring_switch::prove_batched_padded_with_precomputed` (dense; no precompute —
+    each s_hat_v value equals `fold_1b_rows`, so the observed bytes match).
+
+    Transcript: per claim (in order) observe `flock-ring-switch-v0` + s_hat_v +
+    sample r_dprime[7]; THEN sample N γ's (Schwartz-Zippel-sound, after all
+    observations); THEN bake γ_i into each `rs_eq_ind_i`. Returns
+    (s_hat_vs, rs_eq_inds[γ-baked], sumcheck_claims, gammas)."""
+    works = []
+    for x_outer in x_outers:
+        ch.observe_label(LABEL)
+        suffix = jnp.asarray(np.asarray(x_outer)[1:])
+        suffix_tensor = sumcheck.build_eq(suffix, mul=mul)
+        s_hat_v = fold_1b_rows(packed_witness, suffix_tensor, mul)
+        ch.observe_f128_slice(s_hat_v)
+        r_dprime = jnp.asarray(ch.sample_f128_vec(LOG_PACKING))
+        eq_r_dprime = sumcheck.build_eq(r_dprime, mul=mul)
+        s_hat_u = tensor_algebra_transpose(s_hat_v)
+        sumcheck_claim = inner_product(s_hat_u, eq_r_dprime, mul)
+        works.append((s_hat_v, suffix_tensor, eq_r_dprime, sumcheck_claim))
+
+    gammas = [ch.sample_f128() for _ in range(len(x_outers))]
+    s_hat_vs, rs_eq_inds, sumcheck_claims = [], [], []
+    for (s_hat_v, suffix_tensor, eq_r_dprime, sc), g in zip(works, gammas):
+        scaled = mul(jnp.asarray(g), jnp.asarray(eq_r_dprime))   # γ baked into eq
+        rs_eq_inds.append(fold_b128_elems(suffix_tensor, scaled, mul))
+        s_hat_vs.append(s_hat_v)
+        sumcheck_claims.append(sc)
+    return s_hat_vs, rs_eq_inds, sumcheck_claims, gammas

@@ -18,7 +18,7 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
-from flock_zorch import field, pcs_commit, zerocheck, lincheck, prover  # noqa: E402
+from flock_zorch import field, pcs_commit, zerocheck, lincheck, prover, ring_switch  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 
 ART = Path(__file__).resolve().parents[3] / "artifacts"
@@ -73,6 +73,13 @@ def run(mul):
     g_zvp = rd.fv()
     g_ab = dict(zs=rd.f(), xir=rd.fv(), xo=rd.fv(), v=rd.f())
     g_c = dict(zs=rd.f(), xir=rd.fv(), xo=rd.fv(), v=rd.f())
+    # pcs_open golden: ring_switches + basefold
+    g_rs = [rd.fv() for _ in range(rd.u())]
+    g_bf = dict(rm=rd.pair(), post_rb_root=rd.raw(32), rc=rd.hv(), fa=rd.f(), fb=rd.f(), fcw=rd.fv())
+    n_q = rd.u()
+    g_bf["queries"] = [(rd.u(), rd.fv(), rd.fv(), [rd.fv() for _ in range(rd.u())]) for _ in range(n_q)]
+    g_bf["imp"] = rd.hv(); g_bf["prmp"] = rd.hv()
+    g_bf["emp"] = [rd.hv() for _ in range(rd.u())]
 
     results = []
     LIR, LBS = 1, 5
@@ -130,18 +137,48 @@ def run(mul):
     _eq("c.x_outer", c_pt["xo"], g_c["xo"], results)
     _eq("c.value", c_pt["v"], g_c["v"], results)
 
-    return results
+    # ---- Stage E: batched dual-claim PCS open ----
+    ab_full = np.concatenate([ab_pt["xir"], ab_pt["xo"]], axis=0)
+    c_full = np.concatenate([c_pt["xir"], c_pt["xo"]], axis=0)
+    out = prover.open_batch(z_packed, codeword, tree, [ab_full, c_full], (m - 7 - LBS) + LIR,
+                            LIR, LBS, ch, mul=mul)
+    # ring_switches (s_hat_v per claim)
+    for i in range(2):
+        _eq(f"open ring_switch[{i}].s_hat_v", out["ring_switches"][i], g_rs[i], results)
+    bf = out["basefold"]
+    got_rm = np.array([np.concatenate([a, b]) for a, b in bf["round_messages"]])
+    want_rm = np.array([np.concatenate([a, b]) for a, b in g_bf["rm"]])
+    _eq("open bf round_messages", got_rm, want_rm, results)
+    _eq("open bf post_rb_commit", bf["post_row_batch_commit"], g_bf["post_rb_root"], results)
+    rc = np.stack(bf["round_commitments"]) if len(bf["round_commitments"]) else np.zeros((0, 32), np.uint8)
+    results.append(("open bf round_commitments", rc.shape == g_bf["rc"].shape and np.array_equal(rc, g_bf["rc"])))
+    _eq("open bf final_a", bf["final_a"], g_bf["fa"], results)
+    _eq("open bf final_b", bf["final_b"], g_bf["fb"], results)
+    _eq("open bf final_codeword", bf["final_codeword"], g_bf["fcw"], results)
+    # queries
+    q_ok = len(bf["queries"]) == len(g_bf["queries"])
+    for (gp, gil, gprl, gel), (pos, il, prl, el) in zip(g_bf["queries"], bf["queries"]):
+        q_ok = q_ok and pos == gp and np.array_equal(il, gil) and np.array_equal(prl, gprl)
+        q_ok = q_ok and len(el) == len(gel) and all(np.array_equal(a, b) for a, b in zip(el, gel))
+    results.append(("open bf queries", q_ok))
+    _eq("open bf initial_multi_proof", bf["initial_multi_proof"], g_bf["imp"], results)
+    _eq("open bf post_rb_multi_proof", bf["post_row_batch_multi_proof"], g_bf["prmp"], results)
+    emp_ok = len(bf["epoch_multi_proofs"]) == len(g_bf["emp"]) and \
+        all(np.array_equal(a, b) for a, b in zip(bf["epoch_multi_proofs"], g_bf["emp"]))
+    results.append(("open bf epoch_multi_proofs", emp_ok))
+
+    return m, results
 
 
 def main() -> int:
     name = "clmad" if MUL is not field.mul else "software"
     print(f"device {jax.devices()[0]} | mul {name}")
-    results = run(MUL)
+    m, results = run(MUL)
     allok = True
     for nm, ok in results:
         print(f"  {'PASS' if ok else 'FAIL'}  {nm}")
         allok = allok and ok
-    print(f"e2e stages A-D byte-match vs flock prove (identity m=13): {'PASS' if allok else 'FAIL'}")
+    print(f"e2e full prove byte-match vs flock prove (identity m={m}, stages A-E): {'PASS' if allok else 'FAIL'}")
     return 0 if allok else 1
 
 
