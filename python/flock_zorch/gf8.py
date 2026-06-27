@@ -255,7 +255,9 @@ def _ifft_dev(v, tw, k: int):
 def _extend_and_phi(a, b, c, k_skip, tw_s, tw_l):
     """Extend a/b/c from S to Lambda (inv-NTT then fwd-NTT), F8-mul a·b, and
     phi8-embed both into F128. No field mul → jit-cacheable independent of `mul`.
-    a/b/c: uint8 [N, ell] -> (phi_ab, phi_c) uint64 [N, ell, 2]."""
+    a/b/c: uint8 [N, ell] -> (phi_ab, phi_c) uint64 [N, ell, 2]. (Kept for tests;
+    `round1_naive` uses the fused `_round1_core` below to avoid the ~1 GB φ8 HBM
+    intermediate.)"""
     a_l = _fft_dev(_ifft_dev(a, tw_s, k_skip), tw_l, k_skip)
     b_l = _fft_dev(_ifft_dev(b, tw_s, k_skip), tw_l, k_skip)
     c_l = _fft_dev(_ifft_dev(c, tw_s, k_skip), tw_l, k_skip)
@@ -263,15 +265,27 @@ def _extend_and_phi(a, b, c, k_skip, tw_s, tw_l):
     return _PHI_DEV[ab.astype(jnp.int32)], _PHI_DEV[c_l.astype(jnp.int32)]
 
 
-_ACCUM_CACHE: dict = {}
+_R1_CACHE: dict = {}
 
 
-def _accum(mul):
-    """jit'd eq-accumulator p[s] = Σ_x eq[x]·phi[x,s], cached per `mul` (→ clmad)."""
-    fn = _ACCUM_CACHE.get(mul)
+def _round1_core(mul):
+    """Fused round-1 core, cached per `mul`: extend a/b/c S→Λ, a·b, φ8-embed, AND
+    eq-accumulate — all in ONE jit kernel so the [N,ell,2] φ8 values (~1 GB at
+    m≈28) are consumed in-fusion and never written to HBM (halves round1's
+    bandwidth vs the separate extend_and_phi + accum)."""
+    fn = _R1_CACHE.get(mul)
     if fn is None:
-        fn = jax.jit(lambda eqx, phi: sumcheck._xor_reduce(mul(eqx, phi), axis=0))
-        _ACCUM_CACHE[mul] = fn
+        @functools.partial(jax.jit, static_argnums=(3,))
+        def core(a, b, c, k_skip, tw_s, tw_l, eqx):
+            a_l = _fft_dev(_ifft_dev(a, tw_s, k_skip), tw_l, k_skip)
+            b_l = _fft_dev(_ifft_dev(b, tw_s, k_skip), tw_l, k_skip)
+            c_l = _fft_dev(_ifft_dev(c, tw_s, k_skip), tw_l, k_skip)
+            phi_ab = _PHI_DEV[_gf8_mul_dev(a_l, b_l).astype(jnp.int32)]
+            phi_c = _PHI_DEV[c_l.astype(jnp.int32)]
+            return (sumcheck._xor_reduce(mul(eqx, phi_ab), axis=0),
+                    sumcheck._xor_reduce(mul(eqx, phi_c), axis=0))
+        fn = core
+        _R1_CACHE[mul] = fn
     return fn
 
 
@@ -298,9 +312,7 @@ def round1_naive(a_bits, b_bits, c_bits, m: int, k_skip: int, r, mul=field.mul):
     b = jnp.asarray(np.asarray(b_bits, np.uint8).reshape(n_chunks, ell))
     c = jnp.asarray(np.asarray(c_bits, np.uint8).reshape(n_chunks, ell))
 
-    phi_ab, phi_c = _extend_and_phi(a, b, c, k_skip, tw_s, tw_l)  # [n_chunks, ell, 2]
     r = np.asarray(r, dtype=np.uint64)
     eqx = sumcheck.build_eq(jnp.asarray(r[k_skip:]), mul=mul)[:, None, :]  # [n_chunks, 1, 2]
-
-    accum = _accum(mul)
-    return np.asarray(accum(eqx, phi_ab)), np.asarray(accum(eqx, phi_c))
+    p_ab, p_c = _round1_core(mul)(a, b, c, k_skip, tw_s, tw_l, eqx)  # fused extend+phi+accum
+    return np.asarray(p_ab), np.asarray(p_c)
