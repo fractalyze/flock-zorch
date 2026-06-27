@@ -20,9 +20,16 @@ Bottom-up port, each layer gated by a byte-match vs unmodified flock:
 | **Fiat-Shamir challenger (SHA-256 duplex)** | ✅ **byte-identical to flock `FsChallenger`** (on `zorch.byte_transcript`) | `challenger_oracle_test.py` |
 | F8 layer + round-1 URM (F8 NTT / φ₈ / `round1_naive`) | ✅ GPU byte-match (φ₈ table + URM) | `gf8_urm_oracle_test.py` |
 | **zerocheck `prove_packed` (full PIOP → ZerocheckProof)** | ✅ **byte-identical to flock** (sw + clmad), m=13/14 | `zerocheck_oracle_test.py` |
-| PCS open (FRI) / e2e proof | ⏳ next | — |
-| PCS open (FRI) / e2e proof | ⏳ | — |
+| **lincheck `prove` (2nd PIOP → LincheckProof)** | ✅ **byte-identical to flock** (sw + clmad), 6 regimes | `lincheck_oracle_test.py` |
+| PCS open (FRI / BaseFold / Ligerito) | ⏳ next | — |
+| e2e proof (commit→zerocheck→lincheck→open) | ⏳ | — |
 | fused `.mlirbc` + Rust host (PJRT) | ⏳ | — |
+
+This repo is built **on `zorch`** (sp1-zorch-style bzlmod, `MODULE.bazel`): it
+reuses zorch's scheme-agnostic spine (`Sha256Transcript`, sumcheck fold
+primitives, `poly.eq`, `pcs.fold`/`basefold`) and keeps only the
+byte-identity-critical flock pieces here. GPU byte-match gates run on the zorch
+venv (`PYTHONPATH=python:../zorch`), not hermetic Bazel.
 
 ### First full sub-protocol: PCS commit, byte-identical + 10×
 `pcs::commit` (pack → zero-pad → interleaved forward NTT → SHA-256 Merkle →
