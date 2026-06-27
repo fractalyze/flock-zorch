@@ -61,23 +61,59 @@ def medium_challenges() -> list[int]:
     return out
 
 
+def _prod_axis1(mat):
+    """F128 product over axis 1 of [n, k, 2] via log2(k) pairwise mul steps."""
+    n = mat.shape[1]
+    while n > 1:
+        h = n // 2
+        prod = field.mul(mat[:, :h, :], mat[:, h:2 * h, :])
+        if n % 2:
+            prod = jnp.concatenate([prod, mat[:, 2 * h:, :]], axis=1)
+        mat = prod
+        n = mat.shape[1]
+    return mat[:, 0, :]
+
+
+@jax.jit
+def _lag_numden(s, zf):
+    """num[i]=Π_{j≠i}(z+s_j), den[i]=Π_{j≠i}(s_i+s_j); diagonal terms set to 1."""
+    ell = s.shape[0]
+    eye = jnp.eye(ell, dtype=bool)[:, :, None]
+    one = jnp.asarray(_ONE)
+    num_mat = jnp.where(eye, one, jnp.broadcast_to((zf ^ s)[None, :, :], (ell, ell, 2)))
+    den_mat = jnp.where(eye, one, s[:, None, :] ^ s[None, :, :])
+    return _prod_axis1(num_mat), _prod_axis1(den_mat)
+
+
+@jax.jit
+def _lag_w(num, inv_den):
+    return field.mul(num, inv_den)
+
+
+@jax.jit
+def _batch_inv(a):
+    """Batched GF(2^128) inverse a^(2^128-2) = Π_{k=1}^{127} a^(2^k), via 127
+    square-and-multiply steps (vectorized; replaces 64 host-Python Fermat invs)."""
+    sq = a
+    result = jnp.broadcast_to(jnp.asarray(_ONE), a.shape)
+    for _ in range(127):
+        sq = field.mul(sq, sq)
+        result = field.mul(result, sq)
+    return result
+
+
 def _lagrange_weights(k_skip: int, z: int, offset: int) -> list[int]:
     """L_i(z) over the φ₈-embedded nodes PHI_8_TABLE[offset+i], i∈[0, 2^k_skip).
-    offset=0 → the S domain; offset=2^k_skip → the Λ domain."""
+    offset=0 → the S domain; offset=2^k_skip → the Λ domain.
+
+    Vectorized + jitted (the scalar O(ell²) host-Python F128 double-loop was a
+    fixed ~590ms — the zerocheck's dominant cost; jit is essential — eager
+    field.mul dispatches its 64-step fori per element). Same field math →
+    byte-identical weights (gated)."""
     ell = 1 << k_skip
-    nodes = [_phi_int(offset + i) for i in range(ell)]
-    weights = []
-    for i in range(ell):
-        si = nodes[i]
-        num, den = 1, 1
-        for j in range(ell):
-            if j == i:
-                continue
-            sj = nodes[j]
-            num = hf.mul(num, z ^ sj)
-            den = hf.mul(den, si ^ sj)
-        weights.append(hf.mul(num, hf.inv(den)))
-    return weights
+    s = jnp.asarray(np.stack([_to_lohi(_phi_int(offset + i)) for i in range(ell)]))  # [ell,2]
+    num, den = _lag_numden(s, jnp.asarray(_to_lohi(z)))
+    return [_to_int(x) for x in np.asarray(_lag_w(num, _batch_inv(den)))]
 
 
 def _interpolate_at_z_on_lambda(values_int: list[int], k_skip: int, z: int) -> int:
