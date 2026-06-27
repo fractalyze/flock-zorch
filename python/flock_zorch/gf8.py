@@ -202,8 +202,19 @@ _PHI_DEV = jnp.asarray(PHI_8_TABLE)     # [256, 2] uint64
 
 
 def _gf8_mul_dev(a, b):
-    """Elementwise F8 multiply on device via the 256x256 table gather."""
-    return _MUL_DEV[a.astype(jnp.int32), b.astype(jnp.int32)]
+    """Elementwise F8 multiply on device — ARITHMETIC (clmul8 + mod-0x11B reduce),
+    no table gather. Gather over the F8-NTT's ~1B elements was memory-bound (37ms);
+    8 unrolled XOR-shifts + two reduction folds is compute-bound and far faster.
+    Byte-identical to the `_MUL` table (same `_clmul8`/`_gf8_reduce` math)."""
+    a16 = a.astype(jnp.uint16)
+    b16 = b.astype(jnp.uint16)
+    p = jnp.zeros_like(a16)
+    for i in range(8):
+        p = p ^ jnp.where(((a16 >> i) & 1) != 0, b16 << i, jnp.uint16(0))
+    h = p >> 8
+    t = (p & 0xFF) ^ h ^ (h << 1) ^ (h << 3) ^ (h << 4)
+    h2 = t >> 8
+    return (((t & 0xFF) ^ h2 ^ (h2 << 1) ^ (h2 << 3) ^ (h2 << 4)) & 0xFF).astype(jnp.uint8)
 
 
 def _fft_dev(v, tw, k: int):
