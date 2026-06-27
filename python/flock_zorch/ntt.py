@@ -23,6 +23,8 @@ Requires `jax_enable_x64`.
 """
 from __future__ import annotations
 
+import functools
+
 import numpy as np
 import jax.numpy as jnp
 
@@ -30,6 +32,7 @@ from flock_zorch import field
 from flock_zorch import _hostfield as hf
 
 
+@functools.lru_cache(maxsize=None)
 def compute_twiddles(log_d: int) -> np.ndarray:
     """Host-side twiddle table for the standard NTT, basis {1, x, ..., x^(log_d-1)}.
 
@@ -38,6 +41,10 @@ def compute_twiddles(log_d: int) -> np.ndarray:
     `W_i(z) = W_{i-1}(z)*(W_{i-1}(z)+W_{i-1}(beta_{i-1}))`, normalizes each row by
     `W_i(beta_i)`, then emits `twiddle(layer, block) = span_get(evals[L-layer-1][1:],
     block)` layer-major. Returns uint64 [2^log_d - 1, 2]. Sequential (host).
+
+    Memoized on `log_d` (the table is data-independent and the host recurrence is
+    ~55ms at log_d=15) and returned read-only so the shared instance can't be
+    mutated; every caller copies it to device via `jnp.asarray`.
     """
     L = log_d
     evals = [[1 << i for i in range(L)]]  # evals[0] = basis (x^i = bit i)
@@ -61,6 +68,7 @@ def compute_twiddles(log_d: int) -> np.ndarray:
     for idx, e in enumerate(tw):
         arr[idx, 0] = np.uint64(e & 0xFFFFFFFFFFFFFFFF)
         arr[idx, 1] = np.uint64((e >> 64) & 0xFFFFFFFFFFFFFFFF)
+    arr.flags.writeable = False  # shared cached instance — callers jnp.asarray it
     return arr
 
 
