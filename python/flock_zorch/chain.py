@@ -74,6 +74,22 @@ def prove_chain_shift(in_vals, out_vals, ch, mul=field.mul):
     return rounds, value, claims
 
 
+def assemble_chain_claim(tau_pos, claims, k_log, region_log):
+    """flock `chain_common::assemble_chain_claim` — the packed-direct chain claim.
+    point (LSB-first, length m−7) = [τ_pos, sel0, 0^high, instance_point],
+    high = k_log − region_log − 1; value = claims.value. The PCS opens ẑ at this
+    point (its eq_ind == build_eq(point), what build_eq_sparse computes)."""
+    tau_pos = np.asarray(tau_pos, np.uint64).reshape(-1, 2)
+    high = k_log - region_log - 1
+    point = np.concatenate([
+        tau_pos,
+        np.asarray(claims["sel0"], np.uint64).reshape(1, 2),
+        np.zeros((high, 2), np.uint64),
+        np.asarray(claims["instance_point"], np.uint64).reshape(-1, 2),
+    ], axis=0)
+    return {"point": point, "value": np.asarray(claims["value"], np.uint64).reshape(2)}
+
+
 def fold_in_out(packed, k_log, tau_pos, input_byte_off, output_byte_off, mul=field.mul):
     """flock `chain_common::fold_in_out`. Collapse each instance's input/output
     slot to one F128: in_vals[i] = Σ_pos eq(τ_pos, pos)·ẑ_packed[(i, in_slot, pos)],

@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 
 from flock_zorch import field, ring_switch, basefold, pcs_open, pcs_commit, zerocheck, lincheck, ligerito
+from flock_zorch.sumcheck import build_eq
 from flock_zorch.challenger import Challenger  # noqa: F401  (re-exported for callers)
 
 
@@ -79,6 +80,41 @@ def open_batch_ligerito(config, z_packed, codeword, init_tree, x_outers, ch,
     target = jnp.zeros(2, jnp.uint64)
     for g, sc in zip(gammas, sumcheck_claims):
         target = field.add(target, mul(jnp.asarray(g), jnp.asarray(sc)))
+    lig = ligerito.recursive_prover_with_basis(
+        config, np.asarray(z_packed), np.asarray(b_combined), np.asarray(target),
+        codeword, init_tree, ch, mul=mul, use_host_sha=use_host_sha)
+    return {"ring_switches": s_hat_vs, "ligerito": lig}
+
+
+def open_batch_mixed_ligerito(config, z_packed, codeword, init_tree, x_outers, packed_direct,
+                              ch, mul=field.mul, use_host_sha=False) -> dict:
+    """Mixed batched open (flock `open_batch_mixed_ligerito_with_precomputed_s_hat_v`)
+    — the HASH-CHAIN open. Combines N ring-switched claims (x_outers, e.g. ab+c)
+    with M packed-direct claims (the chain claim: a direct ẑ-evaluation at a point,
+    eq_ind = build_eq(point) == build_eq_sparse(point)). Same recursive Ligerito
+    driver as open_batch_ligerito; b_combined just gains Σ_j γ_pd_j·eq_ind_j and the
+    target gains Σ_j γ_pd_j·value_j. γ order: the ring-switch γ's first (sampled
+    inside prove_batched), then γ_pd after observing each packed-direct value."""
+    ch.observe_label(b"flock-pcs-open-batch-v0")
+    s_hat_vs, rs_eq_inds, sumcheck_claims, gammas = ring_switch.prove_batched(z_packed, x_outers, ch, mul=mul)
+    # Packed-direct: observe each claim's value, THEN sample the γ_pd (flock order).
+    for pd in packed_direct:
+        ch.observe_label(b"flock-pcs-packed-direct-v0")
+        ch.observe_f128(pd["value"])
+    gammas_pd = [ch.sample_f128() for _ in packed_direct]
+
+    b_combined = jnp.asarray(rs_eq_inds[0])           # γ_rs already baked in
+    for r in rs_eq_inds[1:]:
+        b_combined = field.add(b_combined, jnp.asarray(r))
+    target = jnp.zeros(2, jnp.uint64)
+    for g, sc in zip(gammas, sumcheck_claims):
+        target = field.add(target, mul(jnp.asarray(g), jnp.asarray(sc)))
+    for pd, g in zip(packed_direct, gammas_pd):
+        eq_pd = build_eq(jnp.asarray(pd["point"]), mul=mul)   # length L = 2^(m-7)
+        gj = jnp.asarray(g)
+        b_combined = field.add(b_combined, mul(gj, eq_pd))
+        target = field.add(target, mul(gj, jnp.asarray(pd["value"])))
+
     lig = ligerito.recursive_prover_with_basis(
         config, np.asarray(z_packed), np.asarray(b_combined), np.asarray(target),
         codeword, init_tree, ch, mul=mul, use_host_sha=use_host_sha)
