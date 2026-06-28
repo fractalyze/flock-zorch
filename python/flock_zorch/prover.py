@@ -12,7 +12,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from flock_zorch import field, ring_switch, basefold, pcs_open, pcs_commit, zerocheck, lincheck, ligerito
+from flock_zorch import field, ring_switch, basefold, fri, pcs_commit, zerocheck, lincheck, ligerito
 from flock_zorch.sumcheck import build_eq
 from flock_zorch.challenger import Challenger  # noqa: F401  (re-exported for callers)
 
@@ -78,7 +78,7 @@ def open_batch(z_packed, codeword, init_tree, x_outers, k_code, log_inv_rate,
     s_hat_vs, rs_eq_inds, sumcheck_claims, gammas = ring_switch.prove_batched(z_packed, x_outers, ch, mul=mul)
     b_combined, _target = _combine_claims(rs_eq_inds, gammas, sumcheck_claims, mul)  # BaseFold ignores target
     b_combined = np.asarray(b_combined)
-    n_queries = pcs_open.default_fri_queries(log_inv_rate)
+    n_queries = fri.default_fri_queries(log_inv_rate)
     bf = basefold.prove(z_packed, b_combined, codeword, init_tree, k_code,
                         log_inv_rate, log_batch_size, n_queries, ch, mul=mul,
                         use_host_sha=use_host_sha)

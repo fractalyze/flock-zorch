@@ -5,7 +5,7 @@ byte-identical to flock-core. The keystone of the PCS open: a sumcheck over
 query openings.
 
 Reuses flock-zorch's verified primitives: `sumcheck.fold_single` (the low-bit
-a/b fold), `pcs_open.{row_batch_fold_all, fri_fold, compute_fri_arities}`,
+a/b fold), `fri.{row_batch_fold_all, fri_fold, compute_fri_arities}`,
 `merkle.{merkle_tree, merkle_multi_proof}`, `ntt.compute_twiddles`, and the
 SHA-256 `Challenger`.
 
@@ -22,7 +22,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from flock_zorch import field, sumcheck, merkle, ntt as ntt_mod, pcs_open
+from flock_zorch import field, sumcheck, merkle, ntt as ntt_mod, fri
 
 LABEL = b"flock-basefold-v0"
 
@@ -49,9 +49,9 @@ def _bf_ops(mul):
         o = (
             jax.jit(lambda a, b: _round_message(a, b, mul)),
             jax.jit(lambda a, r: sumcheck.fold_single(a, r, mul)),
-            jax.jit(functools.partial(lambda c, t, r, layer: pcs_open.fri_fold(c, t, layer, r, mul)),
+            jax.jit(functools.partial(lambda c, t, r, layer: fri.fri_fold(c, t, layer, r, mul)),
                     static_argnums=(3,)),
-            jax.jit(lambda cw, ch: pcs_open.row_batch_fold_all(cw, ch, mul)),
+            jax.jit(lambda cw, ch: fri.row_batch_fold_all(cw, ch, mul)),
         )
         _BF_CACHE[mul] = o
     return o
@@ -76,7 +76,7 @@ def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_s
     log_dim = k_code - log_inv_rate
     log_msg = log_batch_size + log_dim
     num_ntts = 1 << log_batch_size
-    arities = pcs_open.compute_fri_arities(log_dim)
+    arities = fri.compute_fri_arities(log_dim)
     num_epochs = len(arities)
     num_fri_commits = max(num_epochs - 1, 0)
     arity_0 = arities[0] if arities else 0

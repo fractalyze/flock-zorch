@@ -19,7 +19,7 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp  # noqa: E402
 
-from flock_zorch import field, ntt as ntt_mod, pcs_open  # noqa: E402
+from flock_zorch import field, ntt as ntt_mod, fri  # noqa: E402
 
 ART = Path(__file__).resolve().parents[3] / "artifacts"
 
@@ -51,7 +51,7 @@ def main() -> int:
     except Exception:  # noqa: BLE001
         pass
     for name, mul in muls:
-        got = np.asarray(jax.jit(lambda c, t, ch: pcs_open.fri_fold(c, t, layer, ch, mul=mul))(cwj, tw, chj))
+        got = np.asarray(jax.jit(lambda c, t, ch: fri.fri_fold(c, t, layer, ch, mul=mul))(cwj, tw, chj))
         ok = np.array_equal(got, golden)
         print(f"FRI fold byte-match vs flock ({name}, k_code={k_code} layer={layer}): "
               f"{'PASS' if ok else 'FAIL'}")
