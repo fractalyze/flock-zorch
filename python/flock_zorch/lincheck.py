@@ -24,7 +24,7 @@ import jax
 import jax.numpy as jnp
 
 from flock_zorch import field
-from flock_zorch.sumcheck import build_eq, build_eq_fused, _xor_reduce, ONE
+from flock_zorch.sumcheck import build_eq_fused, _xor_reduce, ONE
 from flock_zorch.zerocheck import _lagrange_weights, _to_int, _to_lohi
 from flock_zorch.challenger import Challenger
 
@@ -37,7 +37,7 @@ def build_quirky_eq_table(z_skip_int: int, x_inner_rest, k_skip: int, mul=field.
     (flock `build_quirky_eq_table`; i_skip in the LOW bits)."""
     lam = _lagrange_weights(k_skip, z_skip_int, 0)             # S-domain, len 2^k_skip
     lam = jnp.asarray(np.stack([_to_lohi(x) for x in lam]))    # [ell_skip, 2]
-    eq_rest = build_eq(jnp.asarray(x_inner_rest), mul=mul)     # [ell_rest, 2]
+    eq_rest = build_eq_fused(jnp.asarray(x_inner_rest), mul=mul)  # [ell_rest, 2] — fused (eager was ~2ms)
     prod = mul(eq_rest[:, None, :], lam[None, :, :])           # [ell_rest, ell_skip, 2]
     return prod.reshape(-1, 2)
 
