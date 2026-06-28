@@ -25,18 +25,17 @@ module(
 
 bazel_dep(name = "rules_python", version = "1.7.0")
 
-# zorch is not published on a Bazel registry; pin it from GitHub so CI builds
-# are reproducible. For local dev against a working copy, add to .bazelrc.user
-# (gitignored):
-#   common --override_module=zorch=/home/jooman/fractalyze/zorch
+# zorch is not published on a Bazel registry; it is vendored as a git submodule at
+# third_party/zorch (see .gitmodules), pinned via local_path_override so the bazel
+# build and the non-hermetic PYTHONPATH gate path use the IDENTICAL commit — bump
+# both at once by moving the submodule. The pin is the flock-byte-fiat-shamir branch
+# (byte-SHA256 transcript + FieldOps seam flock needs); keep requirements.in in
+# lockstep with it. To dev against another zorch checkout, override in .bazelrc.user
+# (gitignored):  common --override_module=zorch=/abs/path/to/your/zorch
 bazel_dep(name = "zorch", version = "0.0.0")
-git_override(
+local_path_override(
     module_name = "zorch",
-    remote = "https://github.com/fractalyze/zorch.git",
-    # Keep the requirements.in wheel set in lockstep with this pin: the zkx
-    # binary-field GPU contract is a hard cut and CPU-only CI can't catch a
-    # desync. (Same pin sp1-zorch carries against the same venv wheel set.)
-    commit = "ea6248792d223bcb0492b2e5930d3001932c45da",
+    path = "third_party/zorch",
 )
 
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")

@@ -3,7 +3,7 @@
 GPU port of [succinctlabs/flock](https://github.com/succinctlabs/flock) (an
 R1CS-over-GF(2) PIOP prover: zerocheck + lincheck, Ligerito/BaseFold PCS over
 F₂¹²⁸) onto Fractalyze's zorch / zkx compiler stack, in the style of
-`bellman-zorch` and `accumulation-zorch`. Upstream lives at `../flock` — it is
+`bellman-zorch` and `accumulation-zorch`. Upstream lives at `third_party/flock` — it is
 the byte-compare baseline. Read `README.md` for setup/run.
 
 ## Non-negotiables
@@ -43,14 +43,14 @@ zkx / prime-ir compiler, gated by the same byte-match:
 - Extension point: `zkx/backends/gpu/codegen/emitters/emitter_base.cc::AddLoweringPasses` — wire prime-ir's portable `BinaryFieldToArith` (shift-XOR/Karatsuba) into the GPU path, and/or a fused `flock.ghash_mul` composite emitter (the zorch `fused_region` name-routed mechanism).
 
 ## Dependency on `zorch`
-Scheme-agnostic machinery lives upstream in `zorch` (`../zorch`), per the team
+Scheme-agnostic machinery lives upstream in `zorch` (`third_party/zorch`), per the team
 rule (sp1-zorch/whir-zorch do the same). flock-zorch reuses:
 - `zorch.byte_transcript.Sha256Transcript` — the Merlin-over-SHA256 Fiat-Shamir
   duplex; `challenger.py` is the thin F128 (16-byte lo‖hi) glue over it.
 - `zorch.hash.sha256` — the byte-SHA-256 (data-parallel device sibling of the
   transcript's host hashlib path).
 - (planned) `zorch.sumcheck.field_ops.FieldOps` — the binary-field sumcheck seam.
-Run gates with **`PYTHONPATH=python:../zorch`** so the `zorch` package resolves.
+Run gates with **`PYTHONPATH=python:third_party/zorch`** so the `zorch` package resolves.
 What stays flock-specific: F128↔bytes serialization, the round-1 URM (F8/φ8/F8-NTT),
 the ∞-trick round loop, and the `prove_packed` assembly.
 
@@ -68,4 +68,4 @@ the ∞-trick round loop, and the `prove_packed` assembly.
   `/home/jooman/fractalyze/zorch/.venv` (jax 0.10.0.dev fork + `zk_dtypes` 0.0.7
   + zkx CUDA PJRT plugin). `jax_enable_x64` required for the uint64 lanes.
 - Rust: standalone rustup in `~/.cargo` (flock is edition 2024). `flock-core` is a
-  path dep at `../flock/crates/flock-core`.
+  path dep at `third_party/flock/crates/flock-core`.

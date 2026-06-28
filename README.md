@@ -5,6 +5,19 @@ R1CS-over-GF(2) PIOP prover — onto Fractalyze's zorch / zkx compiler stack,
 mirroring `bellman-zorch` / `accumulation-zorch`. See `CLAUDE.md` for the
 architecture and non-negotiables.
 
+## Setup (fresh GPU box)
+`flock` and `zorch` are pinned as git submodules under `third_party/`. One command
+bootstraps everything (submodules → venv → cargo build → goldens → smoke gates):
+
+```bash
+git clone --recursive git@github.com:fractalyze/flock-zorch.git && cd flock-zorch
+scripts/setup.sh
+```
+
+Full instructions — prerequisites, the gate environment, golden regeneration, the
+optional clmad GPU acceleration, and the apple-to-apple benchmarks — are in
+[`docs/SETUP.md`](docs/SETUP.md).
+
 ## Status
 Bottom-up port, each layer gated by a byte-match vs unmodified flock:
 
@@ -68,7 +81,7 @@ This repo is built **on `zorch`** (sp1-zorch-style bzlmod, `MODULE.bazel`): it
 reuses zorch's scheme-agnostic spine (`Sha256Transcript`, sumcheck fold
 primitives, `poly.eq`, `pcs.fold`/`basefold`) and keeps only the
 byte-identity-critical flock pieces here. GPU byte-match gates run on the zorch
-venv (`PYTHONPATH=python:../zorch`), not hermetic Bazel.
+venv (`PYTHONPATH=python:third_party/zorch`), not hermetic Bazel.
 
 ### First full sub-protocol: PCS commit, byte-identical + 10×
 `pcs::commit` (pack → zero-pad → interleaved forward NTT → SHA-256 Merkle →
@@ -146,21 +159,21 @@ that compiles on x86 (its NEON/parallel paths are `aarch64+aes`-gated). Reproduc
 ```bash
 cargo build --release --example bench_ntt_cpu          # CPU anchor (flock-matched flags)
 export PATH="$HOME/.local/cuda13/bin:$PATH"            # clmad cubin assembler
-JAX_PLATFORMS=cuda PYTHONPATH=python "$VENV" python/flock_zorch/testing/cpu_vs_gpu.py
+JAX_PLATFORMS=cuda PYTHONPATH=python:third_party/zorch "$VENV" python/flock_zorch/testing/cpu_vs_gpu.py
 ```
 
 ```bash
 # additive-NTT gate (dumps golden from flock-core's forward_transform_scalar, then
 # checks the jax port + self-computed twiddles match byte-for-byte on GPU):
 cargo run --release --example dump_ntt -- 12 artifacts/ntt_golden.bin
-JAX_PLATFORMS=cuda PYTHONPATH=python "$VENV" python/flock_zorch/testing/ntt_oracle_test.py
+JAX_PLATFORMS=cuda PYTHONPATH=python:third_party/zorch "$VENV" python/flock_zorch/testing/ntt_oracle_test.py
 ```
 
 ## Toolchain
 - GPU: RTX 5090 (sm_120), CUDA 12.9. zorch venv: `/home/jooman/fractalyze/zorch/.venv`
   (jax 0.10.0.dev fork + `zk_dtypes` 0.0.7 + zkx CUDA PJRT plugin).
 - Rust: standalone rustup in `~/.cargo` (flock is edition 2024). `flock-core` is a
-  path dep at `../flock/crates/flock-core` — the byte-compare baseline.
+  path dep at `third_party/flock/crates/flock-core` — the byte-compare baseline.
 
 ## Run the field byte-match gate
 ```bash
@@ -169,7 +182,7 @@ cargo run --release --example dump_field_mul -- 1048576 artifacts/field_mul_gold
 
 # 2. Check the jax port reproduces every product byte-for-byte, on GPU:
 VENV=/home/jooman/fractalyze/zorch/.venv/bin/python
-JAX_PLATFORMS=cuda PYTHONPATH=python "$VENV" python/flock_zorch/testing/field_oracle_test.py
+JAX_PLATFORMS=cuda PYTHONPATH=python:third_party/zorch "$VENV" python/flock_zorch/testing/field_oracle_test.py
 # ... and the known-answer vectors:
-JAX_PLATFORMS=cuda PYTHONPATH=python "$VENV" python/flock_zorch/testing/field_test.py
+JAX_PLATFORMS=cuda PYTHONPATH=python:third_party/zorch "$VENV" python/flock_zorch/testing/field_test.py
 ```

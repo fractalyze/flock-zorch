@@ -1,0 +1,6 @@
+[submodule "third_party/flock"]
+	path = third_party/flock
+	url = https://github.com/succinctlabs/flock.git
+[submodule "third_party/zorch"]
+	path = third_party/zorch
+	url = git@github.com:fractalyze/zorch.git
