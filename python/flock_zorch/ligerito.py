@@ -97,7 +97,7 @@ def sample_distinct_queries(ch, block_len: int, count: int) -> list[int]:
 
 class SumcheckProver:
     """flock `pcs::ligerito::SumcheckProver` — the stateful interleaved sumcheck
-    driver over (f, combined_basis, t_r). Round message (u_0,u_2) == basefold._prime
+    driver over (f, combined_basis, t_r). Round message (u_0,u_2) == basefold._round_message
     (LSB even/odd split); fold == sumcheck.fold_single (LSB). introduce_new stages a
     fresh basis; glue folds it into combined_basis with separation α."""
 
@@ -110,7 +110,7 @@ class SumcheckProver:
         self._pending = None
 
     def _msg(self, a, b):
-        u0, u2 = basefold._prime(a, b, self.mul)
+        u0, u2 = basefold._round_message(a, b, self.mul)
         m = (np.asarray(u0), np.asarray(u2))
         self.transcript.append(m)
         return m

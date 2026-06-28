@@ -67,10 +67,12 @@ def _fold_b128_elems_dev(suffix, eq):
 
 
 def fold_1b_rows(packed_witness, suffix_tensor, mul=field.mul) -> np.ndarray:
+    # mul unused (kept for API uniformity): this is a bit × F128 selection + XOR-reduce, no field multiply.
     return np.asarray(_fold_1b_rows_dev(jnp.asarray(packed_witness), jnp.asarray(suffix_tensor)))
 
 
 def fold_b128_elems(suffix_tensor, eq_r_dprime, mul=field.mul) -> np.ndarray:
+    # mul unused (kept for API uniformity): bit × F128 selection + XOR-reduce, no field multiply.
     return np.asarray(_fold_b128_elems_dev(jnp.asarray(suffix_tensor), jnp.asarray(eq_r_dprime)))
 
 

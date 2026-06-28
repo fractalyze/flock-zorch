@@ -27,7 +27,7 @@ from flock_zorch import field, sumcheck, merkle, ntt as ntt_mod, pcs_open
 LABEL = b"flock-basefold-v0"
 
 
-def _prime(a, b, mul):
+def _round_message(a, b, mul):
     """Round message (u_0, u_2) = (Σ a_e·b_e, Σ (a_e+a_o)·(b_e+b_o)) over the
     even/odd split (flock's round-0 prime / fused next-round message). Returns
     jnp (device) — the caller converts to np for the transcript/proof."""
@@ -47,7 +47,7 @@ def _bf_ops(mul):
     o = _BF_CACHE.get(mul)
     if o is None:
         o = (
-            jax.jit(lambda a, b: _prime(a, b, mul)),
+            jax.jit(lambda a, b: _round_message(a, b, mul)),
             jax.jit(lambda a, r: sumcheck.fold_single(a, r, mul)),
             jax.jit(functools.partial(lambda c, t, r, layer: pcs_open.fri_fold(c, t, layer, r, mul)),
                     static_argnums=(3,)),
@@ -84,7 +84,7 @@ def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_s
     twiddles = jnp.asarray(ntt_mod.compute_twiddles(k_code)) if log_dim > 0 else None
 
     ch.observe_label(LABEL)
-    jprime, jfold, jfri, jrb = _bf_ops(mul)
+    round_message, fold_single, fri_fold, row_batch = _bf_ops(mul)
 
     a = jnp.asarray(z_packed)
     bb = jnp.asarray(b)
@@ -100,18 +100,18 @@ def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_s
     # Each round: send (u0,u2), fold a/b at r; the first log_batch_size rounds defer
     # a row-batch over the codeword, the rest are per-round FRI folds, committed per epoch.
     for rnd in range(log_msg):
-        u0, u2 = (np.asarray(v) for v in jprime(a, bb))
+        u0, u2 = (np.asarray(v) for v in round_message(a, bb))
         ch.observe_f128(u0)
         ch.observe_f128(u2)
         round_messages.append((u0, u2))
         r = jnp.asarray(ch.sample_f128())
-        a = jfold(a, r)
-        bb = jfold(bb, r)
+        a = fold_single(a, r)
+        bb = fold_single(bb, r)
 
         if rnd < log_batch_size:
             rb_challenges.append(r)
             if rnd + 1 == log_batch_size:
-                cw_active = jrb(cw_full, jnp.stack(rb_challenges))
+                cw_active = row_batch(cw_full, jnp.stack(rb_challenges))
                 if arities:
                     cw_np = np.asarray(cw_active)
                     n_leaves = cw_np.shape[0] // post_rb_leaf_f128
@@ -123,7 +123,7 @@ def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_s
         else:
             fri_round_idx = rnd - log_batch_size
             layer = k_code - fri_round_idx - 1
-            cw_active = jfri(cw_active, twiddles, r, layer)
+            cw_active = fri_fold(cw_active, twiddles, r, layer)
             rounds_in_epoch += 1
             if rounds_in_epoch == arities[current_epoch]:
                 if current_epoch + 1 < num_epochs:

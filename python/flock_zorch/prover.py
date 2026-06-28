@@ -150,8 +150,9 @@ def prove_fast(z_packed, m, k_log, k_skip, useful_bits, a0, b0, z_lincheck, stat
     # c_full = x_inner_rest ++ x_outer for the C-claim point. Kept as the split-then-
     # rejoin (not just zc["r_rest"]) to mirror Rust's QuirkyPoint / quirky_x_outer_full.
     c_full = np.concatenate([zc["r_rest"][:inner_rest], zc["r_rest"][inner_rest:]], axis=0)
-    pcs_open = open_batch(z_packed, codeword, tree, [ab_full, c_full], k_code,
-                          log_inv_rate, log_batch_size, ch, mul=mul, use_host_sha=use_host_sha)
+    pcs_open_proof = open_batch(
+        z_packed, codeword, tree, [ab_full, c_full], k_code,
+        log_inv_rate, log_batch_size, ch, mul=mul, use_host_sha=use_host_sha)
 
-    return {"zerocheck": zc, "lincheck": (lc_rounds, lc_zp), "pcs_open": pcs_open,
+    return {"zerocheck": zc, "lincheck": (lc_rounds, lc_zp), "pcs_open": pcs_open_proof,
             "claim_ab_value": lc_claim["w"], "claim_c_value": zc["final_c_eval"]}

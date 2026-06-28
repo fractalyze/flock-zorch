@@ -83,8 +83,8 @@ def _theta_rho_pi_preimage(x, y, z):
 def _build_preimage_maps():
     """Precompute the fixed preimage index maps (independent of round / eq):
       _PRE_FWD[s] = preimage(decode(s))         (φ / φᵀ)
-      _PRE_A[j]   = preimage((x+1)%5, y, z)      (χ a-operand for t-AND row j)
-      _PRE_B[j]   = preimage((x+2)%5, y, z)      (χ b-operand)
+      _PRE_CHI_A[j]   = preimage((x+1)%5, y, z)      (χ a-operand for t-AND row j)
+      _PRE_CHI_B[j]   = preimage((x+2)%5, y, z)      (χ b-operand)
     where decode(s): z = s//25, x = (s%25)%5, y = (s%25)//5  (== state_idx layout)."""
     pre_fwd = np.zeros((STATE_BITS, 11), np.int64)
     pre_a = np.zeros((STATE_BITS, 11), np.int64)
@@ -99,7 +99,7 @@ def _build_preimage_maps():
     return pre_fwd, pre_a, pre_b
 
 
-_PRE_FWD, _PRE_A, _PRE_B = _build_preimage_maps()
+_PRE_FWD, _PRE_CHI_A, _PRE_CHI_B = _build_preimage_maps()  # φ preimage; χ a/b-operand preimages
 
 # within_lane_contiguous(j) = 64·(j%25) + j//25 — the witness sub-vector offset.
 _J = np.arange(STATE_BITS)
@@ -153,8 +153,8 @@ def accumulate_subkeccak(eq, comb_a, comb_b, col_state0, col_state24, rows_t, z_
     chi_a = np.zeros((N_T, STATE_BITS, 2), np.uint64)
     chi_b = np.zeros((N_T, STATE_BITS, 2), np.uint64)
     for r in range(N_T):
-        np.bitwise_xor.at(chi_a[r], _PRE_A.ravel(), np.repeat(e_t[r], 11, axis=0))
-        np.bitwise_xor.at(chi_b[r], _PRE_B.ravel(), np.repeat(e_t[r], 11, axis=0))
+        np.bitwise_xor.at(chi_a[r], _PRE_CHI_A.ravel(), np.repeat(e_t[r], 11, axis=0))
+        np.bitwise_xor.at(chi_b[r], _PRE_CHI_B.ravel(), np.repeat(e_t[r], 11, axis=0))
     comb_a[z_const] ^= _xr(e_t.reshape(-1, 2))   # α · sum_eq_t
 
     # ---- Round-constant accumulation (GF(2) state machine → RC_24).

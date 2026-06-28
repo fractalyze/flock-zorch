@@ -87,7 +87,7 @@ def open(z_packed, codeword, initial_tree, x_outer, k_code, log_inv_rate, log_ba
     shared challenger (already carrying commit/zerocheck/lincheck state in e2e)."""
     from flock_zorch import ring_switch, basefold  # local import: avoid import cycle
     ch.observe_label(b"flock-pcs-open-v0")
-    s_hat_v, rs_eq_ind, target = ring_switch.prove(z_packed, x_outer, ch, mul=mul)
+    s_hat_v, rs_eq_ind, _target = ring_switch.prove(z_packed, x_outer, ch, mul=mul)  # target unused: not in the proof bytes
     n_queries = default_fri_queries(log_inv_rate)
     bf = basefold.prove(z_packed, rs_eq_ind, codeword, initial_tree, k_code,
                         log_inv_rate, log_batch_size, n_queries, ch, mul=mul,
