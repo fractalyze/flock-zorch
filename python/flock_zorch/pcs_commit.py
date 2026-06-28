@@ -25,7 +25,7 @@ import jax.numpy as jnp
 
 from flock_zorch import field, ntt as ntt_mod, merkle
 
-LOG_PACKING = 7
+LOG_PACKING = field.LOG_PACKING
 
 
 def pack_witness(z_bits: np.ndarray, m: int) -> np.ndarray:
@@ -79,22 +79,7 @@ def commit_root(z_packed, m: int, log_inv_rate: int, log_batch_size: int, mul=fi
     z_packed: uint64 [2^(m-7), 2]. Returns uint8 [32], byte-identical to
     `flock::pcs::commit(z_packed, params).root`.
     """
-    log_msg = m - LOG_PACKING
-    log_dim = log_msg - log_batch_size
-    k_code = log_dim + log_inv_rate
-    num_ntts = 1 << log_batch_size
-    n_pos_msg = 1 << log_dim
-    n_pos_code = 1 << k_code
-
-    # SoA: z_packed flat = codeword[pos*num_ntts + lane] for the first 2^log_dim
-    # positions; zero-pad the remaining positions up to 2^k_code.
-    x = jnp.asarray(z_packed).reshape(n_pos_msg, num_ntts, 2)
-    pad = jnp.zeros((n_pos_code - n_pos_msg, num_ntts, 2), dtype=x.dtype)
-    codeword = jnp.concatenate([x, pad], axis=0).reshape(n_pos_code * num_ntts, 2)
-
-    tw = jnp.asarray(ntt_mod.compute_twiddles(k_code))
-    codeword = ntt_mod.forward_transform_interleaved(codeword, tw, k_code, num_ntts, mul=mul)
-
+    codeword, n_pos_code, num_ntts = _encode_codeword(z_packed, m, log_inv_rate, log_batch_size, mul)
     # Each leaf = one position's num_ntts F128 = num_ntts*16 LE bytes (F128 is
     # lo||hi little-endian, same as a uint64 array viewed as bytes on x86).
     leaves = np.asarray(codeword).reshape(n_pos_code, num_ntts * 2).view(np.uint8)

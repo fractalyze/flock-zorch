@@ -118,12 +118,19 @@ def _xr(a, axis=0):
     return np.bitwise_xor.reduce(a, axis=axis)
 
 
+def _scatter_preimage(dst, pre_map, vals):
+    """In-place XOR-scatter along a θ∘ρ∘π preimage map: dst[pre_map[s,k]] ^= vals[s]
+    for each of the pre_map.shape[1] preimage bits k. Preimage targets OVERLAP, which
+    is why this needs np.bitwise_xor.at (not a plain ^=); the direct column maps
+    (col_state0 / rows_t) are bijections, so those scatter with a plain ^=."""
+    np.bitwise_xor.at(dst, pre_map.ravel(), np.repeat(vals, pre_map.shape[1], axis=0))
+    return dst
+
+
 def _phi_t(v):
     """Apply φᵀ to an F128 buffer (keccak.rs `apply_phi_t`): scatter
     out[s_in] ⊕= v[s_out] for every s_in ∈ preimage(s_out)."""
-    out = np.zeros((STATE_BITS, 2), np.uint64)
-    np.bitwise_xor.at(out, _PRE_FWD.ravel(), np.repeat(v, 11, axis=0))
-    return out
+    return _scatter_preimage(np.zeros((STATE_BITS, 2), np.uint64), _PRE_FWD, v)
 
 
 def _phi_bool(v):
@@ -153,8 +160,8 @@ def accumulate_subkeccak(eq, comb_a, comb_b, col_state0, col_state24, rows_t, z_
     chi_a = np.zeros((N_T, STATE_BITS, 2), np.uint64)
     chi_b = np.zeros((N_T, STATE_BITS, 2), np.uint64)
     for r in range(N_T):
-        np.bitwise_xor.at(chi_a[r], _PRE_CHI_A.ravel(), np.repeat(e_t[r], 11, axis=0))
-        np.bitwise_xor.at(chi_b[r], _PRE_CHI_B.ravel(), np.repeat(e_t[r], 11, axis=0))
+        _scatter_preimage(chi_a[r], _PRE_CHI_A, e_t[r])
+        _scatter_preimage(chi_b[r], _PRE_CHI_B, e_t[r])
     comb_a[z_const] ^= _xr(e_t.reshape(-1, 2))   # α · sum_eq_t
 
     # ---- Round-constant accumulation (GF(2) state machine → RC_24).
@@ -188,6 +195,13 @@ def accumulate_subkeccak(eq, comb_a, comb_b, col_state0, col_state24, rows_t, z_
     comb_b[col_state0] ^= k_b
 
 
+def _combine_alpha_sides(comb_a, comb_b, alpha, mul=field.mul):
+    """comb = α·comb_a ⊕ comb_b — ONE field mul. GF(2¹²⁸) multiplication distributes
+    over XOR, so the A-side accumulates unscaled and is α-scaled once at the end.
+    Shared by the single-keccak and keccak3 walkers."""
+    return np.asarray(field.add(mul(jnp.asarray(alpha), jnp.asarray(comb_a)), jnp.asarray(comb_b)))
+
+
 class KeccakLincheckCircuit:
     """The procedural single-keccak lincheck walker (flock `KeccakLincheckCircuit`)."""
 
@@ -208,6 +222,4 @@ class KeccakLincheckCircuit:
         comb_a[Z_CONST] ^= e0
         comb_b[Z_CONST] ^= e0
 
-        # comb = α·comb_a ⊕ comb_b — one field mul (GF(2¹²⁸) mul distributes over XOR).
-        comb = field.add(mul(jnp.asarray(alpha), jnp.asarray(comb_a)), jnp.asarray(comb_b))
-        return np.asarray(comb)
+        return _combine_alpha_sides(comb_a, comb_b, alpha, mul)

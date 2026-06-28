@@ -38,6 +38,8 @@ import jax.numpy as jnp
 U64 = jnp.uint64
 _ONE = U64(1)
 
+LOG_PACKING = 7  # an F128 packs 2^7 = 128 bits; witness log-size m -> 2^(m-7) packed elems
+
 
 def add(a, b):
     """GF(2^128) addition is bitwise XOR. a, b: uint64 [..., 2]."""

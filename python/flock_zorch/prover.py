@@ -44,6 +44,27 @@ def bind_statement(ch, statement_digest, root) -> None:
     ch.observe_bytes(_as_bytes(root))
 
 
+def _combine_claims(rs_eq_inds, gammas, sumcheck_claims, mul, packed_direct=(), gammas_pd=()):
+    """γ-combine the batched ring-switch claims (+ optional packed-direct claims) into
+    the single (b_combined, target) the BaseFold/Ligerito open runs against. The
+    ring-switch γ's are already baked into each rs_eq_ind by prove_batched, so b is
+    their XOR-sum; target = Σ γ_i·sumcheck_claim_i. Packed-direct claims add
+    γ_pd_j·eq(point_j) to b and γ_pd_j·value_j to target. NB: all observe/sample stay
+    at the call sites — this is pure arithmetic, so it cannot perturb the transcript."""
+    b_combined = jnp.asarray(rs_eq_inds[0])
+    for r in rs_eq_inds[1:]:
+        b_combined = field.add(b_combined, jnp.asarray(r))   # γ_rs already baked in
+    target = jnp.zeros(2, jnp.uint64)
+    for g, sc in zip(gammas, sumcheck_claims):
+        target = field.add(target, mul(jnp.asarray(g), jnp.asarray(sc)))
+    for pd, g in zip(packed_direct, gammas_pd):
+        eq_pd = build_eq(jnp.asarray(pd["point"]), mul=mul)   # length L = 2^(m-7)
+        gj = jnp.asarray(g)
+        b_combined = field.add(b_combined, mul(gj, eq_pd))
+        target = field.add(target, mul(gj, jnp.asarray(pd["value"])))
+    return b_combined, target
+
+
 def open_batch(z_packed, codeword, init_tree, x_outers, k_code, log_inv_rate,
                log_batch_size, ch, mul=field.mul, use_host_sha: bool = False) -> dict:
     """Batched dual-claim PCS open — byte-identical to flock
@@ -54,10 +75,8 @@ def open_batch(z_packed, codeword, init_tree, x_outers, k_code, log_inv_rate,
     precompute is byte-equivalent to recomputing the round-0 message, so the
     existing basefold.prove suffices; target_combined doesn't affect proof bytes.)"""
     ch.observe_label(b"flock-pcs-open-batch-v0")
-    s_hat_vs, rs_eq_inds, _scs, _gammas = ring_switch.prove_batched(z_packed, x_outers, ch, mul=mul)
-    b_combined = jnp.asarray(rs_eq_inds[0])
-    for r in rs_eq_inds[1:]:
-        b_combined = field.add(b_combined, jnp.asarray(r))   # γ already baked in
+    s_hat_vs, rs_eq_inds, sumcheck_claims, gammas = ring_switch.prove_batched(z_packed, x_outers, ch, mul=mul)
+    b_combined, _target = _combine_claims(rs_eq_inds, gammas, sumcheck_claims, mul)  # BaseFold ignores target
     b_combined = np.asarray(b_combined)
     n_queries = pcs_open.default_fri_queries(log_inv_rate)
     bf = basefold.prove(z_packed, b_combined, codeword, init_tree, k_code,
@@ -75,12 +94,7 @@ def open_batch_ligerito(config, z_packed, codeword, init_tree, x_outers, ch,
     Σ_i γ_i·sumcheck_claim_i. Returns {ring_switches, ligerito: LigeritoProof}."""
     ch.observe_label(b"flock-pcs-open-batch-v0")
     s_hat_vs, rs_eq_inds, sumcheck_claims, gammas = ring_switch.prove_batched(z_packed, x_outers, ch, mul=mul)
-    b_combined = jnp.asarray(rs_eq_inds[0])
-    for r in rs_eq_inds[1:]:
-        b_combined = field.add(b_combined, jnp.asarray(r))
-    target = jnp.zeros(2, jnp.uint64)
-    for g, sc in zip(gammas, sumcheck_claims):
-        target = field.add(target, mul(jnp.asarray(g), jnp.asarray(sc)))
+    b_combined, target = _combine_claims(rs_eq_inds, gammas, sumcheck_claims, mul)
     lig = ligerito.recursive_prover_with_basis(
         config, np.asarray(z_packed), np.asarray(b_combined), np.asarray(target),
         codeword, init_tree, ch, mul=mul, use_host_sha=use_host_sha)
@@ -104,18 +118,8 @@ def open_batch_mixed_ligerito(config, z_packed, codeword, init_tree, x_outers, p
         ch.observe_f128(pd["value"])
     gammas_pd = [ch.sample_f128() for _ in packed_direct]
 
-    b_combined = jnp.asarray(rs_eq_inds[0])           # γ_rs already baked in
-    for r in rs_eq_inds[1:]:
-        b_combined = field.add(b_combined, jnp.asarray(r))
-    target = jnp.zeros(2, jnp.uint64)
-    for g, sc in zip(gammas, sumcheck_claims):
-        target = field.add(target, mul(jnp.asarray(g), jnp.asarray(sc)))
-    for pd, g in zip(packed_direct, gammas_pd):
-        eq_pd = build_eq(jnp.asarray(pd["point"]), mul=mul)   # length L = 2^(m-7)
-        gj = jnp.asarray(g)
-        b_combined = field.add(b_combined, mul(gj, eq_pd))
-        target = field.add(target, mul(gj, jnp.asarray(pd["value"])))
-
+    b_combined, target = _combine_claims(rs_eq_inds, gammas, sumcheck_claims, mul,
+                                         packed_direct=packed_direct, gammas_pd=gammas_pd)
     lig = ligerito.recursive_prover_with_basis(
         config, np.asarray(z_packed), np.asarray(b_combined), np.asarray(target),
         codeword, init_tree, ch, mul=mul, use_host_sha=use_host_sha)
@@ -130,7 +134,7 @@ def prove_fast(z_packed, m, k_log, k_skip, useful_bits, a0, b0, z_lincheck, stat
     on ONE shared challenger (no per-phase host re-transfer): commit → bind →
     zerocheck → lincheck → batched dual-claim open. a = A·z, b = B·z; for the
     identity R1CS a = b = c = z (the gated path). Returns the proof dict + claims."""
-    k_code = (m - 7 - log_batch_size) + log_inv_rate
+    k_code = (m - field.LOG_PACKING - log_batch_size) + log_inv_rate
     inner_rest = k_log - k_skip
 
     root, codeword, tree = pcs_commit.commit(z_packed, m, log_inv_rate, log_batch_size, mul, use_host_sha)

@@ -24,7 +24,7 @@ from flock_zorch import field
 from flock_zorch.sumcheck import build_eq, _xor_reduce
 from flock_zorch.lincheck import _round_eval, _bind_top
 
-LOG_PACKING = 7  # 128 = 2^7 bits per packed F128 element
+LOG_PACKING = field.LOG_PACKING  # 128 = 2^7 bits per packed F128 element
 
 
 def prove_chain_shift(in_vals, out_vals, ch, mul=field.mul):

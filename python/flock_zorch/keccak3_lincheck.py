@@ -13,11 +13,10 @@ walker; const_pin = the shared Z_CONST.
 """
 
 import numpy as np
-import jax.numpy as jnp
 
 from flock_zorch import field
 from flock_zorch.keccak_lincheck import (
-    accumulate_subkeccak, _WLC, LANE_BITS, STATE_BITS, N_T,
+    accumulate_subkeccak, _combine_alpha_sides, _WLC, LANE_BITS, STATE_BITS, N_T,
 )
 
 # --- keccak3 layout constants (keccak3.rs) --------------------------------
@@ -68,6 +67,4 @@ class Keccak3LincheckCircuit:
         comb_a[Z_CONST] ^= e0
         comb_b[Z_CONST] ^= e0
 
-        # comb = α·comb_a ⊕ comb_b — one field mul (GF(2¹²⁸) mul distributes over XOR).
-        comb = field.add(mul(jnp.asarray(alpha), jnp.asarray(comb_a)), jnp.asarray(comb_b))
-        return np.asarray(comb)
+        return _combine_alpha_sides(comb_a, comb_b, alpha, mul)

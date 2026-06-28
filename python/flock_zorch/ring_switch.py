@@ -23,7 +23,7 @@ from flock_zorch import field, sumcheck
 from flock_zorch.challenger import Challenger
 
 U64 = jnp.uint64
-LOG_PACKING = 7
+LOG_PACKING = field.LOG_PACKING
 LABEL = b"flock-ring-switch-v0"
 _W64 = (np.uint64(1) << np.arange(64, dtype=np.uint64))
 
