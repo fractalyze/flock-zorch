@@ -296,11 +296,31 @@ def _round1_core(mul):
 # ---------------------------------------------------------------------------
 
 
+@functools.partial(jax.jit, static_argnums=(1, 2))
+def _packed_to_rows(packed, m: int, k_skip: int):
+    """Packed F128 witness [2^(m-7), 2] uint64 -> uint8 rows [2^(m-k_skip), 2^k_skip],
+    unpacked ON DEVICE (bit r of element i = z[i·128 + r], LSB-first per lane).
+
+    The witness is 1/8 the size packed (8 MB vs 67 MB of one-byte-per-bit at m=26),
+    so taking the packed form and unpacking here turns a fat host->device transfer
+    into a small one + a cheap device kernel — the same device-unpack pattern
+    `prover._unpack_bits_dev` uses for the identity path."""
+    bi = jnp.arange(64, dtype=jnp.uint64)
+    lo = ((packed[:, 0:1] >> bi) & jnp.uint64(1)).astype(jnp.uint8)
+    hi = ((packed[:, 1:2] >> bi) & jnp.uint64(1)).astype(jnp.uint8)
+    bits = jnp.concatenate([lo, hi], axis=1).reshape(-1)        # [2^m]
+    return bits.reshape(1 << (m - k_skip), 1 << k_skip)
+
+
 def witness_to_rows(bits, m: int, k_skip: int):
-    """Witness uint8 [2^m] (0/1) -> device uint8 [2^(m-k_skip), 2^k_skip]. Accepts a
-    numpy array (transferred once) or an already-device array (reshaped, no copy) so
-    callers can keep the witness device-resident across round1 + fold_at_z."""
+    """Witness -> device uint8 rows [2^(m-k_skip), 2^k_skip], for round1 + fold_at_z.
+
+    Accepts three forms: the **packed F128** witness (uint64 [2^(m-7), 2]) — unpacked
+    on device (8x less host transfer, the preferred form); a uint8 [2^m] (0/1) bit
+    array (transferred once); or an already-device array (reshaped, no copy)."""
     n_chunks, ell = 1 << (m - k_skip), 1 << k_skip
+    if getattr(bits, "ndim", 0) == 2 and bits.shape[-1] == 2 and np.dtype(bits.dtype) == np.uint64:
+        return _packed_to_rows(jnp.asarray(bits), m, k_skip)   # packed F128 -> device unpack
     if isinstance(bits, jax.Array):
         return bits.reshape(n_chunks, ell)
     return jnp.asarray(np.asarray(bits, np.uint8).reshape(n_chunks, ell))

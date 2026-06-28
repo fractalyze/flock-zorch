@@ -97,7 +97,7 @@ def run(mul):
     # Stage B: zerocheck on real a=A·z, b=B·z, c=z (useful_bits padding) — shared challenger
     ch = Challenger(b"flock-blake3-v0")
     prover.bind_statement(ch, g["stmt"], root)
-    a_bits = _unpack(g["a"], m); b_bits = _unpack(g["b"], m); c_bits = _unpack(g["z"], m)
+    a_bits, b_bits, c_bits = g["a"], g["b"], g["z"]  # packed F128 — witness_to_rows unpacks on device
     zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, mul=mul, ch=ch)
     _eq("zc round1_ab", zc["round1_ab"], g["zc"]["r1ab"], results)
     _eq("zc round1_c", zc["round1_c"], g["zc"]["r1c"], results)

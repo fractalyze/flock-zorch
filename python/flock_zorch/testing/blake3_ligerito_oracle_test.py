@@ -93,7 +93,7 @@ def run(mul):
 
     ch = Challenger(b"flock-blake3-lig-v0")
     prover.bind_statement(ch, g["stmt"], root)
-    a_bits, b_bits, c_bits = _unpack(g["a"], m), _unpack(g["b"], m), _unpack(g["z"], m)
+    a_bits, b_bits, c_bits = g["a"], g["b"], g["z"]  # packed F128 — witness_to_rows unpacks on device
     zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, mul=mul, ch=ch)
     results.append(("zerocheck round1_ab", np.array_equal(zc["round1_ab"], g["zc"]["r1ab"])))
     results.append(("zerocheck final_c", np.array_equal(zc["final_c_eval"], g["zc"]["fc"])))

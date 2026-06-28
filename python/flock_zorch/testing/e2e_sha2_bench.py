@@ -60,7 +60,7 @@ def main():
 
     # setup (host witness-prep / circuit build — not the GPU prover, not timed)
     csc = lincheck.CscCircuit(g["a0_rows"], g["b0_rows"], 1 << k_log, const_pin=meta["const_pin"])
-    a_bits = _unpack(g["a"], m); b_bits = _unpack(g["b"], m); c_bits = _unpack(g["z"], m)
+    a_bits, b_bits, c_bits = g["a"], g["b"], g["z"]  # packed F128 — witness_to_rows unpacks on device (8x less host transfer)
     z = g["z"]; stmt = g["stmt"]
 
     def prove_once():
