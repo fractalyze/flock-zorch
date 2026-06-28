@@ -39,15 +39,30 @@ GPU prover with **no blake3-specific Python** — only a golden dumper
 - BaseFold (`blake3_oracle_test.py`, m=22): full `R1csProof` ✅
 - Ligerito (`blake3_ligerito_oracle_test.py`, m=22): full `R1csProofLigerito` ✅
 
-**Bench (m=22, RTX 5090 clmad vs same-instance flock x86 BaseFold):** the GPU
-*field-arithmetic* prover (commit 8 ms + zerocheck + open ≈ 55 ms) is on par with
-flock's 61 ms CPU prove, but the end-to-end real-R1CS number is **555 ms (0.1×)**
-because the **CSC lincheck fold runs on host** (`np.bitwise_xor.at` over BLAKE3's
-~21 M nonzeros = **491 ms**, a fixed per-block tax independent of m). flock does the
-same fold in fast Rust inside its 61 ms. **#1 remaining optimization: move the CSC
-fold to device** (GPU XOR-scatter) — shared headroom with sha2, but far heavier for
-BLAKE3 (21 M nnz vs sha2's smaller matrices); once on-device it unlocks the same
-≥10× the identity prover already shows (the GPU arithmetic is already competitive).
+**The CSC lincheck fold is now on device.** It was the bottleneck — a host
+`np.bitwise_xor.at` over BLAKE3's ~21 M nonzeros at **491 ms**, a fixed per-block
+tax that pinned the end-to-end prove at 555 ms (0.1×). The transposed binary matvec
+`out[c] = Σ_{r:M[r,c]=1} eq[r]` is a **column-segmented XOR-reduce**; a padded gather
+blows up on the skewed const_pin column (~15 K rows) and an atomic XOR-scatter would
+hotspot it, so `lincheck.CscCircuit` now **sorts the nonzeros by column once (host)**
+then per fold runs a device **prefix-XOR scan + segment-boundary diff + clean
+scatter-set** (`_seg_xor_fold`). Byte-identical to the old host scatter, **491 ms →
+0.48 ms (1256×)**. Shared by sha2 (re-gated green).
+
+**Bench (RTX 5090 clmad vs same-instance flock x86 BaseFold, device CSC fold):**
+
+| m | flock CPU (BaseFold, x86 scalar) | GPU flock-zorch | speedup |
+|---|---|---|---|
+| 22 | 56.5 ms | 64.5 ms | 0.9× |
+| 26 | 267 ms | 115 ms | **2.3×** |
+| 28 | 1049 ms | 283 ms | **3.7×** |
+
+Crossover ~m=23–24; the win grows with m (the fixed sequential FS round-trips
+amortize against the bulk NTT/URM/FRI the GPU crushes). 3.7×@m28 is the honest
+**real-circuit BaseFold** number — comparable to sha2's 3.2×@m28, and below the
+dense-identity 16× because (a) a real sparse R1CS lets the CPU hit sparse fast-paths
+the dense prover skips, and (b) BaseFold is not flock's headline backend (Ligerito
+is). Same x86-scalar caveat as elsewhere ([[flock-baseline-needs-macbook]]).
 
 This repo is built **on `zorch`** (sp1-zorch-style bzlmod, `MODULE.bazel`): it
 reuses zorch's scheme-agnostic spine (`Sha256Transcript`, sumcheck fold

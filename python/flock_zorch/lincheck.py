@@ -68,28 +68,66 @@ def _flatten_nz(rows):
     return cols, rowi
 
 
+def _csc_segments(col, row):
+    """Precompute the device segment-XOR-reduce plan for one sparse binary matrix
+    M (flat nonzeros: M[row[i], col[i]] = 1). The transposed fold out[c] =
+    Σ_{i:col[i]=c} eq[row[i]] is a segment-XOR-reduce keyed by column. Sort the
+    nonzeros by column (host, ONCE) so each column is a contiguous run; record the
+    gather order, each run's LAST index, and the distinct present columns. The
+    per-fold device path (`_seg_xor_fold`) then needs only a gather + prefix scan +
+    a clean scatter — no atomics (so the skewed const_pin column is not a hotspot).
+    Returns device int32 arrays (row_sorted, seg_end, present) or None if empty."""
+    if len(col) == 0:
+        return None
+    order = np.argsort(col, kind="stable")
+    col_s = col[order]
+    row_s = row[order].astype(np.int32)
+    change = np.empty(len(col_s), dtype=bool)
+    change[-1] = True
+    change[:-1] = col_s[1:] != col_s[:-1]            # run boundaries (last-of-run)
+    seg_end = np.nonzero(change)[0].astype(np.int32)
+    present = col_s[seg_end].astype(np.int32)
+    return jnp.asarray(row_s), jnp.asarray(seg_end), jnp.asarray(present)
+
+
+@functools.partial(jax.jit, static_argnums=(4,))
+def _seg_xor_fold(eq, row_sorted, seg_end, present, k):
+    """Device transposed binary matvec out[c] = XOR_{i:col[i]=c} eq[row[i]], via a
+    sorted prefix-XOR scan. Inclusive prefix-XOR P over the column-sorted gathered
+    values; each column's reduce = P[seg_end] XOR P[prev seg_end] (XOR is its own
+    inverse), scattered (set, no duplicates) into the dense [k,2] output."""
+    vals = eq[row_sorted]                                          # [nnz, 2]
+    pref = jax.lax.associative_scan(jnp.bitwise_xor, vals, axis=0)  # inclusive prefix XOR
+    ends = pref[seg_end]                                           # cumulative through each run end
+    prev = jnp.concatenate([jnp.zeros((1, 2), U64), ends[:-1]], axis=0)
+    seg = jnp.bitwise_xor(ends, prev)                             # per-column XOR-reduce
+    return jnp.zeros((k, 2), U64).at[present].set(seg)
+
+
 class CscCircuit:
     """Sparse lincheck circuit (flock `CscCircuit`) for real hash R1CS where k =
-    2^k_log is too large for dense [k,k] matrices (sha2 k=32768). Holds A₀/B₀ as
-    flat nonzero (col,row) pairs; `fold_alpha_batched` is the transposed binary
-    matvec out[c] = α·Σ_{r:A[r,c]=1} eq[r] ⊕ Σ_{r:B[r,c]=1} eq[r], done as an
-    XOR-scatter (`np.bitwise_xor.at`) on the host — handles the skewed const_pin
-    column degree a padded gather can't. `const_pin` carries the +β pin column."""
+    2^k_log is too large for dense [k,k] matrices (sha2 k=32768, blake3 k=16384).
+    Holds A₀/B₀ as flat nonzero (col,row) pairs; `fold_alpha_batched` is the
+    transposed binary matvec out[c] = α·Σ_{r:A[r,c]=1} eq[r] ⊕ Σ_{r:B[r,c]=1} eq[r].
+    Runs **on device** as a column-sorted prefix-XOR scan (`_seg_xor_fold`) — handles
+    the skewed const_pin column degree (a padded gather would blow up, an atomic
+    XOR-scatter would hotspot) without either. `const_pin` carries the +β pin column.
+    (The construction-time column sort is host, once.)"""
 
     def __init__(self, a0_rows, b0_rows, k: int, const_pin=None):
         self.k = k
         self.const_pin = const_pin
-        self.a_col, self.a_row = _flatten_nz(a0_rows)
-        self.b_col, self.b_row = _flatten_nz(b0_rows)
+        a_col, a_row = _flatten_nz(a0_rows)
+        b_col, b_row = _flatten_nz(b0_rows)
+        self._a_seg = _csc_segments(a_col, a_row)
+        self._b_seg = _csc_segments(b_col, b_row)
 
     def fold_alpha_batched(self, alpha, eq_inner, mul=field.mul):
-        eq = np.asarray(eq_inner, np.uint64).reshape(-1, 2)
-        out_a = np.zeros((self.k, 2), np.uint64)
-        np.bitwise_xor.at(out_a, self.a_col, eq[self.a_row])
-        out_b = np.zeros((self.k, 2), np.uint64)
-        np.bitwise_xor.at(out_b, self.b_col, eq[self.b_row])
-        comb = field.add(mul(jnp.asarray(alpha), jnp.asarray(out_a)), jnp.asarray(out_b))
-        return np.asarray(comb)
+        eq = jnp.asarray(np.asarray(eq_inner, np.uint64).reshape(-1, 2))
+        zero = jnp.zeros((self.k, 2), U64)
+        out_a = _seg_xor_fold(eq, *self._a_seg, self.k) if self._a_seg else zero
+        out_b = _seg_xor_fold(eq, *self._b_seg, self.k) if self._b_seg else zero
+        return field.add(mul(jnp.asarray(alpha), out_a), out_b)
 
 
 def partial_fold_packed_z(z_packed_bytes: bytes, m: int, k_log: int, eq_outer, mul=field.mul):

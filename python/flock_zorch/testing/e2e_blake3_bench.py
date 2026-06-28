@@ -6,9 +6,9 @@ times the GPU prover phases on one shared challenger. Byte-identity is pinned by
 blake3_oracle_test. CPU baseline: bench_blake3_cpu.rs (same instance, BaseFold).
 
 HONEST scope: the timed GPU number is the PROVER (commit/zerocheck/lincheck/open);
-the host matvec a=A·z (flock witness-prep) is excluded, and the CSC lincheck fold
-currently runs on host (np.bitwise_xor.at over blake3's ~21M nonzeros) — a known
-device-port headroom shared with sha2 (and present on flock's CPU side too).
+the host matvec a=A·z (flock witness-prep) is excluded. The CSC lincheck fold now
+runs ON DEVICE (lincheck.CscCircuit sorted prefix-XOR scan, ~0.5 ms vs the old
+491 ms host np.bitwise_xor.at over blake3's ~21M nonzeros).
 
 Run:
   export PATH="$HOME/.local/cuda13/bin:$PATH"
