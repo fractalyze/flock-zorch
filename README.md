@@ -23,9 +23,31 @@ Bottom-up port, each layer gated by a byte-match vs unmodified flock:
 | **lincheck `prove` (2nd PIOP → LincheckProof)** | ✅ **byte-identical to flock** (sw + clmad), 6 regimes | `lincheck_oracle_test.py` |
 | ring-switch + BaseFold + **full `pcs::open`** | ✅ **byte-identical to flock** (sw + clmad) | `ring_switch_oracle_test.py`, `basefold_oracle_test.py`, `pcs_open_oracle_test.py` |
 | **e2e fused prover (`prover.prove_fast`)** | ✅ **byte-identical to flock `prove`** (full `R1csProof`: commit→bind→zerocheck→lincheck→batched dual-claim open), m=13–20 | `e2e_oracle_test.py` |
+| **hash-circuit R1CS provers (real instances)** | ✅ **Keccak-f[1600] · Keccak3 · SHA-256 · BLAKE3 all byte-identical to flock** (full `R1csProof`; BaseFold + Ligerito) — same proving scheme + same hash set as flock | `keccak_*`, `keccak3_ligerito_*`, `sha2_*`/`sha2_ligerito_*`, `blake3_oracle_test.py` / `blake3_ligerito_oracle_test.py` |
 | **GPU full-prover ≥10× CPU** | ✅ **9.5× @m=26, 16.6× @m=28** (vs same identity-R1CS x86 CPU) | `e2e_fused_bench.py` + `bench_e2e_cpu.rs` |
 | host SHA-NI Merkle FFI (SHA off-GPU) | ✅ byte-identical, merkle 35→1ms | `merkle_oracle_test.py` (`FLOCK_HOST_SHA=1`) |
 | fused `.mlirbc` + Rust host (PJRT) | ⏳ optional (prover runs as host-driven jax today) | — |
+
+### BLAKE3 hash circuit (closes the last coverage gap vs flock)
+flock supports four hash circuits — Keccak-f[1600], Keccak3, SHA-256, BLAKE3.
+The first three were already byte-identical; **BLAKE3 now is too**, so flock-zorch
+matches flock on *both* the proving scheme *and* the full hash-circuit set. BLAKE3's
+R1CS mirrors sha2 (populated `a_0`/`b_0` sparse matrices via `build_matrices`,
+folded by the generic CSC lincheck circuit), so the port reuses the entire generic
+GPU prover with **no blake3-specific Python** — only a golden dumper
+(`examples/dump_blake3*.rs`) and the byte gates. Verified bit-for-bit vs flock:
+- BaseFold (`blake3_oracle_test.py`, m=22): full `R1csProof` ✅
+- Ligerito (`blake3_ligerito_oracle_test.py`, m=22): full `R1csProofLigerito` ✅
+
+**Bench (m=22, RTX 5090 clmad vs same-instance flock x86 BaseFold):** the GPU
+*field-arithmetic* prover (commit 8 ms + zerocheck + open ≈ 55 ms) is on par with
+flock's 61 ms CPU prove, but the end-to-end real-R1CS number is **555 ms (0.1×)**
+because the **CSC lincheck fold runs on host** (`np.bitwise_xor.at` over BLAKE3's
+~21 M nonzeros = **491 ms**, a fixed per-block tax independent of m). flock does the
+same fold in fast Rust inside its 61 ms. **#1 remaining optimization: move the CSC
+fold to device** (GPU XOR-scatter) — shared headroom with sha2, but far heavier for
+BLAKE3 (21 M nnz vs sha2's smaller matrices); once on-device it unlocks the same
+≥10× the identity prover already shows (the GPU arithmetic is already competitive).
 
 This repo is built **on `zorch`** (sp1-zorch-style bzlmod, `MODULE.bazel`): it
 reuses zorch's scheme-agnostic spine (`Sha256Transcript`, sumcheck fold
