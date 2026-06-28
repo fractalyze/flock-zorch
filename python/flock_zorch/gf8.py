@@ -193,109 +193,15 @@ class AdditiveNttGf8:
         return _ifft(np.asarray(v, dtype=np.uint8), self.twiddles, 1)
 
 
-# ---------------------------------------------------------------------------
-# Device (GPU) F8: the same tables + additive NTT in jnp, so round1_naive runs
-# on the GPU instead of host numpy (the round-1 URM was the prover's dominant host
-# cost). Byte-identical to the host path (gated by the URM oracle).
-# ---------------------------------------------------------------------------
-
-_MUL_DEV = jnp.asarray(_MUL)            # [256, 256] uint8
-_PHI_DEV = jnp.asarray(PHI_8_TABLE)     # [256, 2] uint64
-
-
-def _gf8_mul_dev(a, b):
-    """Elementwise F8 multiply on device — ARITHMETIC (clmul8 + mod-0x11B reduce),
-    no table gather. A 256x256 table gather over the F8-NTT's elements is
-    memory-bound; 8 unrolled XOR-shifts + two reduction folds is compute-bound and
-    faster. Byte-identical to the `_MUL` table (same `_clmul8`/`_gf8_reduce` math)."""
-    a16 = a.astype(jnp.uint16)
-    b16 = b.astype(jnp.uint16)
-    p = jnp.zeros_like(a16)
-    for i in range(8):
-        p = p ^ jnp.where(((a16 >> i) & 1) != 0, b16 << i, jnp.uint16(0))
-    h = p >> 8
-    t = (p & 0xFF) ^ h ^ (h << 1) ^ (h << 3) ^ (h << 4)
-    h2 = t >> 8
-    return (((t & 0xFF) ^ h2 ^ (h2 << 1) ^ (h2 << 3) ^ (h2 << 4)) & 0xFF).astype(jnp.uint8)
-
-
-def _fft_dev(v, tw, k: int):
-    """Iterative DIF additive-NTT over F8 (device); v: uint8 [N, 2^k]. Equivalent
-    to the recursive `_fft`: level L butterflies 2^L blocks with binary-heap
-    twiddles tw[2^L-1 : 2^(L+1)-1]."""
-    n, ell = v.shape[0], 1 << k
-    for level in range(k):
-        nn, block = 1 << level, ell >> level
-        half = block // 2
-        lam = tw[(1 << level) - 1:(1 << (level + 1)) - 1]      # [nn]
-        vr = v.reshape(n, nn, 2, half)
-        lo, hi = vr[:, :, 0, :], vr[:, :, 1, :]                # [n, nn, half]
-        lam_b = jnp.broadcast_to(lam[None, :, None], lo.shape)
-        new_lo = lo ^ _gf8_mul_dev(lam_b, hi)
-        new_hi = hi ^ new_lo
-        v = jnp.stack([new_lo, new_hi], axis=2).reshape(n, ell)
-    return v
-
-
-def _ifft_dev(v, tw, k: int):
-    """Iterative DIT inverse additive-NTT over F8 (device); deepest level first."""
-    n, ell = v.shape[0], 1 << k
-    for level in reversed(range(k)):
-        nn, block = 1 << level, ell >> level
-        half = block // 2
-        lam = tw[(1 << level) - 1:(1 << (level + 1)) - 1]
-        vr = v.reshape(n, nn, 2, half)
-        lo, hi = vr[:, :, 0, :], vr[:, :, 1, :]
-        lam_b = jnp.broadcast_to(lam[None, :, None], hi.shape)
-        new_hi = hi ^ lo
-        new_lo = lo ^ _gf8_mul_dev(lam_b, new_hi)
-        v = jnp.stack([new_lo, new_hi], axis=2).reshape(n, ell)
-    return v
-
-
-_R1_CACHE: dict = {}
-
-
-def _round1_core(mul):
-    """Fused round-1 core, cached per `mul`: extend a/b/c S→Λ, a·b, φ8-embed, AND
-    eq-accumulate — all in ONE jit kernel so the large [N,ell,2] φ8 intermediate is
-    consumed in-fusion and never written to HBM (halves round1's bandwidth vs the
-    separate extend + accumulate)."""
-    fn = _R1_CACHE.get(mul)
-    if fn is None:
-        @functools.partial(jax.jit, static_argnums=(3,))
-        def core(a, b, c, k_skip, tw_s, tw_l, eqx):
-            a_l = _fft_dev(_ifft_dev(a, tw_s, k_skip), tw_l, k_skip)
-            b_l = _fft_dev(_ifft_dev(b, tw_s, k_skip), tw_l, k_skip)
-            c_l = _fft_dev(_ifft_dev(c, tw_s, k_skip), tw_l, k_skip)
-            phi_ab = _PHI_DEV[_gf8_mul_dev(a_l, b_l).astype(jnp.int32)]
-            phi_c = _PHI_DEV[c_l.astype(jnp.int32)]
-            return (field.sum(mul(eqx, phi_ab), axis=0),
-                    field.sum(mul(eqx, phi_c), axis=0))
-        fn = core
-        _R1_CACHE[mul] = fn
-    return fn
+# Device (GPU) F8 kernels for the round-1 URM live in _gf8_device. Module import
+# (after the host PHI_8_TABLE above): the gf8 <-> _gf8_device cycle is broken by
+# importing the MODULE and reaching its kernels at call time (no import-time lookup).
+from flock_zorch import _gf8_device
 
 
 # ---------------------------------------------------------------------------
 # round1_naive — the zerocheck round-1 URM reference (== the wire round1_ab/c).
 # ---------------------------------------------------------------------------
-
-
-@functools.partial(jax.jit, static_argnums=(1, 2))
-def _packed_to_rows(packed, m: int, k_skip: int):
-    """Packed F128 witness [2^(m-7), 2] uint64 -> uint8 rows [2^(m-k_skip), 2^k_skip],
-    unpacked ON DEVICE (bit r of element i = z[i·128 + r], LSB-first per lane).
-
-    The witness is 1/8 the size packed (one F128 lane vs one byte per bit), so
-    taking the packed form and unpacking here turns a fat host->device transfer
-    into a small one + a cheap device kernel — the same device-unpack pattern
-    `prover._unpack_bits_dev` uses for the identity path."""
-    bi = jnp.arange(64, dtype=jnp.uint64)
-    lo = ((packed[:, 0:1] >> bi) & jnp.uint64(1)).astype(jnp.uint8)
-    hi = ((packed[:, 1:2] >> bi) & jnp.uint64(1)).astype(jnp.uint8)
-    bits = jnp.concatenate([lo, hi], axis=1).reshape(-1)        # [2^m]
-    return bits.reshape(1 << (m - k_skip), 1 << k_skip)
 
 
 def witness_to_rows(bits, m: int, k_skip: int):
@@ -306,7 +212,7 @@ def witness_to_rows(bits, m: int, k_skip: int):
     array (transferred once); or an already-device array (reshaped, no copy)."""
     n_chunks, ell = 1 << (m - k_skip), 1 << k_skip
     if getattr(bits, "ndim", 0) == 2 and bits.shape[-1] == 2 and np.dtype(bits.dtype) == np.uint64:
-        return _packed_to_rows(jnp.asarray(bits), m, k_skip)   # packed F128 -> device unpack
+        return _gf8_device._packed_to_rows(jnp.asarray(bits), m, k_skip)   # packed F128 -> device unpack
     if isinstance(bits, jax.Array):
         return bits.reshape(n_chunks, ell)
     return jnp.asarray(np.asarray(bits, np.uint8).reshape(n_chunks, ell))
@@ -323,7 +229,7 @@ def round1_rows(a, b, c, m: int, k_skip: int, r, mul=field.mul):
     tw_l = jnp.asarray(_compute_twiddles(k_skip, ell))   # Lambda = {ell..2*ell-1}
     r = np.asarray(r, dtype=np.uint64)
     eqx = sumcheck.build_eq_fused(jnp.asarray(r[k_skip:]), mul=mul)[:, None, :]  # [n_chunks, 1, 2]
-    p_ab, p_c = _round1_core(mul)(a, b, c, k_skip, tw_s, tw_l, eqx)  # fused extend+phi+accum
+    p_ab, p_c = _gf8_device._round1_core(mul)(a, b, c, k_skip, tw_s, tw_l, eqx)  # fused extend+phi+accum
     return np.asarray(p_ab), np.asarray(p_c)
 
 
