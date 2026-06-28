@@ -1,10 +1,12 @@
-"""flock GF(2^128) arithmetic in the GHASH basis, authored in jax.
+"""flock GF(2^128) arithmetic in the GHASH basis, authored in jax. Ports flock-core
+`field/gf2_128.rs` (the `software` module: `clmul64` / `ghash_mul_unreduced` /
+`ghash_mul`, and the free `ghash_reduce`); see the flock paper §4.3 (field).
 
 flock (succinctlabs/flock) represents F128 = GF(2^128) in the GHASH/POLYVAL
 polynomial basis: irreducible p(x) = x^128 + x^7 + x^2 + x + 1 (reduction
-constant 0x87), natural (non-bit-reflected) bit order. An element is two u64
-limbs {lo, hi} where `lo` holds the coefficients of x^0..x^63 and `hi` of
-x^64..x^127.
+constant 0x87), natural (non-bit-reflected) bit order, adjoined root γ = x
+(so F128(lo=2) = x). An element is two u64 limbs {lo, hi} where `lo` holds the
+coefficients of x^0..x^63 and `hi` of x^64..x^127.
 
 zk_dtypes ships `binary_field_t7` (GF(2^128)) but in the x^2+x+a TOWER basis,
 a DIFFERENT (isomorphic, not bit-compatible) representation -- e.g. 2*2 = 3
@@ -20,11 +22,11 @@ little-endian host `np.asarray(x).tobytes()` equals flock's
 The carryless product is bit-serial via `lax.fori_loop` (NOT a Python unroll):
 the 64 steps stay one while-loop body, so the kernel is O(1) memory and scales
 to flock's production codeword sizes (2^23+). A fully-unrolled version OOMs --
-XLA materializes the 256-step chain (~24 GiB at 2^23). Throughput on an RTX 5090
-is ~0.12 G mul/s, ~270x off the XOR-add bandwidth ceiling: the real speedup is
-the PTX `clmad` carryless-multiply-add (PTX ISA 9.3), which needs a CUDA 13.x
-toolchain (the installed ptxas 12.9 caps at PTX 8.8). Perf is the zkx compiler's
-job -- see CLAUDE.md.
+XLA materializes the whole 256-step chain. This software multiply is correct but
+not the fast path: GPU acceleration is the PTX `clmad` (carryless multiply-ADD;
+PTX has no standalone CLMUL, only the fused multiply-add, so this agrees with
+CLAUDE.md's "no PTX CLMUL"), wired in the zkx compiler rather than here -- perf is
+the compiler's job (see CLAUDE.md; benchmarks in optim/clmad/README.md).
 
 Requires `jax_enable_x64`.
 """

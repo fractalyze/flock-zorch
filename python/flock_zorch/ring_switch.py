@@ -56,7 +56,7 @@ def _from_bits(bits: np.ndarray) -> np.ndarray:
 @jax.jit
 def _fold_1b_rows_dev(witness, suffix):
     """s_hat_v[r] = Σ_i bit_r(witness[i])·suffix[i]. witness/suffix [n,2] -> [128,2].
-    Device + jit (was eager over a ~1GB [n,128,2] intermediate — ring_switch's 84%)."""
+    Device + jit so the large [n,128,2] intermediate stays fused on device, off HBM."""
     bits = _to_bits_dev(witness)                       # [n,128]
     return sumcheck._xor_reduce(bits[:, :, None] * suffix[:, None, :], axis=0)
 

@@ -7,11 +7,13 @@ PoW, and a plaintext residual. Proof scales ~log²(log_n).
 
 Reuses flock-zorch's byte-identical primitives: `ntt` (compute_twiddles +
 forward_transform_interleaved), `merkle` (tree/multi_proof + host SHA-NI),
-`sumcheck` (build_eq / fold / _prime), `challenger` (SHA-256 FS + grind_pow),
-`ring_switch.prove_batched`. This module adds the recursive driver.
+`sumcheck` (build_eq / fold), `basefold` (the shared round message), `challenger`
+(SHA-256 FS + grind_pow).
 
-Port status (M0): `ligero_commit` (per-level RS-encode + Merkle). The SumcheckProver
-driver, induce_sumcheck_poly + LCH basis, and the recursion loop land in M1..M7.
+The full recursive driver lives here: `ligero_commit` (per-level RS-encode +
+Merkle), `induce_sumcheck_poly` + the LCH novel basis, the `SumcheckProver`
+interleaved fold/introduce/glue, and `recursive_prover_with_basis` (the recursion
+loop, producing a byte-identical LigeritoProof).
 """
 from __future__ import annotations
 
@@ -45,7 +47,7 @@ def eval_sk_at_vks(log_n: int):
 
 def induce_sumcheck_poly(log_msg_cols: int, sks_vks, opened_rows, v_challenges, queries,
                          alpha, mul=field.mul):
-    """flock `induce_sumcheck_poly` (dense): from Q opened rows + the level's fold
+    """flock `induce_sumcheck_poly` (dense, by design): from Q opened rows + the level's fold
     challenges, build basis_poly[j] = Σ_i α_i·Ŵ_j(q_i) (LCH normalized novel basis,
     a per-query tensor ⊗_k(1, Ŵ_k(q_i))) and enforced_sum = Σ_i α_i·⟨row_i, eq(v)⟩.
     α weights = build_eq(alpha)[:Q] (multilinear, not Vandermonde). Vectorized over

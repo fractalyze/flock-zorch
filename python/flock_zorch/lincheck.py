@@ -37,7 +37,7 @@ def build_quirky_eq_table(z_skip_int: int, x_inner_rest, k_skip: int, mul=field.
     (flock `build_quirky_eq_table`; i_skip in the LOW bits)."""
     lam = _lagrange_weights(k_skip, z_skip_int, 0)             # S-domain, len 2^k_skip
     lam = jnp.asarray(np.stack([_to_lohi(x) for x in lam]))    # [ell_skip, 2]
-    eq_rest = build_eq_fused(jnp.asarray(x_inner_rest), mul=mul)  # [ell_rest, 2] — fused (eager was ~2ms)
+    eq_rest = build_eq_fused(jnp.asarray(x_inner_rest), mul=mul)  # [ell_rest, 2] — fused (avoids per-layer eager dispatch)
     prod = mul(eq_rest[:, None, :], lam[None, :, :])           # [ell_rest, ell_skip, 2]
     return prod.reshape(-1, 2)
 
@@ -140,13 +140,13 @@ def partial_fold_packed_z(z_packed_bytes: bytes, m: int, k_log: int, eq_outer, m
     n_outer = 1 << (m - k_log)
     n_bytes = n_outer // 8
     zp = jnp.asarray(np.frombuffer(z_packed_bytes, np.uint8).reshape(n_bytes, k))
-    return _partial_fold_dev(zp, eq_outer, n_outer)         # device + jit (was eager 1GB)
+    return _partial_fold_dev(zp, eq_outer, n_outer)         # device + jit (keeps the intermediate off HBM)
 
 
 @functools.partial(jax.jit, static_argnums=(2,))
 def _partial_fold_dev(zp, eq_outer, n_outer):
-    """z_vec[i_inner] = Σ_{i_outer} bit·eq_outer[i_outer], device+jit (the eager
-    [n_outer,k,2] intermediate was ~1GB at m=26 — mirrors the ring_switch fix)."""
+    """z_vec[i_inner] = Σ_{i_outer} bit·eq_outer[i_outer], device+jit so the large
+    [n_outer,k,2] intermediate stays fused on device and never lands in HBM."""
     bits = ((zp[:, None, :] >> jnp.arange(8, dtype=jnp.uint8)[None, :, None]) & 1)  # [nb,8,k]
     bits = bits.reshape(n_outer, zp.shape[1]).astype(jnp.uint64)                    # i_outer=byte·8+r
     return _xor_reduce(bits[:, :, None] * eq_outer[:, None, :], axis=0)             # [k, 2]
@@ -201,6 +201,9 @@ def prove(z_packed_bytes, a_dense, b_dense, x_ab, m, k_log, k_skip,
     z_vec = partial_fold_packed_z(z_packed_bytes, m, k_log, eq_outer, mul)
     z_vec_pre = np.asarray(z_vec) if capture else None  # pre-sumcheck (PCS open reuse)
 
+    # Unfused on purpose: each round is _round_eval then _bind_top, mirroring flock's
+    # steps. Do NOT hand-fuse into Rust's sumcheck_bind_both_and_eval_next — operator
+    # fusion is the zkx compiler's job (see CLAUDE.md).
     rounds, r_rounds = [], []
     if inner_rest > 0:
         e1, einf = _round_eval(comb, z_vec, mul)

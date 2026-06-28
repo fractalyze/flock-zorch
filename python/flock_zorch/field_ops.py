@@ -13,8 +13,8 @@ Scope today is the SEAM, not a driver swap. flock keeps its own host round loop
 Karatsuba ∞-trick round message `(r·G(1), G(∞))` — which is NOT the degree+1-evals
 domain form, so `domain_point` raises (per the protocol: "its round owns the
 message"). `GhashFieldOps` is the on-ramp: it lets flock express field arithmetic
-against the shared seam and is the first step toward reusing zorch's sumcheck /
-the zkx GPU sumcheck emitter once a binary-field driver exists.
+against the shared seam, the first step toward reusing zorch's shared sumcheck
+once a binary-field driver exists.
 
 `mul` is parameterized (software `field.mul` vs the `field_clmad.mul` FFI), the
 same selection flock threads as `mul=` elsewhere — so a `GhashFieldOps(mul)` bundles

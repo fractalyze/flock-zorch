@@ -42,8 +42,10 @@ def compute_twiddles(log_d: int) -> np.ndarray:
     `W_i(beta_i)`, then emits `twiddle(layer, block) = span_get(evals[L-layer-1][1:],
     block)` layer-major. Returns uint64 [2^log_d - 1, 2]. Sequential (host).
 
-    Memoized on `log_d` (the table is data-independent and the host recurrence is
-    ~55ms at log_d=15) and returned read-only so the shared instance can't be
+    Mirrors the `standard` evals recurrence, NOT flock's
+    `parallel_f128::compute_twiddles` (a different next_s table — name collision).
+    Memoized on `log_d` (the table is data-independent and the sequential host
+    recurrence is not free) and returned read-only so the shared instance can't be
     mutated; every caller copies it to device via `jnp.asarray`.
     """
     L = log_d
@@ -109,7 +111,7 @@ def forward_transform_scalar(data, twiddles, log_d: int, mul=field.mul):
     log_d: static Python int. Returns uint64 [2^log_d, 2].
 
     `mul` is the GF(2^128) multiply (default the readable `field.mul`); pass
-    `field_clmad.mul` for the ~255x clmad path on GPU (byte-identical).
+    `field_clmad.mul` for the clmad GPU path (byte-identical).
     """
     n = 1 << log_d
     x = data

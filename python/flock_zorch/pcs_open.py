@@ -1,9 +1,12 @@
-"""PCS opening (BaseFold/Ligerito FRI) — the FRI codeword fold, authored in jax,
-byte-identical to flock-core `pcs::basefold::fri_fold_codeword`.
+"""Full single-claim PCS opening, authored in jax — byte-identical to flock-core
+`pcs::open`: observe `flock-pcs-open-v0` → ring-switch → BaseFold FRI. The entry
+point is `open()`; this module also hosts the FRI primitives it (and Ligerito)
+drive — `fri_fold` / `row_batch_fold_all` / `compute_fri_arities`.
 
-The FRI fold is the dominant compute of the PCS opening (log_dim rounds, each
-halving the codeword): a data-parallel butterfly over the codeword pairs, so it
-inherits clmad on GPU like the forward NTT. `fold_pair(t,u,v,r)`:
+The FRI fold is the dominant compute of the opening (log_dim rounds, each halving
+the codeword): a data-parallel butterfly over the codeword pairs, so it inherits
+clmad on GPU like the forward NTT. `fri_fold` is byte-identical to flock-core
+`pcs::basefold::fri_fold_codeword`, computing `fold_pair(t,u,v,r)`:
 
     v' = v + u ;  u' = u + v'·t ;  out = u' + r·(u' + v')
 

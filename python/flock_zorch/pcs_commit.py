@@ -9,7 +9,9 @@ root). Construction (flock `pcs/commit.rs`):
 With `(m, log_inv_rate, log_batch_size)`:
   log_msg = m - 7,  log_dim = log_msg - log_batch_size,  k_code = log_dim + log_inv_rate,
   num_ntts = 2^log_batch_size. Each Merkle leaf is one codeword position =
-  num_ntts F128 = num_ntts*16 bytes.
+  num_ntts F128 = num_ntts*16 bytes. In the paper's App C.1 notation: rate
+  ρ = 2^-log_inv_rate; message length = log_msg = m - LOG_PACKING (the 7-bit F128
+  packing offset); the interleaved lanes (columns) are the Merkle leaves.
 
 This equals flock's definitional encoding (zero-pad + full interleaved NTT, the
 oracle flock's own `commit_matches_full_ntt_oracle` test pins); flock's

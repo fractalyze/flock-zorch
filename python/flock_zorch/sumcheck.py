@@ -31,7 +31,7 @@ ONE = jnp.asarray([1, 0], dtype=U64)  # F128::ONE = {lo: 1, hi: 0}
 def _xor_reduce(x, axis: int = 0):
     """Field summation over an axis: GF(2^128) add is XOR, so Σ is an XOR-reduce.
 
-    Lowers to one XLA reduce (log-depth tree) — efficient and O(1)-memory on GPU.
+    Lowers to one XLA reduce (log-depth, O(1) memory).
     """
     return jax.lax.reduce(x, U64(0), jax.lax.bitwise_xor, (axis,))
 

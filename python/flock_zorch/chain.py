@@ -1,6 +1,6 @@
 """Hash-chain "shift" argument — Python port of flock's prover-side chain glue
 (`flock-prover/src/chain.rs` `prove_chain_shift` + `r1cs_hashes/chain_common.rs`
-`fold_in_out`). Task #14, M4a.
+`fold_in_out`).
 
 The chain protocol glues 2^n committed hash instances into a sequential chain
 `x_{i+1}=h(x_i)` with public endpoints, via:
@@ -12,8 +12,9 @@ The chain protocol glues 2^n committed hash instances into a sequential chain
      claim `g(τ',s₀*)`.
 
 The round message + fold are identical to the existing product sumcheck
-(`lincheck._round_eval` / `_bind_top`), so those are reused. The remaining chain
-milestone is the mixed packed-direct PCS open that consumes the returned claim.
+(`lincheck._round_eval` / `_bind_top`), so those are reused. `assemble_chain_claim`
+then packs the returned claim into the point the mixed packed-direct PCS open
+consumes (the `ChainProof` assembly).
 """
 
 import numpy as np

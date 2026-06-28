@@ -5,6 +5,10 @@ the project's host/device split. An F128 is a Python int < 2^128 with bit i =
 coefficient of x^i -- the same bit layout as field.py's uint64 lanes, so
 `val.to_bytes(16, "little")` matches flock's serialization.
 
+`mul`/`inv` are the host scalar counterpart of flock-core `gf2_128.rs`
+`software::ghash_mul` / `F128::inv` — functionally equal (same field, same basis),
+big-int rather than limb-structured.
+
 NOT for bulk work: plain big-int loops, correct but slow.
 """
 

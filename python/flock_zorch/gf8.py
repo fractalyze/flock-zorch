@@ -195,8 +195,8 @@ class AdditiveNttGf8:
 
 # ---------------------------------------------------------------------------
 # Device (GPU) F8: the same tables + additive NTT in jnp, so round1_naive runs
-# on the GPU instead of host numpy (the URM was the prover's #1 host bottleneck:
-# ~1.1 s at m=24). Byte-identical to the host path (gated by the URM oracle).
+# on the GPU instead of host numpy (the round-1 URM was the prover's dominant host
+# cost). Byte-identical to the host path (gated by the URM oracle).
 # ---------------------------------------------------------------------------
 
 _MUL_DEV = jnp.asarray(_MUL)            # [256, 256] uint8
@@ -205,9 +205,9 @@ _PHI_DEV = jnp.asarray(PHI_8_TABLE)     # [256, 2] uint64
 
 def _gf8_mul_dev(a, b):
     """Elementwise F8 multiply on device — ARITHMETIC (clmul8 + mod-0x11B reduce),
-    no table gather. Gather over the F8-NTT's ~1B elements was memory-bound (37ms);
-    8 unrolled XOR-shifts + two reduction folds is compute-bound and far faster.
-    Byte-identical to the `_MUL` table (same `_clmul8`/`_gf8_reduce` math)."""
+    no table gather. A 256x256 table gather over the F8-NTT's elements is
+    memory-bound; 8 unrolled XOR-shifts + two reduction folds is compute-bound and
+    faster. Byte-identical to the `_MUL` table (same `_clmul8`/`_gf8_reduce` math)."""
     a16 = a.astype(jnp.uint16)
     b16 = b.astype(jnp.uint16)
     p = jnp.zeros_like(a16)
@@ -272,9 +272,9 @@ _R1_CACHE: dict = {}
 
 def _round1_core(mul):
     """Fused round-1 core, cached per `mul`: extend a/b/c S→Λ, a·b, φ8-embed, AND
-    eq-accumulate — all in ONE jit kernel so the [N,ell,2] φ8 values (~1 GB at
-    m≈28) are consumed in-fusion and never written to HBM (halves round1's
-    bandwidth vs the separate extend_and_phi + accum)."""
+    eq-accumulate — all in ONE jit kernel so the large [N,ell,2] φ8 intermediate is
+    consumed in-fusion and never written to HBM (halves round1's bandwidth vs the
+    separate extend + accumulate)."""
     fn = _R1_CACHE.get(mul)
     if fn is None:
         @functools.partial(jax.jit, static_argnums=(3,))
@@ -301,8 +301,8 @@ def _packed_to_rows(packed, m: int, k_skip: int):
     """Packed F128 witness [2^(m-7), 2] uint64 -> uint8 rows [2^(m-k_skip), 2^k_skip],
     unpacked ON DEVICE (bit r of element i = z[i·128 + r], LSB-first per lane).
 
-    The witness is 1/8 the size packed (8 MB vs 67 MB of one-byte-per-bit at m=26),
-    so taking the packed form and unpacking here turns a fat host->device transfer
+    The witness is 1/8 the size packed (one F128 lane vs one byte per bit), so
+    taking the packed form and unpacking here turns a fat host->device transfer
     into a small one + a cheap device kernel — the same device-unpack pattern
     `prover._unpack_bits_dev` uses for the identity path."""
     bi = jnp.arange(64, dtype=jnp.uint64)
@@ -331,8 +331,8 @@ def round1_rows(a, b, c, m: int, k_skip: int, r, mul=field.mul):
     compute half of `round1_naive`, so the witness can be transferred once and
     reused by `zerocheck._fold_at_z`. Returns (P^AB, P^C) as numpy."""
     ell = 1 << k_skip
-    # F8 NTT + a·b + phi8 on the GPU (the URM was the prover's #1 host bottleneck);
-    # twiddles are tiny (2^k-1 entries), memoized on host.
+    # F8 NTT + a·b + phi8 on the GPU (the round-1 URM was the prover's dominant host
+    # cost); twiddles are tiny (2^k-1 entries), memoized on host.
     tw_s = jnp.asarray(_compute_twiddles(k_skip, 0))     # S = {0..ell-1}
     tw_l = jnp.asarray(_compute_twiddles(k_skip, ell))   # Lambda = {ell..2*ell-1}
     r = np.asarray(r, dtype=np.uint64)
@@ -347,7 +347,9 @@ def round1_naive(a_bits, b_bits, c_bits, m: int, k_skip: int, r, mul=field.mul):
     a/b/c_bits: uint8 [2^m] (0/1). r: uint64 [m, 2] (F128). Per row of 2^k_skip
     bits -> F8 col, inv-NTT on S then fwd-NTT on Λ, then accumulate
     eq(r[k_skip:], x) · φ₈(a·b) and · φ₈(c). Byte-identical to flock's
-    `round1_naive`; equals the wire `round1_ab`/`round1_c`.
+    `round1_naive`; equals the wire `round1_ab`/`round1_c`. (The "naive" name is
+    flock's oracle reference; the compute routes through the device-fused
+    `round1_rows` / `_round1_core`.)
     """
     a = witness_to_rows(a_bits, m, k_skip)
     b = witness_to_rows(b_bits, m, k_skip)

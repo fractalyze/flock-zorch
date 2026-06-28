@@ -1,13 +1,17 @@
 """clmad-accelerated GF(2^128) multiply via XLA FFI — byte-identical to
-flock_zorch.field.mul but ~255x faster on GPU (PTX `clmad`, memory-bound).
+flock_zorch.field.mul, the memory-bound GPU fast path (PTX `clmad`; benchmarks in
+optim/clmad/README.md).
 
 Drop-in for `field.mul`: same uint64 [..., 2] contract, handles broadcasting. The
 FFI handler (`optim/clmad/libghash_clmad.so`) launches the clmad cubin on XLA's
 stream — no zkx rebuild. Build it with `optim/clmad/build_ffi.sh`; see that dir's
-README. `add` is re-exported from `field` (XOR needs no acceleration).
+README. `add` is re-exported from `field` (XOR needs no acceleration). This is the
+runtime analog of flock-core `gf2_128.rs`'s compile-time `#[cfg]` `Mul` dispatch
+(NEON / vpclmulqdq / software); `field.mul` is the portable software arm.
 
-Use `available()` to gate: it needs the built .so + a CUDA-13.3 cubin + an sm_120
-GPU. On CPU or without the handler, use `flock_zorch.field` instead.
+Use `available()` to gate: it checks the built .so is present; the CUDA-13.3 cubin
++ sm_120 GPU are validated lazily on first `mul` (FFI registration + kernel
+launch). On CPU or without the handler, use `flock_zorch.field` instead.
 """
 from __future__ import annotations
 

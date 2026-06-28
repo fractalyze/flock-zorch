@@ -106,10 +106,9 @@ def _lagrange_weights(k_skip: int, z: int, offset: int) -> list[int]:
     """L_i(z) over the φ₈-embedded nodes PHI_8_TABLE[offset+i], i∈[0, 2^k_skip).
     offset=0 → the S domain; offset=2^k_skip → the Λ domain.
 
-    Vectorized + jitted (the scalar O(ell²) host-Python F128 double-loop was a
-    fixed ~590ms — the zerocheck's dominant cost; jit is essential — eager
-    field.mul dispatches its 64-step fori per element). Same field math →
-    byte-identical weights (gated)."""
+    Vectorized + jitted (replaces the scalar O(ell²) host-Python F128 double-loop;
+    jit is essential — an eager field.mul dispatches its 64-step fori per element).
+    Same field math → byte-identical weights (gated)."""
     ell = 1 << k_skip
     s = jnp.asarray(np.stack([_to_lohi(_phi_int(offset + i)) for i in range(ell)]))  # [ell,2]
     num, den = _lag_numden(s, jnp.asarray(_to_lohi(z)))
@@ -130,8 +129,8 @@ def _fold_at_z_dev(rows, m: int, k_skip: int, w):
     """a_mlv[x_rest] = Σ_s witness[x_rest·ell + s]·L_s(z) (flock `fold_at_z_naive`),
     on device. rows: uint8 [2^(m-k_skip), ell]; w: uint64 [ell, 2] -> [n_chunks, 2].
 
-    Select-and-XOR-reduce: the `[n_chunks, ell, 2]` intermediate (≈1 GB at m=26) is
-    fused on the GPU instead of materialized in host numpy (the old path's bottleneck)."""
+    Select-and-XOR-reduce: the large `[n_chunks, ell, 2]` intermediate is fused on
+    the GPU instead of materialized in host numpy."""
     masked = rows[:, :, None].astype(jnp.uint64) * w[None, :, :]  # 0 or w[s]
     return sumcheck._xor_reduce(masked, axis=1)
 
@@ -150,7 +149,7 @@ def _fold_at_z(bits, m: int, k_skip: int, weights: list[int]) -> np.ndarray:
 _ONE = np.array([1, 0], dtype=np.uint64)
 
 # The small fixed-size Lagrange/inverse helpers below are deeply sequential
-# (254 muls for the Fermat inverse); the software fori_loop mul makes them ~190ms.
+# (254 muls for the Fermat inverse), so the software fori_loop mul is slow here.
 # Route them through clmad when available (one hardware carryless-mul per step).
 try:
     from flock_zorch import field_clmad as _fc

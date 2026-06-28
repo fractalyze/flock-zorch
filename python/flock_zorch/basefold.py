@@ -39,7 +39,7 @@ def _prime(a, b, mul):
 
 
 # Per-round field ops jitted (cache per mul) so each round is ONE fused kernel,
-# not eager op-by-op (the open's remaining ~137ms). fri_fold takes a static layer.
+# not eager op-by-op dispatch. fri_fold takes a static layer.
 _BF_CACHE: dict = {}
 
 
@@ -96,6 +96,9 @@ def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_s
     epoch_codewords, epoch_trees, epoch_leaf_f128s = [], [], []
     current_epoch = rounds_in_epoch = 0
 
+    # ---- interleaved (a,b) sumcheck + codeword fold + per-epoch Merkle commit ----
+    # Each round: send (u0,u2), fold a/b at r; the first log_batch_size rounds defer
+    # a row-batch over the codeword, the rest are per-round FRI folds, committed per epoch.
     for rnd in range(log_msg):
         u0, u2 = (np.asarray(v) for v in jprime(a, bb))
         ch.observe_f128(u0)
@@ -141,6 +144,7 @@ def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_s
     final_b = np.asarray(bb)[0]
     final_codeword = np.asarray(cw_active)
 
+    # ---- query openings: sample positions, gather each layer's leaf, Merkle multi-proofs ----
     cw_full_np = np.asarray(cw_full)
     queries, init_pos, post_rb_pos = [], [], []
     epoch_pos = [[] for _ in range(num_fri_commits)]

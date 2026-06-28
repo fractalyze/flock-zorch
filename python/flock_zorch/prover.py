@@ -3,9 +3,8 @@ jax — byte-identical to flock-core. Chains the byte-identical phases on ONE
 shared SHA-256 challenger with device-resident state (no per-phase host
 re-transfer): commit → bind_statement → zerocheck → lincheck → batched PCS open.
 
-This is the honest single-call e2e measurement (vs the standalone-phase sum in
-e2e_gpu_bench) and removes the witness transfer (a=A·z, b=B·z are device-
-resident). Gated by `testing/e2e_oracle_test.py` against flock `prover::prove`.
+a = A·z, b = B·z are kept device-resident across the phases (no per-phase witness
+re-transfer). Gated by `testing/e2e_oracle_test.py` against flock `prover::prove`.
 """
 from __future__ import annotations
 
@@ -21,7 +20,9 @@ from flock_zorch.challenger import Challenger  # noqa: F401  (re-exported for ca
 @jax.jit
 def _unpack_bits_dev(z_packed):
     """Packed F128 witness [2^(m-7),2] -> device bit witness [2^m] uint8 (LSB-first
-    within each 128-bit element), on device so a=b=c=z stays device-resident."""
+    within each 128-bit element), on device so a=b=c=z stays device-resident. The
+    inverse of pcs_commit.pack_witness (flock reads the packed ẑ back to bits the
+    same way)."""
     bitidx = jnp.arange(64, dtype=jnp.uint64)
     lo = ((z_packed[:, 0:1] >> bitidx) & jnp.uint64(1)).astype(jnp.uint8)
     hi = ((z_packed[:, 1:2] >> bitidx) & jnp.uint64(1)).astype(jnp.uint8)
@@ -146,6 +147,8 @@ def prove_fast(z_packed, m, k_log, k_skip, useful_bits, a0, b0, z_lincheck, stat
         z_lincheck, a0, b0, x_ab, m, k_log, k_skip, mul=mul, ch=ch, capture=True)
 
     ab_full = np.concatenate([lc_claim["r_inner_rest"], x_ab["x_outer"]], axis=0)
+    # c_full = x_inner_rest ++ x_outer for the C-claim point. Kept as the split-then-
+    # rejoin (not just zc["r_rest"]) to mirror Rust's QuirkyPoint / quirky_x_outer_full.
     c_full = np.concatenate([zc["r_rest"][:inner_rest], zc["r_rest"][inner_rest:]], axis=0)
     pcs_open = open_batch(z_packed, codeword, tree, [ab_full, c_full], k_code,
                           log_inv_rate, log_batch_size, ch, mul=mul, use_host_sha=use_host_sha)
