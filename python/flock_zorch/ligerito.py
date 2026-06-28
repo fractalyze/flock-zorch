@@ -198,7 +198,7 @@ def recursive_prover_with_basis(config, packed_witness, b_initial, target, l0_co
 
     # ---- OOD for L1 ----
     for _ in range(ood[1]):
-        z = ch.sample_f128_vec(n1); eqz = sumcheck.build_eq(jnp.asarray(z), mul=mul)
+        z = ch.sample_f128_vec(n1); eqz = sumcheck.build_eq_fused(jnp.asarray(z), mul=mul)
         msg, y = sc.introduce_new_with_eval(eqz)
         ch.observe_f128(y); ood_values.append(np.asarray(y)); _observe_msg(ch, msg)
         sc.glue(ch.sample_f128())
@@ -246,7 +246,7 @@ def recursive_prover_with_basis(config, packed_witness, b_initial, target, l0_co
         ch.observe_bytes(bytes(np.asarray(tree_next[-1], np.uint8)))
         recursive_roots.append(np.asarray(tree_next[-1]))
         for _ in range(ood[i + 2]):
-            z = ch.sample_f128_vec(n_next); eqz = sumcheck.build_eq(jnp.asarray(z), mul=mul)
+            z = ch.sample_f128_vec(n_next); eqz = sumcheck.build_eq_fused(jnp.asarray(z), mul=mul)
             msg, y = sc.introduce_new_with_eval(eqz)
             ch.observe_f128(y); ood_values.append(np.asarray(y)); _observe_msg(ch, msg)
             sc.glue(ch.sample_f128())

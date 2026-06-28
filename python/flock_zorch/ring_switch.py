@@ -91,11 +91,11 @@ def prove(packed_witness, x_outer, ch: Challenger, mul=field.mul):
     Byte-identical to flock `ring_switch::prove`."""
     ch.observe_label(LABEL)
     suffix = jnp.asarray(np.asarray(x_outer)[1:])              # x_outer[1:], length L
-    suffix_tensor = sumcheck.build_eq(suffix, mul=mul)         # [2^L, 2]
+    suffix_tensor = sumcheck.build_eq_fused(suffix, mul=mul)         # [2^L, 2]
     s_hat_v = fold_1b_rows(packed_witness, suffix_tensor, mul)  # [128,2]
     ch.observe_f128_slice(s_hat_v)
     r_dprime = jnp.asarray(ch.sample_f128_vec(LOG_PACKING))    # [7,2]
-    eq_r_dprime = sumcheck.build_eq(r_dprime, mul=mul)         # [128,2]
+    eq_r_dprime = sumcheck.build_eq_fused(r_dprime, mul=mul)         # [128,2]
     s_hat_u = tensor_algebra_transpose(s_hat_v)
     sumcheck_claim = inner_product(s_hat_u, eq_r_dprime, mul)  # [2]
     rs_eq_ind = fold_b128_elems(suffix_tensor, eq_r_dprime, mul)  # [2^L,2]
@@ -115,11 +115,11 @@ def prove_batched(packed_witness, x_outers, ch: Challenger, mul=field.mul):
     for x_outer in x_outers:
         ch.observe_label(LABEL)
         suffix = jnp.asarray(np.asarray(x_outer)[1:])
-        suffix_tensor = sumcheck.build_eq(suffix, mul=mul)
+        suffix_tensor = sumcheck.build_eq_fused(suffix, mul=mul)
         s_hat_v = fold_1b_rows(packed_witness, suffix_tensor, mul)
         ch.observe_f128_slice(s_hat_v)
         r_dprime = jnp.asarray(ch.sample_f128_vec(LOG_PACKING))
-        eq_r_dprime = sumcheck.build_eq(r_dprime, mul=mul)
+        eq_r_dprime = sumcheck.build_eq_fused(r_dprime, mul=mul)
         s_hat_u = tensor_algebra_transpose(s_hat_v)
         sumcheck_claim = inner_product(s_hat_u, eq_r_dprime, mul)
         works.append((s_hat_v, suffix_tensor, eq_r_dprime, sumcheck_claim))
