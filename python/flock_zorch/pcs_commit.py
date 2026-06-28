@@ -23,7 +23,7 @@ from __future__ import annotations
 import numpy as np
 import jax.numpy as jnp
 
-from flock_zorch import field, ntt as ntt_mod, merkle, sha256  # noqa: F401  (sha256 via merkle)
+from flock_zorch import field, ntt as ntt_mod, merkle
 
 LOG_PACKING = 7
 

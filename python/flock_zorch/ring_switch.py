@@ -15,8 +15,6 @@ r_dprime[7]. Requires `jax_enable_x64`.
 """
 from __future__ import annotations
 
-import functools
-
 import numpy as np
 import jax
 import jax.numpy as jnp

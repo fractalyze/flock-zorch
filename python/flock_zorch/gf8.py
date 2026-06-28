@@ -253,20 +253,6 @@ def _ifft_dev(v, tw, k: int):
     return v
 
 
-@functools.partial(jax.jit, static_argnums=(3,))
-def _extend_and_phi(a, b, c, k_skip, tw_s, tw_l):
-    """Extend a/b/c from S to Lambda (inv-NTT then fwd-NTT), F8-mul a·b, and
-    phi8-embed both into F128. No field mul → jit-cacheable independent of `mul`.
-    a/b/c: uint8 [N, ell] -> (phi_ab, phi_c) uint64 [N, ell, 2]. (Kept for tests;
-    `round1_naive` uses the fused `_round1_core` below to avoid the ~1 GB φ8 HBM
-    intermediate.)"""
-    a_l = _fft_dev(_ifft_dev(a, tw_s, k_skip), tw_l, k_skip)
-    b_l = _fft_dev(_ifft_dev(b, tw_s, k_skip), tw_l, k_skip)
-    c_l = _fft_dev(_ifft_dev(c, tw_s, k_skip), tw_l, k_skip)
-    ab = _gf8_mul_dev(a_l, b_l)
-    return _PHI_DEV[ab.astype(jnp.int32)], _PHI_DEV[c_l.astype(jnp.int32)]
-
-
 _R1_CACHE: dict = {}
 
 
@@ -329,7 +315,7 @@ def witness_to_rows(bits, m: int, k_skip: int):
 def round1_rows(a, b, c, m: int, k_skip: int, r, mul=field.mul):
     """Round-1 URM from device witness rows (uint8 [2^(m-k_skip), 2^k_skip]). The
     compute half of `round1_naive`, so the witness can be transferred once and
-    reused by `zerocheck._fold_at_z`. Returns (P^AB, P^C) as numpy."""
+    reused by `zerocheck._fold_at_z_rows`. Returns (P^AB, P^C) as numpy."""
     ell = 1 << k_skip
     # F8 NTT + a·b + phi8 on the GPU (the round-1 URM was the prover's dominant host
     # cost); twiddles are tiny (2^k-1 entries), memoized on host.

@@ -15,7 +15,6 @@ x64; all arithmetic is uint32 (wraps mod 2^32 in XLA).
 """
 from __future__ import annotations
 
-import functools
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -80,16 +79,6 @@ def _pad_device(msg, length: int):
         padded = padded.at[:, total - 8 + i].set(jnp.uint8((bitlen >> (8 * (7 - i))) & 0xFF))
     words = padded.reshape(b, nblocks, 16, 4).astype(jnp.uint32)
     return (words[..., 0] << U32(24)) | (words[..., 1] << U32(16)) | (words[..., 2] << U32(8)) | words[..., 3]
-
-
-@functools.partial(jax.jit, static_argnums=(1,))
-def digest_device(msg, length: int):
-    """SHA-256 of a batch, fully on device (jnp uint8 [B, length] -> [B, 32]).
-
-    Byte-identical to `digest`, but never copies to host — for the Merkle tree.
-    jitted (one kernel for the whole 64-round compression); `length` is static and
-    keys the compilation cache (one kernel per distinct leaf size / batch shape)."""
-    return _digest_words(_pad_device(msg, length))
 
 
 def _compress(state, w16):

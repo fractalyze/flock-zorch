@@ -16,8 +16,6 @@ PYTHONPATH.
 """
 from __future__ import annotations
 
-import functools
-
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -124,8 +122,8 @@ def _interpolate_at_z_on_lambda(values_int: list[int], k_skip: int, z: int) -> i
     return acc
 
 
-@functools.partial(jax.jit, static_argnums=(1, 2))
-def _fold_at_z_dev(rows, m: int, k_skip: int, w):
+@jax.jit
+def _fold_at_z_dev(rows, w):
     """a_mlv[x_rest] = Σ_s witness[x_rest·ell + s]·L_s(z) (flock `fold_at_z_naive`),
     on device. rows: uint8 [2^(m-k_skip), ell]; w: uint64 [ell, 2] -> [n_chunks, 2].
 
@@ -135,15 +133,11 @@ def _fold_at_z_dev(rows, m: int, k_skip: int, w):
     return sumcheck._xor_reduce(masked, axis=1)
 
 
-def _fold_at_z_rows(rows, m: int, k_skip: int, weights: list[int]) -> np.ndarray:
+def _fold_at_z_rows(rows, weights: list[int]) -> np.ndarray:
     """fold_at_z from device witness rows (uint8 [2^(m-k_skip), 2^k_skip]) — so the
     witness transferred for round1 is reused here instead of re-sent."""
     w = jnp.asarray(np.stack([_to_lohi(x) for x in weights]))  # [ell, 2]
-    return _fold_at_z_dev(rows, m, k_skip, w)
-
-
-def _fold_at_z(bits, m: int, k_skip: int, weights: list[int]) -> np.ndarray:
-    return _fold_at_z_rows(gf8.witness_to_rows(bits, m, k_skip), m, k_skip, weights)
+    return _fold_at_z_dev(rows, w)
 
 
 _ONE = np.array([1, 0], dtype=np.uint64)
@@ -221,8 +215,8 @@ def prove_packed(a_bits, b_bits, c_bits, m: int, domain: bytes = None, mul=field
 
     # ---- round 2: fold witness at z + first multilinear message ----
     weights = _lagrange_weights(k_skip, z_int, 0)  # S-domain
-    a_mlv = jnp.asarray(_fold_at_z_rows(a_rows, m, k_skip, weights))
-    b_mlv = jnp.asarray(_fold_at_z_rows(b_rows, m, k_skip, weights))
+    a_mlv = jnp.asarray(_fold_at_z_rows(a_rows, weights))
+    b_mlv = jnp.asarray(_fold_at_z_rows(b_rows, weights))
     mlv_arg = np.concatenate([_ONE[None, :], r[k_skip + 1:m]], axis=0)  # [n_mlv, 2]
     msg1, msginf = _round(a_mlv, b_mlv, jnp.asarray(mlv_arg))
     rounds = [(np.asarray(msg1), np.asarray(msginf))]
