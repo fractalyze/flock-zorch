@@ -5,8 +5,8 @@ as raw `uint64` lanes — exactly flock's GF(2^128) in the GHASH basis, where `+
 XOR and `*` is a carryless GHASH multiply — can drive zorch's shared multilinear
 sumcheck without a jax-native dtype. The commit was authored anticipating flock.
 This module is flock's instantiation of that seam: the single typed surface for
-flock's field arithmetic, faithful to `field.py` + `sumcheck._xor_reduce` (pinned
-by `field_ops_test.py`, the same NativeFieldOps-parity discipline zorch uses).
+flock's field arithmetic, faithful to `field.py` (`field.add`/`field.mul`/`field.sum`),
+pinned by `field_ops_test.py`, the same NativeFieldOps-parity discipline zorch uses.
 
 Scope today is the SEAM, not a driver swap. flock keeps its own host round loop
 (its Fiat-Shamir is a sequential host SHA-256 Merlin transcript) and its own
@@ -24,7 +24,6 @@ Requires `jax_enable_x64`.
 """
 from __future__ import annotations
 
-import jax
 import jax.numpy as jnp
 from jax import Array
 
@@ -41,7 +40,7 @@ class GhashFieldOps:
     XOR-reduce; `mul` is the GHASH product (`field.mul` or `field_clmad.mul`).
 
     Byte-identical to flock's bare primitives (`field.add`, `field.mul`,
-    `sumcheck._xor_reduce`), pinned by `field_ops_test.py`."""
+    `field.sum`), pinned by `field_ops_test.py`."""
 
     def __init__(self, mul=field.mul):
         self._mul = mul
@@ -64,9 +63,8 @@ class GhashFieldOps:
         return self._mul(a, b)
 
     def sum(self, x: Array, *, axis: int) -> Array:
-        # Field summation is XOR-reduce; one XLA reduce (log-depth, O(1) memory).
-        # Identical to sumcheck._xor_reduce.
-        return jax.lax.reduce(x, U64(0), jax.lax.bitwise_xor, (axis,))
+        # Field summation is XOR-reduce; delegates to field.sum (the single owner).
+        return field.sum(x, axis=axis)
 
     def domain_point(self, u: int, like: Array) -> Array:
         raise NotImplementedError(

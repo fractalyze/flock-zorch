@@ -1,5 +1,5 @@
 """GhashFieldOps byte-parity gate — pins flock's FieldOps seam to its bare
-primitives (field.add / field.mul / sumcheck._xor_reduce), the same
+primitives (field.add / field.mul / field.sum), the same
 NativeFieldOps-parity discipline zorch uses, so the seam and the hand-written
 arithmetic cannot drift. Runs on GPU under both software and clmad mul.
 
@@ -43,8 +43,8 @@ def run(name, mul):
     eq("add == field.add (XOR)", ops.add(a, b), field.add(a, b))
     eq("sub == add (char 2)", ops.sub(a, b), field.add(a, b))
     eq("mul == mul", ops.mul(a, b), mul(a, b))
-    eq("sum(axis=0) == _xor_reduce", ops.sum(tab, axis=0), sumcheck._xor_reduce(tab, axis=0))
-    eq("sum(axis=1) == _xor_reduce", ops.sum(tab, axis=1), sumcheck._xor_reduce(tab, axis=1))
+    eq("sum(axis=0) == field.sum", ops.sum(tab, axis=0), field.sum(tab, axis=0))
+    eq("sum(axis=1) == field.sum", ops.sum(tab, axis=1), field.sum(tab, axis=1))
     eq("zero == [0,0]", ops.zero, np.array([0, 0], np.uint64))
     eq("one == F128::ONE [1,0]", ops.one, sumcheck.ONE)
     eq("zeros_like", ops.zeros_like(a), np.zeros_like(np.asarray(a)))

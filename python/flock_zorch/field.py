@@ -32,6 +32,7 @@ Requires `jax_enable_x64`.
 """
 from __future__ import annotations
 
+import numpy as np
 import jax
 import jax.numpy as jnp
 
@@ -44,6 +45,12 @@ LOG_PACKING = 7  # an F128 packs 2^7 = 128 bits; witness log-size m -> 2^(m-7) p
 def add(a, b):
     """GF(2^128) addition is bitwise XOR. a, b: uint64 [..., 2]."""
     return a ^ b
+
+
+def sum(x, axis: int = 0):
+    """GF(2^128) summation over an axis: add is XOR, so Σ is an XOR-reduce.
+    Lowers to one XLA reduce (log-depth, O(1) memory)."""
+    return jax.lax.reduce(x, U64(0), jax.lax.bitwise_xor, (axis,))
 
 
 def _clmul64(a, b):
@@ -118,3 +125,18 @@ def mul(a, b):
     r0, r1, r2, r3 = _mul_unreduced(alo, ahi, blo, bhi)
     lo, hi = _ghash_reduce(r0, r1, r2, r3)
     return jnp.stack([lo, hi], axis=-1)
+
+
+# ---- host int <-> uint64-lane serialization (bit i = coefficient of x^i) ----
+_MASK64 = (1 << 64) - 1
+
+
+def _to_int(arr) -> int:
+    """F128 uint64 [.., 2] (lo, hi) -> Python int (bit i = coefficient of x^i)."""
+    a = np.asarray(arr, dtype=np.uint64)
+    return int(a[0]) | (int(a[1]) << 64)
+
+
+def _to_lohi(x: int) -> np.ndarray:
+    """Python-int F128 -> uint64 [2] (lo, hi)."""
+    return np.array([x & _MASK64, (x >> 64) & _MASK64], dtype=np.uint64)

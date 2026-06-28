@@ -28,14 +28,6 @@ U64 = jnp.uint64
 ONE = jnp.asarray([1, 0], dtype=U64)  # F128::ONE = {lo: 1, hi: 0}
 
 
-def _xor_reduce(x, axis: int = 0):
-    """Field summation over an axis: GF(2^128) add is XOR, so Σ is an XOR-reduce.
-
-    Lowers to one XLA reduce (log-depth, O(1) memory).
-    """
-    return jax.lax.reduce(x, U64(0), jax.lax.bitwise_xor, (axis,))
-
-
 def build_eq(r, mul=field.mul):
     """eq evaluation table over `r`: `out[x] = ∏_i ((1+r_i)·(1⊕x_i) + r_i·x_i)`.
 
@@ -101,8 +93,8 @@ def round_pair(a_mlv, b_mlv, r, mul=field.mul):
     bp = b_mlv.reshape(-1, 2, 2)
     a0, a1 = ap[:, 0, :], ap[:, 1, :]
     b0, b1 = bp[:, 0, :], bp[:, 1, :]
-    g_one = _xor_reduce(mul(eq, mul(a1, b1)))             # Σ eq·a1·b1
-    g_inf = _xor_reduce(mul(eq, mul(a0 ^ a1, b0 ^ b1)))   # Σ eq·(a0+a1)(b0+b1)
+    g_one = field.sum(mul(eq, mul(a1, b1)))             # Σ eq·a1·b1
+    g_inf = field.sum(mul(eq, mul(a0 ^ a1, b0 ^ b1)))   # Σ eq·(a0+a1)(b0+b1)
     return mul(r[0], g_one), g_inf
 
 

@@ -270,8 +270,8 @@ def _round1_core(mul):
             c_l = _fft_dev(_ifft_dev(c, tw_s, k_skip), tw_l, k_skip)
             phi_ab = _PHI_DEV[_gf8_mul_dev(a_l, b_l).astype(jnp.int32)]
             phi_c = _PHI_DEV[c_l.astype(jnp.int32)]
-            return (sumcheck._xor_reduce(mul(eqx, phi_ab), axis=0),
-                    sumcheck._xor_reduce(mul(eqx, phi_c), axis=0))
+            return (field.sum(mul(eqx, phi_ab), axis=0),
+                    field.sum(mul(eqx, phi_c), axis=0))
         fn = core
         _R1_CACHE[mul] = fn
     return fn

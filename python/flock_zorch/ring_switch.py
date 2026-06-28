@@ -56,14 +56,14 @@ def _fold_1b_rows_dev(witness, suffix):
     """s_hat_v[r] = Σ_i bit_r(witness[i])·suffix[i]. witness/suffix [n,2] -> [128,2].
     Device + jit so the large [n,128,2] intermediate stays fused on device, off HBM."""
     bits = _to_bits_dev(witness)                       # [n,128]
-    return sumcheck._xor_reduce(bits[:, :, None] * suffix[:, None, :], axis=0)
+    return field.sum(bits[:, :, None] * suffix[:, None, :], axis=0)
 
 
 @jax.jit
 def _fold_b128_elems_dev(suffix, eq):
     """rs_eq_ind[i] = Σ_b bit_b(suffix[i])·eq[b]. suffix [n,2], eq [128,2] -> [n,2]."""
     bits = _to_bits_dev(suffix)                        # [n,128]
-    return sumcheck._xor_reduce(bits[:, :, None] * eq[None, :, :], axis=1)
+    return field.sum(bits[:, :, None] * eq[None, :, :], axis=1)
 
 
 def fold_1b_rows(packed_witness, suffix_tensor, mul=field.mul) -> np.ndarray:
@@ -83,7 +83,7 @@ def tensor_algebra_transpose(s_hat_v) -> np.ndarray:
 
 
 def inner_product(a, b, mul=field.mul) -> np.ndarray:
-    return np.asarray(sumcheck._xor_reduce(mul(jnp.asarray(a), jnp.asarray(b)), axis=0))
+    return np.asarray(field.sum(mul(jnp.asarray(a), jnp.asarray(b)), axis=0))
 
 
 def prove(packed_witness, x_outer, ch: Challenger, mul=field.mul):

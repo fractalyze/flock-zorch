@@ -24,8 +24,9 @@ import jax
 import jax.numpy as jnp
 
 from flock_zorch import field
-from flock_zorch.sumcheck import build_eq_fused, _xor_reduce, ONE
-from flock_zorch.zerocheck import _lagrange_weights, _to_int, _to_lohi
+from flock_zorch.sumcheck import build_eq_fused, ONE
+from flock_zorch.zerocheck import _lagrange_weights
+from flock_zorch.field import _to_int, _to_lohi
 from flock_zorch.challenger import Challenger
 
 U64 = jnp.uint64
@@ -47,7 +48,7 @@ def _mat_fold(mat_dense, eq, mul=field.mul):
 
     mat_dense: uint64 [k, k] (0/1, indexed [row, col]); eq: [k, 2] -> [k, 2]."""
     sel = mat_dense[:, :, None] * eq[:, None, :]              # M[r,c]·eq[r]  (select)
-    return _xor_reduce(sel, axis=0)                           # XOR over rows -> [c, 2]
+    return field.sum(sel, axis=0)                           # XOR over rows -> [c, 2]
 
 
 def fold_alpha_batched(alpha, a_dense, b_dense, eq_inner, mul=field.mul):
@@ -149,7 +150,7 @@ def _partial_fold_dev(zp, eq_outer, n_outer):
     [n_outer,k,2] intermediate stays fused on device and never lands in HBM."""
     bits = ((zp[:, None, :] >> jnp.arange(8, dtype=jnp.uint8)[None, :, None]) & 1)  # [nb,8,k]
     bits = bits.reshape(n_outer, zp.shape[1]).astype(jnp.uint64)                    # i_outer=byte·8+r
-    return _xor_reduce(bits[:, :, None] * eq_outer[:, None, :], axis=0)             # [k, 2]
+    return field.sum(bits[:, :, None] * eq_outer[:, None, :], axis=0)             # [k, 2]
 
 
 def _round_eval(c, z, mul=field.mul):
@@ -158,8 +159,8 @@ def _round_eval(c, z, mul=field.mul):
     half = c.shape[0] // 2
     clo, chi = c[:half], c[half:]
     zlo, zhi = z[:half], z[half:]
-    e1 = _xor_reduce(mul(chi, zhi))
-    einf = _xor_reduce(mul(field.add(chi, clo), field.add(zhi, zlo)))
+    e1 = field.sum(mul(chi, zhi))
+    einf = field.sum(mul(field.add(chi, clo), field.add(zhi, zlo)))
     return e1, einf
 
 
@@ -226,7 +227,7 @@ def prove(z_packed_bytes, a_dense, b_dense, x_ab, m, k_log, k_skip,
     r_inner_skip = ch.sample_f128()                       # 7. fresh z_skip AFTER
     lam = _lagrange_weights(k_skip, _to_int(r_inner_skip), 0)  # 8. φ8 S-domain weights
     lam_arr = jnp.asarray(np.stack([_to_lohi(x) for x in lam]))
-    w = np.asarray(_xor_reduce(mul(lam_arr, jnp.asarray(z_partial)), axis=0))  # inner_product
+    w = np.asarray(field.sum(mul(lam_arr, jnp.asarray(z_partial)), axis=0))  # inner_product
     r_inner_rest = [np.asarray(r) for r in reversed(r_rounds)]  # 9. LSB-first
     claim = {"r_inner_skip": np.asarray(r_inner_skip),
              "r_inner_rest": np.stack(r_inner_rest) if r_inner_rest else np.zeros((0, 2), np.uint64),

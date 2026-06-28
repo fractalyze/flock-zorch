@@ -22,7 +22,7 @@ import jax.numpy as jnp
 
 from flock_zorch import field, ntt as ntt_mod, merkle, sumcheck, basefold
 from flock_zorch import _hostfield as hf
-from flock_zorch.zerocheck import _to_lohi
+from flock_zorch.field import _to_lohi
 
 
 def eval_sk_at_vks(log_n: int):
@@ -56,8 +56,8 @@ def induce_sumcheck_poly(log_msg_cols: int, sks_vks, opened_rows, v_challenges, 
     eq = sumcheck.build_eq(jnp.asarray(v_challenges), mul=mul)            # [num_int, 2]
     alpha_pows = sumcheck.build_eq(jnp.asarray(alpha), mul=mul)[:nq]      # [nq, 2]
     rows = jnp.asarray(np.stack([np.asarray(r).reshape(-1, 2) for r in opened_rows]))  # [nq,num_int,2]
-    dot = sumcheck._xor_reduce(mul(rows, eq[None, :, :]), axis=1)         # [nq, 2]
-    enforced = sumcheck._xor_reduce(mul(alpha_pows, dot), axis=0)         # [2]
+    dot = field.sum(mul(rows, eq[None, :, :]), axis=1)         # [nq, 2]
+    enforced = field.sum(mul(alpha_pows, dot), axis=0)         # [2]
 
     # Ŵ_k(q_i) = s_k(q_i)/s_k(v_k), per query (recurrence over k), vectorized over i.
     inv_sks = [hf.inv(v) if v != 0 else 0 for v in sks_vks]
@@ -73,7 +73,7 @@ def induce_sumcheck_poly(log_msg_cols: int, sks_vks, opened_rows, v_challenges, 
     t = alpha_pows[:, None, :]                                           # [nq,1,2]
     for k in range(log_msg_cols):
         t = jnp.concatenate([t, mul(w[k][:, None, :], t)], axis=1)
-    basis = sumcheck._xor_reduce(t, axis=0)                              # [2^log_msg_cols, 2]
+    basis = field.sum(t, axis=0)                              # [2^log_msg_cols, 2]
     return np.asarray(basis), np.asarray(enforced)
 
 
@@ -140,7 +140,7 @@ class SumcheckProver:
 
     def introduce_new_with_eval(self, b_new):
         bn = jnp.asarray(b_new)
-        h_new = np.asarray(sumcheck._xor_reduce(self.mul(self.f, bn), axis=0))  # Σ f·b_new
+        h_new = np.asarray(field.sum(self.mul(self.f, bn), axis=0))  # Σ f·b_new
         msg = self._msg(self.f, bn)
         self._pending = (bn, h_new)
         return msg, h_new

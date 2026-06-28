@@ -21,23 +21,13 @@ import jax
 import jax.numpy as jnp
 
 from flock_zorch import field, gf8, sumcheck
+from flock_zorch.field import _to_int, _to_lohi
 from flock_zorch import _hostfield as hf
 from flock_zorch.challenger import Challenger
 
 K_SKIP = 6
 N_INNER = 7  # 3 small + 4 medium fixed-constant inner dims
 LABEL = b"flock-zerocheck-v0"
-
-_MASK64 = (1 << 64) - 1
-
-
-def _to_int(arr) -> int:
-    a = np.asarray(arr, dtype=np.uint64)
-    return int(a[0]) | (int(a[1]) << 64)
-
-
-def _to_lohi(x: int) -> np.ndarray:
-    return np.array([x & _MASK64, (x >> 64) & _MASK64], dtype=np.uint64)
 
 
 def _phi_int(v: int) -> int:
@@ -130,7 +120,7 @@ def _fold_at_z_dev(rows, w):
     Select-and-XOR-reduce: the large `[n_chunks, ell, 2]` intermediate is fused on
     the GPU instead of materialized in host numpy."""
     masked = rows[:, :, None].astype(jnp.uint64) * w[None, :, :]  # 0 or w[s]
-    return sumcheck._xor_reduce(masked, axis=1)
+    return field.sum(masked, axis=1)
 
 
 def _fold_at_z_rows(rows, weights: list[int]) -> np.ndarray:

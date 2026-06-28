@@ -33,8 +33,8 @@ def _round_message(a, b, mul):
     jnp (device) — the caller converts to np for the transcript/proof."""
     ae, ao = a[0::2], a[1::2]
     be, bo = b[0::2], b[1::2]
-    u0 = sumcheck._xor_reduce(mul(ae, be))
-    u2 = sumcheck._xor_reduce(mul(field.add(ae, ao), field.add(be, bo)))
+    u0 = field.sum(mul(ae, be))
+    u2 = field.sum(mul(field.add(ae, ao), field.add(be, bo)))
     return u0, u2
 
 

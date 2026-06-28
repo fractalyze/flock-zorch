@@ -21,7 +21,7 @@ import numpy as np
 import jax.numpy as jnp
 
 from flock_zorch import field
-from flock_zorch.sumcheck import build_eq, _xor_reduce
+from flock_zorch.sumcheck import build_eq
 from flock_zorch.lincheck import _round_eval, _bind_top
 
 LOG_PACKING = field.LOG_PACKING  # 128 = 2^7 bits per packed F128 element
@@ -109,6 +109,6 @@ def fold_in_out(packed, k_log, tau_pos, input_byte_off, output_byte_off, mul=fie
     pk = jnp.asarray(packed).reshape(n_inst, block_packed, 2)
     in_reg = pk[:, in_base:in_base + n_packed, :]                # (n_inst, n_packed, 2)
     out_reg = pk[:, out_base:out_base + n_packed, :]
-    in_vals = _xor_reduce(mul(in_reg, eq_tau[None]), axis=1)     # (n_inst, 2)
-    out_vals = _xor_reduce(mul(out_reg, eq_tau[None]), axis=1)
+    in_vals = field.sum(mul(in_reg, eq_tau[None]), axis=1)     # (n_inst, 2)
+    out_vals = field.sum(mul(out_reg, eq_tau[None]), axis=1)
     return np.asarray(in_vals), np.asarray(out_vals)
