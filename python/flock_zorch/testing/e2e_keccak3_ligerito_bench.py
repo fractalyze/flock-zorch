@@ -3,27 +3,16 @@ prove on the same instance. Byte-identity pinned by keccak3_ligerito_oracle_test
 (walker probes + full R1csProofLigerito @m=22); this times the same code path at
 the golden's size. Witness gen is ingested (not timed) on both sides.
 Run: ... e2e_keccak3_ligerito_bench.py <flock_cpu_ms>"""
-import sys, time
+import sys
 import numpy as np, jax
 jax.config.update("jax_enable_x64", True)
 from flock_zorch import field, pcs_commit, zerocheck, lincheck, prover  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 from flock_zorch.keccak3_lincheck import Keccak3LincheckCircuit  # noqa: E402
 from flock_zorch.testing.keccak3_ligerito_oracle_test import load, _unpack  # noqa: E402
-try:
-    from flock_zorch import field_clmad
-    MUL = field_clmad.mul if field_clmad.available() else field.mul
-except Exception:
-    MUL = field.mul
+from flock_zorch.testing._util import best, select_mul  # noqa: E402
 
-
-def best(fn, n=3):
-    r = fn(); jax.block_until_ready(jax.tree_util.tree_leaves(r))
-    b = float("inf")
-    for _ in range(n):
-        t0 = time.perf_counter(); r = fn(); jax.block_until_ready(jax.tree_util.tree_leaves(r))
-        b = min(b, time.perf_counter() - t0)
-    return b * 1e3
+MUL = select_mul()
 
 
 def main():

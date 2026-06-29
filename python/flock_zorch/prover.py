@@ -87,29 +87,25 @@ def open_batch(z_packed, codeword, init_tree, x_outers, k_code, log_inv_rate,
 
 def open_batch_ligerito(config, z_packed, codeword, init_tree, x_outers, ch,
                         mul=field.mul, use_host_sha=False) -> dict:
-    """Batched dual-claim PCS open with the LIGERITO backend (flock
-    `open_batch_mixed_ligerito_with_precomputed_s_hat_v`) — the headline path.
-    Same combine as open_batch (Σ_i γ_i·rs_eq_ind_i → b_combined) but drives the
-    recursive Ligerito prover instead of a single BaseFold. target_combined =
-    Σ_i γ_i·sumcheck_claim_i. Returns {ring_switches, ligerito: LigeritoProof}."""
-    ch.observe_label(b"flock-pcs-open-batch-v0")
-    s_hat_vs, rs_eq_inds, sumcheck_claims, gammas = ring_switch.prove_batched(z_packed, x_outers, ch, mul=mul)
-    b_combined, target = _combine_claims(rs_eq_inds, gammas, sumcheck_claims, mul)
-    lig = ligerito.recursive_prover_with_basis(
-        config, np.asarray(z_packed), np.asarray(b_combined), np.asarray(target),
-        codeword, init_tree, ch, mul=mul, use_host_sha=use_host_sha)
-    return {"ring_switches": s_hat_vs, "ligerito": lig}
+    """Batched dual-claim PCS open with the LIGERITO backend — the headline path.
+    The no-packed-direct case of `open_batch_mixed_ligerito`: N ring-switched
+    claims (x_outers, e.g. ab+c), zero direct ẑ-evaluation claims. Returns
+    {ring_switches, ligerito: LigeritoProof}."""
+    return open_batch_mixed_ligerito(config, z_packed, codeword, init_tree, x_outers,
+                                     (), ch, mul=mul, use_host_sha=use_host_sha)
 
 
 def open_batch_mixed_ligerito(config, z_packed, codeword, init_tree, x_outers, packed_direct,
                               ch, mul=field.mul, use_host_sha=False) -> dict:
     """Mixed batched open (flock `open_batch_mixed_ligerito_with_precomputed_s_hat_v`)
-    — the HASH-CHAIN open. Combines N ring-switched claims (x_outers, e.g. ab+c)
-    with M packed-direct claims (the chain claim: a direct ẑ-evaluation at a point,
-    eq_ind = build_eq(point) == build_eq_sparse(point)). Same recursive Ligerito
-    driver as open_batch_ligerito; b_combined just gains Σ_j γ_pd_j·eq_ind_j and the
-    target gains Σ_j γ_pd_j·value_j. γ order: the ring-switch γ's first (sampled
-    inside prove_batched), then γ_pd after observing each packed-direct value."""
+    — the HASH-CHAIN open, and the general Ligerito open. Combines N ring-switched
+    claims (x_outers, e.g. ab+c) with M packed-direct claims (the chain claim: a
+    direct ẑ-evaluation at a point, eq_ind = build_eq(point) == build_eq_sparse(point)).
+    The combine is Σ_i γ_i·rs_eq_ind_i → b_combined (target Σ_i γ_i·sumcheck_claim_i),
+    then b_combined gains Σ_j γ_pd_j·eq_ind_j and the target Σ_j γ_pd_j·value_j; the
+    recursive Ligerito prover runs against (b_combined, target). γ order: the
+    ring-switch γ's first (sampled inside prove_batched), then γ_pd after observing
+    each packed-direct value. M=0 recovers the plain Ligerito open (open_batch_ligerito)."""
     ch.observe_label(b"flock-pcs-open-batch-v0")
     s_hat_vs, rs_eq_inds, sumcheck_claims, gammas = ring_switch.prove_batched(z_packed, x_outers, ch, mul=mul)
     # Packed-direct: observe each claim's value, THEN sample the γ_pd (flock order).

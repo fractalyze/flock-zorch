@@ -13,7 +13,6 @@ Run:
 """
 import os
 import sys
-import time
 from pathlib import Path
 
 import numpy as np
@@ -33,20 +32,9 @@ LIR, LBS, K_LOG, K_SKIP = 1, 5, 6, 6
 # flock-baseline-needs-macbook: Apple-silicon NEON would narrow these.
 CPU_IDENTITY = {22: 57.70, 26: 897.88, 28: 3690.76}      # same-instance x86 scalar
 
-try:
-    from flock_zorch import field_clmad
-    MUL = field_clmad.mul if field_clmad.available() else field.mul
-except Exception:  # noqa: BLE001
-    MUL = field.mul
+from flock_zorch.testing._util import best, select_mul  # noqa: E402
 
-
-def _best(fn, n=3):
-    r = fn(); jax.block_until_ready(jax.tree_util.tree_leaves(r))
-    b = float("inf")
-    for _ in range(n):
-        t0 = time.perf_counter(); r = fn(); jax.block_until_ready(jax.tree_util.tree_leaves(r))
-        b = min(b, time.perf_counter() - t0)
-    return b * 1e3
+MUL = select_mul()
 
 
 def _identity(k):
@@ -86,7 +74,7 @@ def bench(m):
     def run():
         return prover.prove_fast(z_packed, m, K_LOG, K_SKIP, 1 << K_LOG, a0, b0, zlc, stmt,
                                  LIR, LBS, mul=MUL, use_host_sha=HOST_SHA)
-    t = _best(run, n=3)
+    t = best(run, n=3)
     cpu = CPU_IDENTITY.get(m)
     sp = f"{cpu/t:.1f}x vs same-instance CPU {cpu:.0f}ms" if cpu else "(no CPU ref)"
     print(f"  m={m}: fused prove_fast {t:8.2f} ms   {sp}")

@@ -14,7 +14,6 @@ Run:
 """
 import os
 import sys
-import time
 
 import numpy as np
 import jax
@@ -25,12 +24,9 @@ import jax.numpy as jnp  # noqa: E402
 from flock_zorch import (field, ntt as ntt_mod, pcs_commit, zerocheck,  # noqa: E402
                          lincheck, pcs_open, merkle)
 from flock_zorch.challenger import Challenger  # noqa: E402
+from flock_zorch.testing._util import best, select_mul  # noqa: E402
 
-try:
-    from flock_zorch import field_clmad
-    MUL = field_clmad.mul if field_clmad.available() else field.mul
-except Exception:  # noqa: BLE001
-    MUL = field.mul
+MUL = select_mul()
 
 LIR, LBS = 1, 5
 # Route Merkle (commit root + BaseFold T2/epoch trees) through flock's host SHA-NI
@@ -38,14 +34,6 @@ LIR, LBS = 1, 5
 HOST_SHA = os.environ.get("FLOCK_HOST_SHA") == "1"
 # flock CPU prove_fast (blake3_proof bench, this box): m -> ms.
 CPU_PROVE_FAST = {20: 19.94 * 4, 22: 19.94, 26: 218.73, 28: 940.01}  # m=20 approx scale
-
-
-def _best(fn, n=4):
-    fn(); best = float("inf")
-    for _ in range(n):
-        t0 = time.perf_counter(); r = fn(); jax.block_until_ready(r) if hasattr(r, "block_until_ready") else None
-        best = min(best, time.perf_counter() - t0)
-    return best * 1e3
 
 
 def bench(m):
@@ -64,17 +52,17 @@ def bench(m):
     cw_in = jnp.concatenate([x, pad], 0).reshape(n_pos_code * num_ntts, 2)
     ntt_fn = jax.jit(lambda c, t: ntt_mod.forward_transform_interleaved(c, t, k_code, num_ntts, mul=MUL))
     codeword = ntt_fn(cw_in, tw); codeword.block_until_ready()
-    t_commit = _best(lambda: ntt_fn(cw_in, tw))
+    t_commit = best(lambda: ntt_fn(cw_in, tw), n=4)
     cw_np = np.asarray(codeword)
     leaves = cw_np.reshape(n_pos_code, num_ntts * 2).view(np.uint8)
-    t_merkle = _best(lambda: merkle.merkle_tree(leaves, use_host_sha=HOST_SHA), n=2)
+    t_merkle = best(lambda: merkle.merkle_tree(leaves, use_host_sha=HOST_SHA), n=2)
     init_tree = merkle.merkle_tree(leaves, use_host_sha=HOST_SHA)
 
     # --- zerocheck (random a/b/c bits) ---
     a = rng.integers(0, 2, size=1 << m, dtype=np.uint8)
     b = rng.integers(0, 2, size=1 << m, dtype=np.uint8)
     c = rng.integers(0, 2, size=1 << m, dtype=np.uint8)
-    t_zc = _best(lambda: zerocheck.prove_packed(a, b, c, m, b"e2e", mul=MUL), n=3)
+    t_zc = best(lambda: zerocheck.prove_packed(a, b, c, m, b"e2e", mul=MUL), n=3)
 
     # --- lincheck (k_log/k_skip like flock; sparse A0/B0) ---
     k_log, k_skip = 7, 6
@@ -86,7 +74,7 @@ def bench(m):
     x_ab = {"z_skip": rng.integers(0, 2**64, size=2, dtype=np.uint64),
             "x_inner_rest": rng.integers(0, 2**64, size=(k_log - k_skip, 2), dtype=np.uint64),
             "x_outer": rng.integers(0, 2**64, size=(n_log, 2), dtype=np.uint64)}
-    t_lc = _best(lambda: lincheck.prove(zp_lin, A, B, x_ab, m, k_log, k_skip, mul=MUL), n=3)
+    t_lc = best(lambda: lincheck.prove(zp_lin, A, B, x_ab, m, k_log, k_skip, mul=MUL), n=3)
 
     # --- pcs.open ---
     x_outer = jnp.asarray(rng.integers(0, 2**64, size=(m - 6, 2), dtype=np.uint64))
@@ -94,7 +82,7 @@ def bench(m):
         ch = Challenger(b"e2e")
         return pcs_open.open(z_packed, codeword, init_tree, x_outer, k_code, LIR, LBS, ch, mul=MUL,
                              use_host_sha=HOST_SHA)
-    t_open = _best(open_fn, n=2)
+    t_open = best(open_fn, n=2)
 
     gpu = t_commit + t_merkle + t_zc + t_lc + t_open
     cpu = CPU_PROVE_FAST.get(m)

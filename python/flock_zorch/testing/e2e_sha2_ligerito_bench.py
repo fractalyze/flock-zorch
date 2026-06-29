@@ -1,25 +1,15 @@
 """GPU SHA-256 LIGERITO prover timing (the HEADLINE path) vs flock prove_ligerito
 on the same sha2 instance. Byte-identity pinned by sha2_ligerito_oracle_test.
 Run: ... e2e_sha2_ligerito_bench.py <flock_cpu_ms>"""
-import sys, time
+import sys
 import numpy as np, jax
 jax.config.update("jax_enable_x64", True)
 from flock_zorch import field, pcs_commit, zerocheck, lincheck, prover  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 from flock_zorch.testing.sha2_ligerito_oracle_test import load, _unpack  # noqa: E402
-try:
-    from flock_zorch import field_clmad
-    MUL = field_clmad.mul if field_clmad.available() else field.mul
-except Exception:
-    MUL = field.mul
+from flock_zorch.testing._util import best, select_mul  # noqa: E402
 
-def best(fn, n=3):
-    r = fn(); jax.block_until_ready(jax.tree_util.tree_leaves(r))
-    b = float("inf")
-    for _ in range(n):
-        t0 = time.perf_counter(); r = fn(); jax.block_until_ready(jax.tree_util.tree_leaves(r))
-        b = min(b, time.perf_counter() - t0)
-    return b * 1e3
+MUL = select_mul()
 
 def main():
     cpu = float(sys.argv[1]) if len(sys.argv) > 1 else None
