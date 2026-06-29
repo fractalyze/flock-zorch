@@ -16,7 +16,6 @@ Run:
       python/flock_zorch/testing/e2e_sha2_bench.py
 """
 import sys
-import time
 from pathlib import Path
 
 import numpy as np
@@ -27,25 +26,13 @@ jax.config.update("jax_enable_x64", True)
 from flock_zorch import field, pcs_commit, zerocheck, lincheck, prover  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 from flock_zorch.testing.sha2_oracle_test import load, _unpack  # noqa: E402
+from flock_zorch.testing._util import best, select_mul  # noqa: E402
 
 ART = Path(__file__).resolve().parents[3] / "artifacts"
 # flock BaseFold prove on the same instance (bench_sha2_cpu.rs), x86 scalar.
 CPU_SHA2 = {18: None, 21: None}  # filled in by the runner from bench_sha2_cpu output
 
-try:
-    from flock_zorch import field_clmad
-    MUL = field_clmad.mul if field_clmad.available() else field.mul
-except Exception:  # noqa: BLE001
-    MUL = field.mul
-
-
-def _best(fn, n=3):
-    r = fn(); jax.block_until_ready(jax.tree_util.tree_leaves(r))
-    b = float("inf")
-    for _ in range(n):
-        t0 = time.perf_counter(); r = fn(); jax.block_until_ready(jax.tree_util.tree_leaves(r))
-        b = min(b, time.perf_counter() - t0)
-    return b * 1e3
+MUL = select_mul()
 
 
 def main():
@@ -77,7 +64,7 @@ def main():
         return prover.open_batch(z, codeword, tree, [ab_full, c_full], k_code, lir, lbs, ch,
                                  mul=MUL, use_host_sha=True)
 
-    t = _best(prove_once, n=3)
+    t = best(prove_once, n=3)
     sp = f"{cpu/t:.1f}x vs same-instance flock BaseFold CPU {cpu:.0f}ms" if cpu else "(pass CPU ms as argv[1])"
     print(f"  GPU sha256 prove (commit+zerocheck+CSC-lincheck+open) {t:8.2f} ms   {sp}")
 

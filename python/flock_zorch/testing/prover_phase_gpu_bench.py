@@ -12,7 +12,6 @@ Run:
       python/flock_zorch/testing/prover_phase_gpu_bench.py [m ...]
 """
 import sys
-import time
 
 import numpy as np
 import jax
@@ -22,30 +21,19 @@ import jax.numpy as jnp  # noqa: E402
 
 from flock_zorch import field, pcs_commit, zerocheck  # noqa: E402
 
-try:
-    from flock_zorch import field_clmad
-    MUL = field_clmad.mul if field_clmad.available() else field.mul
-    MULNAME = "clmad" if field_clmad.available() else "software"
-except Exception:  # noqa: BLE001
-    MUL, MULNAME = field.mul, "software"
+from flock_zorch.testing._util import best, select_mul  # noqa: E402
+
+MUL = select_mul()
+MULNAME = "clmad" if MUL is not field.mul else "software"
 
 LOG_INV_RATE = 1
 LOG_BATCH = 5
 
 
-def _best(fn, iters=5):
-    r = fn(); jax.block_until_ready(r)
-    best = float("inf")
-    for _ in range(iters):
-        t0 = time.perf_counter(); r = fn(); jax.block_until_ready(r)
-        best = min(best, time.perf_counter() - t0)
-    return best * 1e3
-
-
 def bench_commit(m):
     n_packed = 1 << (m - 7)
     z_packed = jnp.asarray(np.random.default_rng(1).integers(0, 2**64, size=(n_packed, 2), dtype=np.uint64))
-    return _best(lambda: pcs_commit.commit_root(z_packed, m, LOG_INV_RATE, LOG_BATCH, mul=MUL))
+    return best(lambda: pcs_commit.commit_root(z_packed, m, LOG_INV_RATE, LOG_BATCH, mul=MUL), 5)
 
 
 def bench_zerocheck(m):
@@ -55,13 +43,7 @@ def bench_zerocheck(m):
     b = rng.integers(0, 2, size=1 << m, dtype=np.uint8)
     c = rng.integers(0, 2, size=1 << m, dtype=np.uint8)
     # prove_packed is a host loop (jit'd kernels inside); time the whole call.
-    def run():
-        return zerocheck.prove_packed(a, b, c, m, b"flock-bench-v0", mul=MUL)
-    run()  # warm
-    best = float("inf")
-    for _ in range(3):
-        t0 = time.perf_counter(); run(); best = min(best, time.perf_counter() - t0)
-    return best * 1e3
+    return best(lambda: zerocheck.prove_packed(a, b, c, m, b"flock-bench-v0", mul=MUL), n=3)
 
 
 def main():
