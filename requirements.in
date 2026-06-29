@@ -8,13 +8,16 @@
 # itself arrives as a Bazel module (see MODULE.bazel), not a pip dep.
 absl-py
 numpy
-# Lockstep with the zorch git pin in MODULE.bazel (zkx binary-field GPU
-# contract) — bump both together; CPU-only CI cannot catch a wrong GPU codeword
-# or a binary-field-basis desync. Same wheel set sp1-zorch / whir-zorch carry.
-jax==0.0.5.dev20260623111059
-jaxlib==0.0.5.dev20260623111059
-jax-cuda12-plugin==0.0.5.dev20260623111059
-zkx-cuda-pjrt==0.0.5.dev20260623111059
+# Lockstep with the zorch submodule pin (third_party/zorch @ flock-byte-fiat-shamir).
+# That branch migrated onto the jax_fork jax-cuda12 stack (zorch#194), so this MUST
+# mirror zorch's own requirements.in. The pre-migration zkx-cuda-pjrt / 0.0.5.dev
+# wheels lack the interior-padding lowering lincheck's `_seg_xor_fold`
+# (jax.lax.associative_scan) needs — the sha2/blake3 GPU gates raise
+# NotImplementedError on them. Bump these together with the submodule pin.
+jax==0.10.0.dev20260624213155
+jaxlib==0.10.0.dev20260624213155
+jax-cuda12-plugin==0.10.0.dev20260624213155
+jax-cuda12-pjrt==0.10.0.dev20260624213155
 # zk_dtypes ships the native field dtypes jax lowers; arrives transitively via
 # jax but the resolver lags, so pin it so the lock tracks the jax wheel.
 zk-dtypes==0.0.7

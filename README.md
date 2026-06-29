@@ -171,7 +171,7 @@ JAX_PLATFORMS=cuda PYTHONPATH=python:third_party/zorch "$VENV" python/flock_zorc
 
 ## Toolchain
 - GPU: RTX 5090 (sm_120), CUDA 12.9. zorch venv: `/home/jooman/fractalyze/zorch/.venv`
-  (jax 0.10.0.dev fork + `zk_dtypes` 0.0.7 + zkx CUDA PJRT plugin).
+  (jax_fork jax-cuda12 stack `0.10.0.dev*` + `jax-cuda12-pjrt` + `zk_dtypes` 0.0.7).
 - Rust: standalone rustup in `~/.cargo` (flock is edition 2024). `flock-core` is a
   path dep at `third_party/flock/crates/flock-core` — the byte-compare baseline.
 

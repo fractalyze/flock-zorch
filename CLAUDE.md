@@ -65,7 +65,8 @@ the ∞-trick round loop, and the `prove_packed` assembly.
 
 ## Toolchain
 - GPU: RTX 5090 (sm_120, Blackwell), CUDA 12.9. zorch venv:
-  `/home/jooman/fractalyze/zorch/.venv` (jax 0.10.0.dev fork + `zk_dtypes` 0.0.7
-  + zkx CUDA PJRT plugin). `jax_enable_x64` required for the uint64 lanes.
+  `scripts/setup.sh` builds `./.venv` from `requirements.in` (the jax_fork
+  jax-cuda12 stack `0.10.0.dev*` + `jax-cuda12-pjrt` + `zk_dtypes` 0.0.7 — mirror
+  zorch's pin). `jax_enable_x64` required for the uint64 lanes.
 - Rust: standalone rustup in `~/.cargo` (flock is edition 2024). `flock-core` is a
   path dep at `third_party/flock/crates/flock-core`.
