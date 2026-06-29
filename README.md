@@ -137,6 +137,7 @@ Full instructions — prerequisites, the gate environment, golden regeneration, 
 ### Reproduce a benchmark point (SHA-256, m=26)
 
 ```bash
+VENV=.venv/bin/python                                                       # built by scripts/setup.sh
 cargo run --release --example dump_sha2 -- 2048 artifacts/sha2_golden.bin   # real R1CS, m=26
 cargo build --release --example bench_sha2_cpu                              # CPU anchor
 export JAX_PLATFORMS=cuda XLA_PYTHON_CLIENT_PREALLOCATE=false
@@ -148,8 +149,9 @@ $VENV python/flock_zorch/testing/e2e_sha2_bench.py "${CPU%% ms}"             # G
 
 ## Toolchain
 
-- **GPU:** RTX 5090 (sm_120, Blackwell), CUDA 12.9+. zorch venv built by
-  `scripts/setup.sh` (jax_fork jax-cuda12 stack + `jax-cuda12-pjrt` + `zk_dtypes`).
-  `jax_enable_x64` is required for the uint64 field lanes.
+- **GPU:** RTX 5090 (sm_120, Blackwell). JAX runtime is the **CUDA 12** stack
+  (jax_fork jax-cuda12 + `jax-cuda12-pjrt` + `zk_dtypes`), built into `.venv` by
+  `scripts/setup.sh`; the `clmad` cubin is assembled with **ptxas ≥ 13.x** (sm_120
+  requires it). `jax_enable_x64` is required for the uint64 field lanes.
 - **Rust:** standalone rustup in `~/.cargo` (flock is edition 2024). `flock-core`
   is a path dep at `third_party/flock/crates/flock-core` — the byte-compare baseline.

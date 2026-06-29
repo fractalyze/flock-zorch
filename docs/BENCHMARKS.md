@@ -12,7 +12,7 @@ synthetic circuits.
 |-----------|--------|
 | GPU | NVIDIA GeForce RTX 5090 (sm_120, 32607 MiB) |
 | CPU | AMD Ryzen 9 9950X3D 16-Core |
-| CUDA | 13.x (driver), ptxas 13.x for the clmad cubin |
+| CUDA | driver 13.x; JAX runtime = CUDA 12 (jax-cuda12 stack); ptxas ≥ 13.x for the clmad cubin (sm_120) |
 | Rust | flock built thin-LTO, `codegen-units=1`, `target-cpu=native` (its honest x86 best) |
 | Python / JAX | 3.11 / jax_fork jax-cuda12 stack |
 | Date | 2026-06-30 UTC |
@@ -121,9 +121,10 @@ bulk arithmetic and the CPU winning on latency-bound small instances.
 ## Commands Used
 
 ```bash
-# build clmad cubin
-~/.local/cuda13/bin/ptxas -arch=sm_120 -O3 optim/clmad/ghash_mul.ptx -o optim/clmad/ghash_mul.cubin
+# build clmad cubin — ptxas from a CUDA 13.x toolkit (sm_120 requires >= 13.x)
+ptxas -arch=sm_120 -O3 optim/clmad/ghash_mul.ptx -o optim/clmad/ghash_mul.cubin
 
+VENV=.venv/bin/python                          # built by scripts/setup.sh
 export JAX_PLATFORMS=cuda XLA_PYTHON_CLIENT_PREALLOCATE=false
 export PYTHONPATH=python:third_party/zorch
 export FLOCK_CLMAD_CUBIN=$(pwd)/optim/clmad/ghash_mul.cubin
