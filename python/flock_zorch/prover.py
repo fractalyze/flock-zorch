@@ -124,17 +124,24 @@ def open_batch_mixed_ligerito(config, z_packed, codeword, init_tree, x_outers, p
 
 def prove_fast(z_packed, m, k_log, k_skip, useful_bits, a0, b0, z_lincheck, statement_digest,
                log_inv_rate=1, log_batch_size=5, domain=b"flock-test-v0", mul=field.mul,
-               use_host_sha=False) -> dict:
+               use_host_sha=False, transcript_cls=None) -> dict:
     """Fused single-call R1CS prover (identity-C path: c = z), byte-identical to
     flock `prover::prove`. Keeps witness/codeword device-resident across all phases
     on ONE shared challenger (no per-phase host re-transfer): commit → bind →
     zerocheck → lincheck → batched dual-claim open. a = A·z, b = B·z; for the
-    identity R1CS a = b = c = z (the gated path). Returns the proof dict + claims."""
+    identity R1CS a = b = c = z (the gated path). Returns the proof dict + claims.
+
+    `transcript_cls` selects the Fiat-Shamir backend for the single shared
+    challenger threaded through every phase: None (the default) keeps the host
+    `zorch.byte_transcript.Sha256Transcript` (hashlib); pass
+    `zorch.device_byte_transcript.DeviceSha256Transcript` to run the byte SHA-256
+    on the `zorch.sha256` device marker. Both share the same byte framing, so the
+    proof bytes are identical either way (pinned by `e2e_device_oracle_test`)."""
     k_code = (m - field.LOG_PACKING - log_batch_size) + log_inv_rate
     inner_rest = k_log - k_skip
 
     root, codeword, tree = pcs_commit.commit(z_packed, m, log_inv_rate, log_batch_size, mul, use_host_sha)
-    ch = Challenger(domain)
+    ch = Challenger(domain) if transcript_cls is None else Challenger(domain, transcript_cls=transcript_cls)
     bind_statement(ch, statement_digest, root)
 
     bits = _unpack_bits_dev(jnp.asarray(z_packed))           # a = b = c = z, device-resident
