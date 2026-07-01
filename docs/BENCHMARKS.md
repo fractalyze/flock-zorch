@@ -87,6 +87,47 @@ ceiling) and is memory-bound, not compute-bound; the timing is still reported.
 
 ---
 
+## Device SHA-256 Fiat-Shamir transcript — measured crossover impact (#7)
+
+The milestone thesis is that moving Fiat-Shamir **on-device** should push the
+crossover **left** (kill the per-round host↔device latency). #7 tested the one
+drop-in that keeps byte-identity: `zorch.device_byte_transcript.DeviceSha256Transcript`,
+wired as an opt-in `transcript_cls` on `prove_fast`. **Result: it moves the
+crossover right, not left** — the byte transcript is a large regression.
+
+Why: the byte device transcript keeps flock's growing `bytes` buffer and re-hashes
+it via the `zorch.sha256` marker **per squeeze** — one GPU dispatch + host↔device
+transfer for each of a prove's hundreds of `sample`/`grind` calls, each re-hashing
+the whole buffer. And the flock `Challenger` still serializes F128 challenges
+through host numpy, so the per-round sync it was meant to remove is still there.
+
+`prove_fast`, identity R1CS, RTX 5090, host- vs device-transcript on the **same**
+witness/arithmetic (best-of-3, warm). Because only the transcript differs,
+`device − host ≈ the pure Fiat-Shamir overhead` (field-mul-independent):
+
+| m  | host-transcript (ms) | device-transcript (ms) | ratio | device − host (FS overhead) |
+|----|----------------------|------------------------|-------|-----------------------------|
+| 22 | 5,189                | 50,921                 | 9.8×  | **~45.7 s** |
+| 24 | 11,907               | 55,406                 | 4.7×  | **~43.5 s** |
+
+Measured with **software** GF(2¹²⁸) mul (no `ptxas`/clmad cubin on this box), which
+inflates the *baseline* prover ~100× but **not** the transcript (its ops are SHA
+dispatches, not field muls). So the honest, config-independent figure is the
+**~44 s of fixed FS overhead per prove**. Against the real clmad prover (59.8 ms
+@ m=22, 66.6 ms @ m=24) that overhead is ~700× the whole prove: the device-byte
+GPU prover would be ~44 s versus flock CPU's 24–67 ms — the crossover leaves the
+chart to the right at every m here.
+
+**Takeaway.** The byte transcript is a correct drop-in (full-prover byte-identity
+pinned by `e2e_device_oracle_test`) but not a perf lever; it stays an opt-in. The
+left-shift requires the *other* zorch surface — `Sha256FieldTranscript` (fixed-shape
+streaming `Sha256State`, `lax.scan`-threadable) — threaded through a **device
+sumcheck driver** so challenges stay on-device and the whole round loop
+single-dispatches. That is P2 #9 (`sumcheck → zorch device driver`), not a
+transcript-backend swap.
+
+---
+
 ## Interpretation
 
 flock's prover is a **sequential SHA-256 Fiat-Shamir chain**: each round samples a
