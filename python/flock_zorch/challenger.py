@@ -36,12 +36,19 @@ def _f128s_from(buf: bytes, n: int) -> np.ndarray:
 
 
 class Challenger:
-    """Mutable host-side wrapper over the functional `Sha256Transcript`, mirroring
-    flock's `&mut self` `FsChallenger` API. F128 values are `uint64[..., 2]`
-    arrays (the `field.py` representation)."""
+    """Mutable wrapper over a functional byte transcript, mirroring flock's
+    `&mut self` `FsChallenger` API. F128 values are `uint64[..., 2]` arrays (the
+    `field.py` representation).
 
-    def __init__(self, domain: bytes):
-        self._t = Sha256Transcript.new(domain)
+    `transcript_cls` selects the backend: the default host
+    `zorch.byte_transcript.Sha256Transcript` (hashlib), or the byte-identical
+    device `zorch.device_byte_transcript.DeviceSha256Transcript` (SHA-256 on the
+    `zorch.sha256` marker), which the `challenger_oracle_device_test` gate pins to
+    the same flock golden. Both expose the same byte-framed API, so the glue here
+    is unchanged."""
+
+    def __init__(self, domain: bytes, *, transcript_cls: type = Sha256Transcript):
+        self._t = transcript_cls.new(domain)
 
     def observe_label(self, label: bytes) -> None:
         self._t = self._t.observe_label(label)

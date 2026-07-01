@@ -50,8 +50,9 @@ jobs:
           PYTHONPATH: python:third_party/zorch
         run: |
           for t in field ntt sha256 merkle merkle_multi sumcheck zerocheck \
-                   challenger gf8_urm fri_fold row_batch ring_switch basefold \
-                   pcs_open ligerito lincheck e2e chain_shift; do
+                   challenger challenger_device gf8_urm fri_fold row_batch \
+                   ring_switch basefold pcs_open ligerito lincheck e2e \
+                   chain_shift; do
             echo "::group::${t}_oracle_test"
             .venv/bin/python "python/flock_zorch/testing/${t}_oracle_test.py" || exit 1
             echo "::endgroup::"
