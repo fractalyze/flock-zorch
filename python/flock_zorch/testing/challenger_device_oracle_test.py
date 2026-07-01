@@ -9,10 +9,10 @@ golden the host gate uses. This is the direct bit-for-bit anchor to flock-core's
 transitively pin every absorbed byte (tag, length prefix, F128 LE order,
 re-absorb, PoW).
 
-Run (needs the device transcript on PYTHONPATH — the dev zorch checkout, or a
-pin that includes `device_byte_transcript`):
-    PYTHONPATH=python:../zorch <venv>/bin/python \
-        python/flock_zorch/testing/challenger_oracle_device_test.py
+Run (needs the device transcript on PYTHONPATH — the pinned third_party/zorch
+submodule, or a dev zorch checkout, that includes `device_byte_transcript`):
+    PYTHONPATH=python:third_party/zorch <venv>/bin/python \
+        python/flock_zorch/testing/challenger_device_oracle_test.py
 """
 import unittest
 
