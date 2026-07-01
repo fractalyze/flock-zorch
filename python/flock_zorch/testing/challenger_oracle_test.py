@@ -45,9 +45,11 @@ def _load(path: Path):
     return samples, nonce
 
 
-def _replay() -> tuple[list[np.ndarray], int]:
-    """The scripted sequence — identical to dump_challenger.rs."""
-    ch = Challenger(DOMAIN)
+def _replay(make_challenger=Challenger) -> tuple[list[np.ndarray], int]:
+    """The scripted sequence — identical to dump_challenger.rs. `make_challenger`
+    builds the `Challenger` (its default backend is the host transcript; the device
+    gate passes a device-backed factory)."""
+    ch = make_challenger(DOMAIN)
     samples: list[np.ndarray] = []
 
     ch.observe_label(LABEL)
@@ -70,10 +72,10 @@ def _replay() -> tuple[list[np.ndarray], int]:
     return samples, nonce
 
 
-def run(path: Path | None = None):
+def run(path: Path | None = None, *, make_challenger=Challenger):
     path = path or (_artifacts_dir() / "challenger_golden.bin")
     golden, golden_nonce = _load(path)
-    samples, nonce = _replay()
+    samples, nonce = _replay(make_challenger)
 
     got = np.stack(samples)
     if not np.array_equal(got, golden):
