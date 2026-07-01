@@ -63,7 +63,7 @@ def sanity_m13():
           f"(full byte gate: e2e_oracle_test)")
 
 
-def bench(m):
+def bench(m, transcript_cls=None, n=3):
     rng = np.random.default_rng(7)
     nzp = 1 << (m - 7)
     z_packed = rng.integers(0, 2**64, size=(nzp, 2), dtype=np.uint64)
@@ -73,21 +73,43 @@ def bench(m):
 
     def run():
         return prover.prove_fast(z_packed, m, K_LOG, K_SKIP, 1 << K_LOG, a0, b0, zlc, stmt,
-                                 LIR, LBS, mul=MUL, use_host_sha=HOST_SHA)
-    t = best(run, n=3)
-    cpu = CPU_IDENTITY.get(m)
-    sp = f"{cpu/t:.1f}x vs same-instance CPU {cpu:.0f}ms" if cpu else "(no CPU ref)"
-    print(f"  m={m}: fused prove_fast {t:8.2f} ms   {sp}")
-    return t
+                                 LIR, LBS, mul=MUL, use_host_sha=HOST_SHA,
+                                 transcript_cls=transcript_cls)
+    return best(run, n=n)
+
+
+# Fiat-Shamir backend under test (flock-zorch#7). `host` is the default hashlib
+# Sha256Transcript; `device` runs the byte SHA-256 on the zorch.sha256 marker. The
+# device byte transcript re-hashes the whole growing buffer per squeeze, so it is
+# far slower per op — n defaults low for it (env FLOCK_BENCH_N overrides).
+_TRANSCRIPT = os.environ.get("FLOCK_TRANSCRIPT", "host")   # host | device | both
+_DEVICE_TRANSCRIPT = None
+if _TRANSCRIPT in ("device", "both"):
+    from zorch.device_byte_transcript import DeviceSha256Transcript  # noqa: E402
+    _DEVICE_TRANSCRIPT = DeviceSha256Transcript
 
 
 def main():
     ms = [int(x) for x in sys.argv[1:]] or [26]
+    n_host = int(os.environ.get("FLOCK_BENCH_N", "3"))
+    n_dev = int(os.environ.get("FLOCK_BENCH_N", "1"))   # device is slow; 1 by default
     print(f"device {jax.devices()[0]} | mul {'clmad' if MUL is not field.mul else 'software'} "
-          f"| Merkle {'HOST SHA-NI' if HOST_SHA else 'GPU SHA-256'}")
+          f"| Merkle {'HOST SHA-NI' if HOST_SHA else 'GPU SHA-256'} | transcript {_TRANSCRIPT}")
     sanity_m13()
     for m in ms:
-        bench(m)
+        cpu = CPU_IDENTITY.get(m)
+        th = td = None
+        if _TRANSCRIPT in ("host", "both"):
+            th = bench(m, transcript_cls=None, n=n_host)
+            sp = f"{cpu/th:.1f}x vs same-instance CPU {cpu:.0f}ms" if cpu else "(no CPU ref)"
+            print(f"  m={m}: HOST-transcript   prove_fast {th:9.2f} ms   {sp}")
+        if _TRANSCRIPT in ("device", "both"):
+            td = bench(m, transcript_cls=_DEVICE_TRANSCRIPT, n=n_dev)
+            sp = f"{cpu/td:.1f}x vs same-instance CPU {cpu:.0f}ms" if cpu else "(no CPU ref)"
+            print(f"  m={m}: DEVICE-transcript prove_fast {td:9.2f} ms   {sp}")
+        if th and td:
+            print(f"  m={m}: device/host transcript ratio {td/th:6.2f}x "
+                  f"(>1 = device SLOWER; crossover shifts RIGHT, not left)")
 
 
 if __name__ == "__main__":
