@@ -6,6 +6,9 @@ F₂¹²⁸) onto Fractalyze's zorch / zkx compiler stack, in the style of
 `bellman-zorch` and `accumulation-zorch`. Upstream lives at `third_party/flock` — it is
 the byte-compare baseline. Read `README.md` for setup/run.
 
+**Comments: terse.** Prefer none over verbose — a good step/target name or
+self-evident code beats a paragraph. Drop a comment rather than pad it.
+
 ## Non-negotiables
 
 ### 1. Byte-identical oracle gates are mandatory

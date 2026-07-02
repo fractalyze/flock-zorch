@@ -1,7 +1,5 @@
-# Golden fixtures. Locally + in CI they are produced by scripts/dump_goldens.sh
-# (cargo) *before* `bazel test`; grouped here so each gate pulls the set into its
-# runfiles (symlinks, ~0 cost) and reads its own via the gate's default
-# `Path(__file__).parents[3] / "artifacts"` — no per-gate golden wiring to keep.
+# Goldens, dumped by scripts/dump_goldens.sh (cargo) before `bazel test`; each gate
+# pulls the set into runfiles and reads its own via Path(__file__).parents[3]/artifacts.
 filegroup(
     name = "goldens",
     srcs = glob(["*_golden.bin"]),

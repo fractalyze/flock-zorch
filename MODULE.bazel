@@ -25,16 +25,12 @@ module(
 
 bazel_dep(name = "rules_python", version = "1.7.0")
 
-# zorch is not published on a Bazel registry; pin it from GitHub so the bump is a
-# commit-hash edit here (sp1-zorch style) rather than moving a submodule. Keep
-# requirements.in in lockstep with the pin. To dev against a local zorch checkout,
-# override in .bazelrc.user (gitignored):
-#   common --override_module=zorch=/abs/path/to/your/zorch
+# zorch pin: bump = edit the commit (keep requirements.in in lockstep). Local dev:
+# .bazelrc.user -> common --override_module=zorch=/abs/path/to/zorch
 bazel_dep(name = "zorch", version = "0.0.0")
 git_override(
     module_name = "zorch",
-    # flock-byte-fiat-shamir @ the ByteHash-seam collapse (fractalyze/zorch#360)
-    # + the //zorch/hash:sha256 fusion-dep fix (needed for bazel consumers).
+    # flock-byte-fiat-shamir @ ByteHash collapse (zorch#360) + sha256->fusion BUILD fix.
     commit = "e2d28dc47da4c3c43a7a9ac89f231bd32ceb0ad5",
     remote = "https://github.com/fractalyze/zorch.git",
 )
