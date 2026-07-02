@@ -11,10 +11,11 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-# Materialize the repo, then resolve its root from a known target's BUILD file:
-#   <output_base>/external/zorch+/zorch/BUILD.bazel  ->  <output_base>/external/zorch+
-bazel fetch @zorch//zorch:byte_transcript >/dev/null 2>&1 || true
-loc=$(bazel query --output=location "@zorch//zorch:byte_transcript" 2>/dev/null | head -1)
-build_file="${loc%%:*}"
-[ -n "$build_file" ] || { echo "could not resolve @zorch path via bazel" >&2; exit 1; }
-dirname "$(dirname "$build_file")"
+# Resolve the external repo root layout-independently as <output_base>/<workspace_root>.
+# cquery materializes @zorch as a side effect, so no separate `bazel fetch` is needed;
+# `label.workspace_root` avoids parsing a display string or guessing the tree depth.
+base=$(bazel info output_base 2>/dev/null) || true
+wsroot=$(bazel cquery @zorch//zorch:byte_transcript --output=starlark \
+    --starlark:expr='target.label.workspace_root' 2>/dev/null | head -1) || true
+[ -n "$base" ] && [ -n "$wsroot" ] || { echo "could not resolve @zorch path via bazel" >&2; exit 1; }
+echo "$base/$wsroot"

@@ -4,8 +4,7 @@ load("@rules_python//python:defs.bzl", "py_library", "py_test")
 # flock-zorch#28: bazel-native byte-match gates over the git_override'd @zorch.
 # Goldens are produced by scripts/dump_goldens.sh (cargo, run before `bazel test`)
 # and pulled from //artifacts runfiles — the gates resolve them via their default
-# `Path(__file__).parents[3] / "artifacts"`. GPU/clmad + heavy hash-circuit gates
-# are NOT here (see README); they stay `bazel run`-style verify runnables.
+# `Path(__file__).parents[3] / "artifacts"`.
 
 # The prover port. field_clmad / _merkle_host_ffi load their native libs lazily
 # (optional; software + zorch.sha256-marker fallbacks are byte-identical), so the
@@ -41,41 +40,37 @@ py_library(
     ],
 )
 
-# gate name -> the golden filename it byte-compares against (mostly 1:1).
-_CORE_GATES = {
-    "field": "field_mul_golden.bin",
-    "ntt": "ntt_golden.bin",
-    "sha256": "sha256_golden.bin",
-    "merkle": "merkle_golden.bin",
-    "merkle_multi": "merkle_multi_golden.bin",
-    "sumcheck": "sumcheck_golden.bin",
-    "zerocheck": "zerocheck_golden.bin",
-    "challenger": "challenger_golden.bin",
-    "gf8_urm": "gf8_urm_golden.bin",
-    "fri_fold": "fri_fold_golden.bin",
-    "row_batch": "row_batch_golden.bin",
-    "ring_switch": "ring_switch_golden.bin",
-    "basefold": "basefold_golden.bin",
-    "pcs_open": "pcs_open_golden.bin",
-    "ligerito": "ligerito_golden.bin",
-    "lincheck": "lincheck_golden.bin",
-    "e2e": "e2e_golden.bin",
-    "chain_shift": "chain_shift_golden.bin",
-}
+# Every *_oracle_test.py is a CPU byte-identity gate EXCEPT these: the heavy real
+# hash-circuit provers (hundreds-of-MB goldens) and the commit GPU perf gate. They
+# run on the venv via scripts/zorch_pythonpath.sh, not bazel. New gates default in;
+# this is the only list to touch.
+_HEAVY = [
+    "commit",
+    "keccak",
+    "keccak_ligerito",
+    "keccak_chain",
+    "keccak3_ligerito",
+    "sha2",
+    "sha2_ligerito",
+    "blake3",
+    "blake3_ligerito",
+]
 
 [
     py_test(
-        name = "%s_oracle_test" % _g,
         # Compile-heavy: each gate builds jax programs per hash shape (slowest
         # observed ~64s: ligerito). medium = 300s gives ample cold-CI margin.
+        name = _f[len("flock_zorch/testing/"):-len(".py")],
         size = "medium",
-        srcs = ["flock_zorch/testing/%s_oracle_test.py" % _g],
-        data = ["//artifacts:%s" % _gold],
-        imports = ["."],
+        srcs = [_f],
+        data = ["//artifacts:goldens"],
         deps = [
             ":flock_zorch",
             ":test_support",
         ],
     )
-    for _g, _gold in _CORE_GATES.items()
+    for _f in glob(
+        ["flock_zorch/testing/*_oracle_test.py"],
+        exclude = ["flock_zorch/testing/%s_oracle_test.py" % _h for _h in _HEAVY],
+    )
 ]

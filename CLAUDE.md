@@ -54,11 +54,9 @@ submodule). flock-zorch reuses:
 - `zorch.hash.sha256` — the byte-SHA-256 (data-parallel device sibling of the
   transcript's host hashlib path).
 - (planned) `zorch.sumcheck.field_ops.FieldOps` — the binary-field sumcheck seam.
-Run the core byte-identity gates with **`bazel test //python:all`** (deps from the
-pip lock, `zorch` from the `git_override`; goldens dumped by `scripts/dump_goldens.sh`
-first). Heavy/GPU gates aren't bazel targets — run them on the venv with
-**`PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"`** (resolves the same
-git_override'd zorch).
+Run the core byte-identity gates with **`bazel test //python:all`**; heavy/GPU
+gates run on the venv (`scripts/zorch_pythonpath.sh` resolves the git_override'd
+zorch). Full gate-run + pin-bump instructions: [`docs/SETUP.md`](docs/SETUP.md).
 What stays flock-specific: F128↔bytes serialization, the round-1 URM (F8/φ8/F8-NTT),
 the ∞-trick round loop, and the `prove_packed` assembly.
 
