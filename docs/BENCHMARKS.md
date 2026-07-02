@@ -37,7 +37,7 @@ synthetic circuits.
 - **Timing**: best-of-3 (full prover) after one warm-up (JIT compile excluded).
   CPU single-threaded (flock's parallel/NEON paths are aarch64-gated).
 - **Env**: `JAX_PLATFORMS=cuda`, `FLOCK_CLMAD_CUBIN=optim/clmad/ghash_mul.cubin`,
-  `PYTHONPATH=python:third_party/zorch`.
+  `PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"` (zorch via the git_override).
 
 ---
 
@@ -169,7 +169,7 @@ ptxas -arch=sm_120 -O3 optim/clmad/ghash_mul.ptx -o optim/clmad/ghash_mul.cubin
 
 VENV=.venv/bin/python                          # built by scripts/setup.sh
 export JAX_PLATFORMS=cuda XLA_PYTHON_CLIENT_PREALLOCATE=false
-export PYTHONPATH=python:third_party/zorch
+export PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"   # zorch via the git_override
 export FLOCK_CLMAD_CUBIN=$(pwd)/optim/clmad/ghash_mul.cubin
 
 # one sweep point (SHA-256, m via n_comp): dump real R1CS -> CPU anchor -> GPU
