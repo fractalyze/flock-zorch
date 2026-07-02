@@ -1,0 +1,7 @@
+# Goldens, dumped by scripts/dump_goldens.sh (cargo) before `bazel test`; each gate
+# pulls the set into runfiles and reads its own via Path(__file__).parents[3]/artifacts.
+filegroup(
+    name = "goldens",
+    srcs = glob(["*_golden.bin"]),
+    visibility = ["//visibility:public"],
+)

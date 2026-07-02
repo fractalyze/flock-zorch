@@ -56,22 +56,22 @@ fi
 log "5. regenerate the core golden fixtures from the pinned flock"
 scripts/dump_goldens.sh core
 
-log "6. smoke gates — byte-identity end-to-end (low GPU-mem so it co-exists on a shared box)"
-export JAX_PLATFORMS=cuda XLA_PYTHON_CLIENT_PREALLOCATE=false PYTHONPATH="python:third_party/zorch"
-"$VENV_DIR/bin/python" python/flock_zorch/testing/field_oracle_test.py
-"$VENV_DIR/bin/python" python/flock_zorch/testing/e2e_oracle_test.py
+log "6. smoke gates — byte-identity end-to-end (CPU; bazel manages the pip deps + the git_override'd zorch)"
+bazel test //python:field_oracle_test //python:e2e_oracle_test
 
 log "DONE — box is set up and byte-identity is green."
 cat <<EOF
 
-To run more, set the gate environment once:
-  export JAX_PLATFORMS=cuda XLA_PYTHON_CLIENT_PREALLOCATE=false PYTHONPATH=python:third_party/zorch
-  VENV=$VENV_DIR/bin/python
+To run more:
+  # the 18 core byte-identity gates (CPU, bazel-managed, zorch via git_override):
+  bazel test //python:all
 
   # full golden set incl. the heavy real hash circuits (keccak/sha2/blake3, blake3 ~118MB):
   scripts/dump_goldens.sh all
-  # any gate:
-  \$VENV python/flock_zorch/testing/<name>_oracle_test.py
+  # a heavy/GPU gate (not a bazel target) — resolve zorch from the same git_override:
+  export JAX_PLATFORMS=cuda XLA_PYTHON_CLIENT_PREALLOCATE=false
+  PYTHONPATH="python:\$(scripts/zorch_pythonpath.sh)" $VENV_DIR/bin/python \\
+      python/flock_zorch/testing/<name>_oracle_test.py
   # benchmarks (run on an IDLE machine for an honest apple-to-apple CPU baseline):
   see docs/SETUP.md  ("Benchmarks")
 EOF

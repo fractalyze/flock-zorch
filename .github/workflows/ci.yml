@@ -15,45 +15,14 @@ concurrency:
 jobs:
   byte-identity:
     name: Byte-identity gates (CPU)
-    # Self-hosted: the box's git creds clone the private zorch dep (no PAT).
     runs-on: [self-hosted, cpu]
     steps:
-      # persist-credentials: false so the submodule clone uses the box's creds,
-      # not the repo-scoped GITHUB_TOKEN (which can't read private zorch).
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
       - run: git submodule update --init --recursive
-
       - uses: dtolnay/rust-toolchain@stable
-      - uses: astral-sh/setup-uv@v5
-
-      # requirements.in is the single source of truth (the jax pin-bump automation
-      # flows straight into CI); gates force CPU, so the cuda plugin stays dormant.
-      - name: Install deps
-        run: |
-          uv venv --python 3.11 .venv
-          uv pip install --python .venv -r requirements.in \
-            --index-strategy unsafe-best-match \
-            --index-url https://fractalyze.github.io/pypi/simple/ \
-            --extra-index-url https://pypi.org/simple/
-
       - name: Dump core goldens
         run: scripts/dump_goldens.sh core
-
-      # Excludes commit_oracle (GPU perf gate, not byte-identity) and the heavy
-      # real-circuit gates (hundreds-of-MB goldens).
       - name: Oracle gates
-        env:
-          JAX_PLATFORMS: cpu
-          JAX_ENABLE_X64: "true"
-          PYTHONPATH: python:third_party/zorch
-        run: |
-          for t in field ntt sha256 merkle merkle_multi sumcheck zerocheck \
-                   challenger gf8_urm fri_fold row_batch \
-                   ring_switch basefold pcs_open ligerito lincheck e2e \
-                   chain_shift; do
-            echo "::group::${t}_oracle_test"
-            .venv/bin/python "python/flock_zorch/testing/${t}_oracle_test.py" || exit 1
-            echo "::endgroup::"
-          done
+        run: bazel test //python:all

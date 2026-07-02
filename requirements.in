@@ -8,7 +8,7 @@
 # itself arrives as a Bazel module (see MODULE.bazel), not a pip dep.
 absl-py
 numpy
-# Lockstep with the zorch submodule pin (third_party/zorch @ flock-byte-fiat-shamir).
+# Lockstep with the zorch git_override pin in MODULE.bazel (flock-byte-fiat-shamir).
 # That branch migrated onto the jax_fork jax-cuda12 stack (zorch#194), so this MUST
 # mirror zorch's own requirements.in. The pre-migration zkx-cuda-pjrt / 0.0.5.dev
 # wheels lack the interior-padding lowering lincheck's `_seg_xor_fold`

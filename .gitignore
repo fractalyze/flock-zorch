@@ -1,6 +1,7 @@
 /target
 /.venv
-/artifacts
+/artifacts/*
+!/artifacts/BUILD.bazel
 __pycache__/
 *.mlirbc
 *.pyc

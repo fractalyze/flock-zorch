@@ -141,7 +141,7 @@ VENV=.venv/bin/python                                                       # bu
 cargo run --release --example dump_sha2 -- 2048 artifacts/sha2_golden.bin   # real R1CS, m=26
 cargo build --release --example bench_sha2_cpu                              # CPU anchor
 export JAX_PLATFORMS=cuda XLA_PYTHON_CLIENT_PREALLOCATE=false
-export PYTHONPATH=python:third_party/zorch
+export PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"   # zorch from the MODULE.bazel git_override
 export FLOCK_CLMAD_CUBIN=$(pwd)/optim/clmad/ghash_mul.cubin
 CPU=$(target/release/examples/bench_sha2_cpu 2048 | grep -oE '[0-9.]+ ms')   # flock CPU ms
 $VENV python/flock_zorch/testing/e2e_sha2_bench.py "${CPU%% ms}"             # GPU vs CPU
