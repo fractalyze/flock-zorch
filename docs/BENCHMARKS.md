@@ -91,9 +91,9 @@ ceiling) and is memory-bound, not compute-bound; the timing is still reported.
 
 The milestone thesis is that moving Fiat-Shamir **on-device** should push the
 crossover **left** (kill the per-round host↔device latency). #7 tested the one
-drop-in that keeps byte-identity: `zorch.device_byte_transcript.DeviceSha256Transcript`,
-wired as an opt-in `transcript_cls` on `prove_fast`. **Result: it moves the
-crossover right, not left** — the byte transcript is a large regression.
+drop-in that keeps byte-identity: injecting zorch's device `Sha256` byte hash
+(the `zorch.sha256` marker) as the `byte_hash` on `prove_fast`. **Result: it moves
+the crossover right, not left** — the byte transcript is a large regression.
 
 Why: the byte device transcript keeps flock's growing `bytes` buffer and re-hashes
 it via the `zorch.sha256` marker **per squeeze** — one GPU dispatch + host↔device
@@ -118,9 +118,11 @@ dispatches, not field muls). So the honest, config-independent figure is the
 GPU prover would be ~44 s versus flock CPU's 24–67 ms — the crossover leaves the
 chart to the right at every m here.
 
-**Takeaway.** The byte transcript is a correct drop-in (full-prover byte-identity
-pinned by `e2e_device_oracle_test`) but not a perf lever; it stays an opt-in. The
-left-shift requires the *other* zorch surface — `Sha256FieldTranscript` (fixed-shape
+**Takeaway.** The marker byte transcript is a correct drop-in — zorch guarantees
+it is byte-identical to the host hashlib
+(`byte_transcript_test.test_device_substrate_matches_host`), so flock keeps no
+device gate of its own — but it is not a perf lever; the `byte_hash` knob stays an
+opt-in seam. The left-shift requires the *other* zorch surface — `Sha256FieldTranscript` (fixed-shape
 streaming `Sha256State`, `lax.scan`-threadable) — threaded through a **device
 sumcheck driver** so challenges stay on-device and the whole round loop
 single-dispatches. That is P2 #9 (`sumcheck → zorch device driver`), not a
