@@ -7,6 +7,8 @@ test --test_output=errors
 # outside Bazel under the zorch venv (see README) because the jax/zkx CUDA
 # wheels + the clmad cubin are not hermetic.
 test --test_env=JAX_PLATFORMS=cpu
+# The gates use uint64 GF(2^128) lanes; x64 must be on (matches the old venv CI env).
+test --test_env=JAX_ENABLE_X64=true
 
 # Local, machine-specific overrides (gitignored). For dev against a local zorch
 # working copy instead of the pinned git_override, add to .bazelrc.user:

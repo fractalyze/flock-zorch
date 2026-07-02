@@ -1,19 +1,19 @@
 # Running flock-zorch on a GPU box
 
-flock-zorch is the GPU port; it depends on two pinned sibling repos, vendored as git
-submodules under `third_party/`:
+flock-zorch is the GPU port; it depends on two pinned sibling repos:
 
-| submodule | repo | pin | why |
+| dep | repo | pin | how |
 |---|---|---|---|
-| `third_party/flock` | `succinctlabs/flock` (public) | `main` @ `73f7202` | the **byte-compare oracle**: Cargo path-deps `flock-core`/`flock-prover`; `examples/dump_*.rs` dump the golden fixtures from it |
-| `third_party/zorch` | `fractalyze/zorch` (private) | `flock-byte-fiat-shamir` @ `39396626` | the **scheme-agnostic spine**: `zorch.hash.sha256`, `zorch.byte_transcript` (FS duplex), `zorch.sumcheck.field_ops` |
+| `third_party/flock` | `succinctlabs/flock` (public) | `main` @ `73f7202` | git **submodule** — the **byte-compare oracle**: Cargo path-deps `flock-core`/`flock-prover`; `examples/dump_*.rs` dump the golden fixtures from it |
+| `zorch` | `fractalyze/zorch` (private) | `flock-byte-fiat-shamir` @ `e2d28dc` | bazel **`git_override`** in `MODULE.bazel` — the **scheme-agnostic spine**: `zorch.hash.sha256`, `zorch.byte_transcript` (FS duplex) |
 
 > The zorch pin is the `flock-byte-fiat-shamir` branch, not `main` — it carries the
-> byte-SHA256 transcript + the `FieldOps` seam flock-zorch reuses. Keep the
-> `requirements.in` wheel set in lockstep with this pin (the zkx binary-field GPU
-> contract is a hard cut; CPU-only CI can't catch a desync). `MODULE.bazel` points
-> bazel at the same submodule via `local_path_override`, so the gate path
-> (`PYTHONPATH`) and the bazel path use the identical zorch.
+> byte-SHA256 transcript + the ByteHash seam flock-zorch reuses. Bump it by editing
+> the `git_override` commit in `MODULE.bazel` (no submodule to move); keep the
+> `requirements.in` wheel set in lockstep (the zkx binary-field GPU contract is a
+> hard cut; CPU-only CI can't catch a desync). `bazel test` resolves zorch from the
+> git_override; the heavy/venv gates resolve the same copy via
+> `scripts/zorch_pythonpath.sh`.
 
 ## Prerequisites
 
@@ -21,7 +21,7 @@ submodules under `third_party/`:
   recent NVIDIA GPU works for the gates; the headline benches assume the 5090.
 - **Rust** via rustup (`flock-core` is edition 2024).
 - **Python 3.11**.
-- **SSH access to `fractalyze/zorch`** (the zorch submodule clones over SSH).
+- **SSH access to `fractalyze/zorch`** (bazel's `git_override` clones it).
 - Optional, for the GPU fast path: a **CUDA 13.x `ptxas`** at `~/.local/cuda13/bin`
   (assembles the `clmad` cubin). Without it everything still runs on the software
   `field.mul` — byte-identical, just slower. See `optim/clmad/README.md`.
@@ -44,24 +44,29 @@ two **smoke gates** (`field`, `e2e`) that prove byte-identity end-to-end.
 
 ## Running the gates
 
-The GPU byte-match gates run on the venv via `PYTHONPATH`, **not** hermetic bazel
-(the jax/zkx CUDA wheels + the clmad cubin are not hermetic). Set the environment
-once:
+The **18 core byte-identity gates** run under bazel — deps from the pip lock,
+`zorch` from the `MODULE.bazel` `git_override`, goldens pulled from `//artifacts`
+runfiles (dump them first, see below):
+
+```bash
+scripts/dump_goldens.sh core           # goldens the gates byte-compare against
+bazel test //python:all                # all 18 (CPU; JAX_PLATFORMS=cpu + x64 pinned in .bazelrc)
+bazel test //python:e2e_oracle_test    # a single gate
+```
+
+The **heavy hash-circuit gates** (keccak/sha2/blake3 — hundreds-of-MB goldens) and
+the `commit` GPU perf gate are **not** bazel targets (the CUDA wheels + clmad cubin
+aren't hermetic). Run those on the venv, resolving the same git_override'd zorch via
+`scripts/zorch_pythonpath.sh` (`jax_enable_x64` is set by the tests themselves):
 
 ```bash
 export JAX_PLATFORMS=cuda
 export XLA_PYTHON_CLIENT_PREALLOCATE=false   # don't grab ~75% of VRAM up front (shared-box friendly)
-export PYTHONPATH=python:third_party/zorch
-VENV=.venv/bin/python                        # or `source .venv/bin/activate`
-```
-
-Then run any gate (`jax_enable_x64` is set by the tests themselves):
-
-```bash
-$VENV python/flock_zorch/testing/e2e_oracle_test.py          # full prover, identity R1CS
+export PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"
+VENV=.venv/bin/python
+scripts/dump_goldens.sh all                  # + the real hash circuits
 $VENV python/flock_zorch/testing/keccak_oracle_test.py       # Keccak full prove (BaseFold)
 $VENV python/flock_zorch/testing/blake3_ligerito_oracle_test.py
-# ... one *_oracle_test.py per layer / hash circuit
 ```
 
 Each gate needs its golden in `artifacts/` (see below). The full per-layer +
@@ -126,12 +131,14 @@ Upstream `flock/benchmarks` → flock-zorch mapping:
 ## Updating the pins
 
 ```bash
-# bump a submodule (then keep requirements.in in lockstep with the zorch pin):
-git -C third_party/zorch fetch && git -C third_party/zorch checkout <commit>
+# bump zorch: edit the git_override commit in MODULE.bazel (keep requirements.in in
+# lockstep with the pin) — bazel re-fetches on the next command, no submodule to move:
+$EDITOR MODULE.bazel                  # git_override(..., commit = "<new sha>")
+# bump flock (still a submodule):
 git -C third_party/flock fetch && git -C third_party/flock checkout <commit>
-git add third_party/zorch third_party/flock && git commit -m "deps: bump pins"
+git add MODULE.bazel third_party/flock && git commit -m "deps: bump pins"
 # re-verify before pushing:
-scripts/dump_goldens.sh && $VENV python/flock_zorch/testing/e2e_oracle_test.py
+scripts/dump_goldens.sh core && bazel test //python:all
 ```
 
 ## Troubleshooting

@@ -25,17 +25,18 @@ module(
 
 bazel_dep(name = "rules_python", version = "1.7.0")
 
-# zorch is not published on a Bazel registry; it is vendored as a git submodule at
-# third_party/zorch (see .gitmodules), pinned via local_path_override so the bazel
-# build and the non-hermetic PYTHONPATH gate path use the IDENTICAL commit — bump
-# both at once by moving the submodule. The pin is the flock-byte-fiat-shamir branch
-# (byte-SHA256 transcript + FieldOps seam flock needs); keep requirements.in in
-# lockstep with it. To dev against another zorch checkout, override in .bazelrc.user
-# (gitignored):  common --override_module=zorch=/abs/path/to/your/zorch
+# zorch is not published on a Bazel registry; pin it from GitHub so the bump is a
+# commit-hash edit here (sp1-zorch style) rather than moving a submodule. Keep
+# requirements.in in lockstep with the pin. To dev against a local zorch checkout,
+# override in .bazelrc.user (gitignored):
+#   common --override_module=zorch=/abs/path/to/your/zorch
 bazel_dep(name = "zorch", version = "0.0.0")
-local_path_override(
+git_override(
     module_name = "zorch",
-    path = "third_party/zorch",
+    # flock-byte-fiat-shamir @ the ByteHash-seam collapse (fractalyze/zorch#360)
+    # + the //zorch/hash:sha256 fusion-dep fix (needed for bazel consumers).
+    commit = "e2d28dc47da4c3c43a7a9ac89f231bd32ceb0ad5",
+    remote = "https://github.com/fractalyze/zorch.git",
 )
 
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")

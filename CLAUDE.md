@@ -43,8 +43,9 @@ zkx / prime-ir compiler, gated by the same byte-match:
 - Extension point: `zkx/backends/gpu/codegen/emitters/emitter_base.cc::AddLoweringPasses` — wire prime-ir's portable `BinaryFieldToArith` (shift-XOR/Karatsuba) into the GPU path, and/or a fused `flock.ghash_mul` composite emitter (the zorch `fused_region` name-routed mechanism).
 
 ## Dependency on `zorch`
-Scheme-agnostic machinery lives upstream in `zorch` (`third_party/zorch`), per the team
-rule (sp1-zorch/whir-zorch do the same). flock-zorch reuses:
+Scheme-agnostic machinery lives upstream in `zorch`, pinned via a `git_override`
+in `MODULE.bazel` (sp1-zorch style — bump = edit the commit hash there, no
+submodule). flock-zorch reuses:
 - `zorch.byte_transcript.ByteHashTranscript` — the Merlin-over-byte-hash
   Fiat-Shamir duplex, parameterized by an injected `ByteHash`. flock injects the
   host `HashlibSha256` (its FS is host-sequential, #3); the `Sha256` `zorch.sha256`
@@ -53,7 +54,9 @@ rule (sp1-zorch/whir-zorch do the same). flock-zorch reuses:
 - `zorch.hash.sha256` — the byte-SHA-256 (data-parallel device sibling of the
   transcript's host hashlib path).
 - (planned) `zorch.sumcheck.field_ops.FieldOps` — the binary-field sumcheck seam.
-Run gates with **`PYTHONPATH=python:third_party/zorch`** so the `zorch` package resolves.
+Run the core byte-identity gates with **`bazel test //python:all`**; heavy/GPU
+gates run on the venv (`scripts/zorch_pythonpath.sh` resolves the git_override'd
+zorch). Full gate-run + pin-bump instructions: [`docs/SETUP.md`](docs/SETUP.md).
 What stays flock-specific: F128↔bytes serialization, the round-1 URM (F8/φ8/F8-NTT),
 the ∞-trick round loop, and the `prove_packed` assembly.
 

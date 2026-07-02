@@ -1,0 +1,76 @@
+load("@flock_zorch_pip//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+
+# flock-zorch#28: bazel-native byte-match gates over the git_override'd @zorch.
+# Goldens are produced by scripts/dump_goldens.sh (cargo, run before `bazel test`)
+# and pulled from //artifacts runfiles — the gates resolve them via their default
+# `Path(__file__).parents[3] / "artifacts"`.
+
+# The prover port. field_clmad / _merkle_host_ffi load their native libs lazily
+# (optional; software + zorch.sha256-marker fallbacks are byte-identical), so the
+# library imports cleanly on CPU without the cubin / cdylib.
+py_library(
+    name = "flock_zorch",
+    srcs = glob(["flock_zorch/*.py"]),
+    imports = ["."],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@zorch//zorch:byte_transcript",
+        "@zorch//zorch/hash:byte_hash",
+        "@zorch//zorch/hash:sha256",
+        requirement("jax"),
+        requirement("numpy"),
+        requirement("zk_dtypes"),
+    ],
+)
+
+# Shared test scaffolding (mul selection, best-of-n timing) the gates import.
+py_library(
+    name = "test_support",
+    srcs = [
+        "flock_zorch/testing/__init__.py",
+        "flock_zorch/testing/_util.py",
+    ],
+    imports = ["."],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":flock_zorch",
+        requirement("jax"),
+        requirement("numpy"),
+    ],
+)
+
+# Every *_oracle_test.py is a CPU byte-identity gate EXCEPT these: the heavy real
+# hash-circuit provers (hundreds-of-MB goldens) and the commit GPU perf gate. They
+# run on the venv via scripts/zorch_pythonpath.sh, not bazel. New gates default in;
+# this is the only list to touch.
+_HEAVY = [
+    "commit",
+    "keccak",
+    "keccak_ligerito",
+    "keccak_chain",
+    "keccak3_ligerito",
+    "sha2",
+    "sha2_ligerito",
+    "blake3",
+    "blake3_ligerito",
+]
+
+[
+    py_test(
+        # Compile-heavy: each gate builds jax programs per hash shape (slowest
+        # observed ~64s: ligerito). medium = 300s gives ample cold-CI margin.
+        name = _f[len("flock_zorch/testing/"):-len(".py")],
+        size = "medium",
+        srcs = [_f],
+        data = ["//artifacts:goldens"],
+        deps = [
+            ":flock_zorch",
+            ":test_support",
+        ],
+    )
+    for _f in glob(
+        ["flock_zorch/testing/*_oracle_test.py"],
+        exclude = ["flock_zorch/testing/%s_oracle_test.py" % _h for _h in _HEAVY],
+    )
+]
