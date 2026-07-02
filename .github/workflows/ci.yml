@@ -15,33 +15,14 @@ concurrency:
 jobs:
   byte-identity:
     name: Byte-identity gates (CPU)
-    # Self-hosted: the box's git creds clone the private zorch dep (no PAT).
     runs-on: [self-hosted, cpu]
     steps:
-      # persist-credentials: false so the box's git creds (not the repo-scoped
-      # GITHUB_TOKEN) are used for the third_party/flock submodule and for bazel's
-      # git_override clone of the private zorch dep.
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      # Only third_party/flock remains a submodule (the golden dumper); zorch comes
-      # from the MODULE.bazel git_override.
       - run: git submodule update --init --recursive
-
       - uses: dtolnay/rust-toolchain@stable
-      # No setup-bazel action: these persistent self-hosted runners are already
-      # provisioned with bazel + a ~/.bazelrc (disk/repo caches). setup-bazel adds
-      # nothing here and its ~/.bazelrc write EACCES'd on read-only-home boxes (a41).
-
-      # Goldens are produced by the cargo dumper (third_party/flock) and consumed
-      # from //artifacts runfiles by the bazel py_test gates. requirements.in stays
-      # the single source of truth; the pip lock is generated from it.
       - name: Dump core goldens
         run: scripts/dump_goldens.sh core
-
-      # The 18 byte-identity gates run under bazel (JAX_PLATFORMS=cpu + x64 pinned
-      # in .bazelrc; deps from the pip lock; zorch from the MODULE.bazel
-      # git_override). Excludes commit_oracle (GPU perf) and the heavy real-circuit
-      # gates (hundreds-of-MB goldens) — run those via scripts/zorch_pythonpath.sh.
       - name: Oracle gates
         run: bazel test //python:all
