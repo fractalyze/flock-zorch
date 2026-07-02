@@ -1,0 +1,8 @@
+# Golden fixtures. Locally these are produced by scripts/dump_goldens.sh (cargo);
+# under bazel they become genrule outputs. exports_files lets py_test targets pull
+# a golden into runfiles as `artifacts/<x>_golden.bin`, which the gates resolve via
+# their default `Path(__file__).parents[3] / "artifacts"`.
+exports_files(
+    glob(["*_golden.bin"]),
+    visibility = ["//visibility:public"],
+)
