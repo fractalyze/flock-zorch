@@ -46,9 +46,10 @@ zkx / prime-ir compiler, gated by the same byte-match:
 Scheme-agnostic machinery lives upstream in `zorch` (`third_party/zorch`), per the team
 rule (sp1-zorch/whir-zorch do the same). flock-zorch reuses:
 - `zorch.byte_transcript.ByteHashTranscript` — the Merlin-over-byte-hash
-  Fiat-Shamir duplex, parameterized by an injected `ByteHash` (`HashlibSha256()`
-  host / `Sha256()` device marker); `challenger.py` is the thin F128 (16-byte
-  lo‖hi) glue over it.
+  Fiat-Shamir duplex, parameterized by an injected `ByteHash`. flock injects the
+  host `HashlibSha256` (its FS is host-sequential, #3); the `Sha256` `zorch.sha256`
+  marker is a seam for a future on-device FS driver (zorch#9). `challenger.py` is
+  the thin F128 (16-byte lo‖hi) glue over it.
 - `zorch.hash.sha256` — the byte-SHA-256 (data-parallel device sibling of the
   transcript's host hashlib path).
 - (planned) `zorch.sumcheck.field_ops.FieldOps` — the binary-field sumcheck seam.

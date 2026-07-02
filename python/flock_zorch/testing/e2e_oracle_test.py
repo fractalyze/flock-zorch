@@ -89,9 +89,9 @@ def run(mul, byte_hash=None):
     _eq("commit root", root, g_root, results)
 
     # ---- shared challenger + bind_statement ----
-    # byte_hash=None keeps the host HashlibSha256; injecting the device Sha256
-    # exercises the same byte framing on the zorch.sha256 marker and must
-    # byte-match every stage below (e2e_device_oracle_test).
+    # byte_hash=None keeps the host HashlibSha256 (flock's FS substrate). The knob
+    # stays a seam for a future on-device FS driver (zorch#9); the marker's
+    # byte-identity to host is zorch's guarantee, so there's no device gate here.
     ch = Challenger(b"flock-test-v0", byte_hash=byte_hash)
     prover.bind_statement(ch, stmt, root)
 

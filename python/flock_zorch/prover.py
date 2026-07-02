@@ -133,9 +133,11 @@ def prove_fast(z_packed, m, k_log, k_skip, useful_bits, a0, b0, z_lincheck, stat
 
     `byte_hash` selects the Fiat-Shamir backend injected into the single shared
     `ByteHashTranscript` threaded through every phase: None (the default) keeps the
-    host `HashlibSha256` (hashlib); pass `Sha256()` to run the byte SHA-256 on the
-    `zorch.sha256` device marker. Both share the same byte framing, so the proof
-    bytes are identical either way (pinned by `e2e_device_oracle_test`)."""
+    host `HashlibSha256`; a `Sha256` (`zorch.sha256` marker) may be injected as a
+    seam for a future on-device FS driver (zorch#9). zorch guarantees the marker is
+    byte-identical to the host hashlib
+    (`byte_transcript_test.test_device_substrate_matches_host`), so flock keeps no
+    device gate of its own; per #7 the marker regresses the host-driven prover."""
     k_code = (m - field.LOG_PACKING - log_batch_size) + log_inv_rate
     inner_rest = k_log - k_skip
 

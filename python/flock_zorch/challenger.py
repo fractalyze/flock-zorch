@@ -4,7 +4,8 @@ byte-duplex transcript — byte-identical to flock-core's `FsChallenger`.
 The Merlin-over-SHA256 wire framing (op tags, u64-LE length prefixes,
 `SHA256(buffer||ctr)` counter-squeeze, re-absorb, PoW) is the scheme-agnostic
 `zorch.byte_transcript.ByteHashTranscript`, parameterized by an injected
-`ByteHash` (`HashlibSha256()` host hashlib / `Sha256()` device marker). This
+`ByteHash` (the host `HashlibSha256()`; a `Sha256()` `zorch.sha256` marker is a
+seam for a future on-device FS driver, zorch#9). This
 module is the thin flock glue: it serializes an F128 = uint64[2] lane pair as 16
 bytes (`lo_le8 || hi_le8`) and reinterprets squeezed bytes back. Host-side /
 sequential, matching flock's non-negotiable #3 (Fiat-Shamir runs on the host;
@@ -49,11 +50,13 @@ class Challenger:
     `field.py` representation).
 
     `byte_hash` selects the backend injected into the one
-    `zorch.byte_transcript.ByteHashTranscript`: `None` (the default) uses the host
-    `HashlibSha256` (hashlib), or pass the byte-identical device `Sha256` (SHA-256
-    on the `zorch.sha256` marker), which the `challenger_device_oracle_test` gate
-    pins to the same flock golden. Both expose the same byte-framed transcript, so
-    the glue here is unchanged."""
+    `zorch.byte_transcript.ByteHashTranscript`: `None` (the default) is the host
+    `HashlibSha256` — flock's Fiat-Shamir is host-sequential (non-negotiable #3).
+    A `Sha256` (the `zorch.sha256` marker) may be injected for a future on-device
+    FS driver (zorch#9); its byte-identity to the host hashlib is zorch's
+    guarantee (`byte_transcript_test.test_device_substrate_matches_host`), so flock
+    keeps no gate of its own, and per #7 the marker regresses the host-driven
+    prover, so it is not the default."""
 
     def __init__(self, domain: bytes, *, byte_hash: ByteHash | None = None):
         if byte_hash is None:

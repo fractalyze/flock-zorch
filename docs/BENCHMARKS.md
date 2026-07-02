@@ -118,9 +118,11 @@ dispatches, not field muls). So the honest, config-independent figure is the
 GPU prover would be ~44 s versus flock CPU's 24–67 ms — the crossover leaves the
 chart to the right at every m here.
 
-**Takeaway.** The byte transcript is a correct drop-in (full-prover byte-identity
-pinned by `e2e_device_oracle_test`) but not a perf lever; it stays an opt-in. The
-left-shift requires the *other* zorch surface — `Sha256FieldTranscript` (fixed-shape
+**Takeaway.** The marker byte transcript is a correct drop-in — zorch guarantees
+it is byte-identical to the host hashlib
+(`byte_transcript_test.test_device_substrate_matches_host`), so flock keeps no
+device gate of its own — but it is not a perf lever; the `byte_hash` knob stays an
+opt-in seam. The left-shift requires the *other* zorch surface — `Sha256FieldTranscript` (fixed-shape
 streaming `Sha256State`, `lax.scan`-threadable) — threaded through a **device
 sumcheck driver** so challenges stay on-device and the whole round loop
 single-dispatches. That is P2 #9 (`sumcheck → zorch device driver`), not a
