@@ -56,7 +56,7 @@ def _unpack(z_packed, m):
     return np.concatenate([lo, hi], axis=1).reshape(-1)[: 1 << m]
 
 
-def run(mul, transcript_cls=None):
+def run(mul, byte_hash=None):
     rd = R((ART / "e2e_golden.bin").read_bytes())
     assert bytes(rd.take(8)) == b"FLKE2E01", "bad magic"
     m, k_log, k_skip, ub = rd.u(), rd.u(), rd.u(), rd.u()
@@ -89,11 +89,10 @@ def run(mul, transcript_cls=None):
     _eq("commit root", root, g_root, results)
 
     # ---- shared challenger + bind_statement ----
-    # transcript_cls=None keeps the host Sha256Transcript; a device transcript
-    # (DeviceSha256Transcript) exercises the same byte framing on the zorch.sha256
-    # marker and must byte-match every stage below (e2e_device_oracle_test).
-    ch = (Challenger(b"flock-test-v0") if transcript_cls is None
-          else Challenger(b"flock-test-v0", transcript_cls=transcript_cls))
+    # byte_hash=None keeps the host HashlibSha256; injecting the device Sha256
+    # exercises the same byte framing on the zorch.sha256 marker and must
+    # byte-match every stage below (e2e_device_oracle_test).
+    ch = Challenger(b"flock-test-v0", byte_hash=byte_hash)
     prover.bind_statement(ch, stmt, root)
 
     # ---- Stage B: zerocheck (a=b=c=z for identity) ----
@@ -174,7 +173,7 @@ def run(mul, transcript_cls=None):
     # ---- Stage F: packaged prover.prove_fast reproduces the staged proof ----
     a0 = np.eye(1 << k_log, dtype=np.uint64)
     pf = prover.prove_fast(z_packed, m, k_log, k_skip, ub, a0, a0, zlc, stmt,
-                           LIR, LBS, mul=mul, use_host_sha=False, transcript_cls=transcript_cls)
+                           LIR, LBS, mul=mul, use_host_sha=False, byte_hash=byte_hash)
     _eq("prove_fast zc round1_ab", pf["zerocheck"]["round1_ab"], g_zc["r1ab"], results)
     _eq("prove_fast lc z_partial", pf["lincheck"][1], g_lc["zp"], results)
     _eq("prove_fast open ring_switch[1]", pf["pcs_open"]["ring_switches"][1], g_rs[1], results)

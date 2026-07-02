@@ -3,18 +3,26 @@ byte-duplex transcript — byte-identical to flock-core's `FsChallenger`.
 
 The Merlin-over-SHA256 wire framing (op tags, u64-LE length prefixes,
 `SHA256(buffer||ctr)` counter-squeeze, re-absorb, PoW) is the scheme-agnostic
-`zorch.byte_transcript.Sha256Transcript`. This module is the thin flock glue: it
-serializes an F128 = uint64[2] lane pair as 16 bytes (`lo_le8 || hi_le8`) and
-reinterprets squeezed bytes back. Host-side / sequential, matching flock's
-non-negotiable #3 (Fiat-Shamir runs on the host; bulk arithmetic on device).
+`zorch.byte_transcript.ByteHashTranscript`, parameterized by an injected
+`ByteHash` (`HashlibSha256()` host hashlib / `Sha256()` device marker). This
+module is the thin flock glue: it serializes an F128 = uint64[2] lane pair as 16
+bytes (`lo_le8 || hi_le8`) and reinterprets squeezed bytes back. Host-side /
+sequential, matching flock's non-negotiable #3 (Fiat-Shamir runs on the host;
+bulk arithmetic on device).
 
 Requires `zorch` on PYTHONPATH (run gates with `PYTHONPATH=python:../zorch`).
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 
-from zorch.byte_transcript import Sha256Transcript
+from zorch.byte_transcript import ByteHashTranscript
+from zorch.hash.sha256 import HashlibSha256
+
+if TYPE_CHECKING:
+    from zorch.hash.byte_hash import ByteHash
 
 
 def _f128_bytes(v) -> bytes:
@@ -40,15 +48,17 @@ class Challenger:
     `&mut self` `FsChallenger` API. F128 values are `uint64[..., 2]` arrays (the
     `field.py` representation).
 
-    `transcript_cls` selects the backend: the default host
-    `zorch.byte_transcript.Sha256Transcript` (hashlib), or the byte-identical
-    device `zorch.device_byte_transcript.DeviceSha256Transcript` (SHA-256 on the
-    `zorch.sha256` marker), which the `challenger_oracle_device_test` gate pins to
-    the same flock golden. Both expose the same byte-framed API, so the glue here
-    is unchanged."""
+    `byte_hash` selects the backend injected into the one
+    `zorch.byte_transcript.ByteHashTranscript`: `None` (the default) uses the host
+    `HashlibSha256` (hashlib), or pass the byte-identical device `Sha256` (SHA-256
+    on the `zorch.sha256` marker), which the `challenger_device_oracle_test` gate
+    pins to the same flock golden. Both expose the same byte-framed transcript, so
+    the glue here is unchanged."""
 
-    def __init__(self, domain: bytes, *, transcript_cls: type = Sha256Transcript):
-        self._t = transcript_cls.new(domain)
+    def __init__(self, domain: bytes, *, byte_hash: ByteHash | None = None):
+        if byte_hash is None:
+            byte_hash = HashlibSha256()
+        self._t = ByteHashTranscript.new(domain, byte_hash)
 
     def observe_label(self, label: bytes) -> None:
         self._t = self._t.observe_label(label)

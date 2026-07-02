@@ -91,9 +91,9 @@ ceiling) and is memory-bound, not compute-bound; the timing is still reported.
 
 The milestone thesis is that moving Fiat-Shamir **on-device** should push the
 crossover **left** (kill the per-round host↔device latency). #7 tested the one
-drop-in that keeps byte-identity: `zorch.device_byte_transcript.DeviceSha256Transcript`,
-wired as an opt-in `transcript_cls` on `prove_fast`. **Result: it moves the
-crossover right, not left** — the byte transcript is a large regression.
+drop-in that keeps byte-identity: injecting zorch's device `Sha256` byte hash
+(the `zorch.sha256` marker) as the `byte_hash` on `prove_fast`. **Result: it moves
+the crossover right, not left** — the byte transcript is a large regression.
 
 Why: the byte device transcript keeps flock's growing `bytes` buffer and re-hashes
 it via the `zorch.sha256` marker **per squeeze** — one GPU dispatch + host↔device
