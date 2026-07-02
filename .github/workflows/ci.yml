@@ -29,11 +29,9 @@ jobs:
       - run: git submodule update --init --recursive
 
       - uses: dtolnay/rust-toolchain@stable
-      # No GHA cache options: these are persistent self-hosted runners with their
-      # own provisioned bazel disk/repo caches, so actions/cache would only add
-      # network tar round-trips (the "Cache 400" warnings) — and letting the action
-      # write ~/.bazelrc EACCES'd on some boxes. The runner's bazelisk is enough.
-      - uses: bazel-contrib/setup-bazel@0.9.1
+      # No setup-bazel action: these persistent self-hosted runners are already
+      # provisioned with bazel + a ~/.bazelrc (disk/repo caches). setup-bazel adds
+      # nothing here and its ~/.bazelrc write EACCES'd on read-only-home boxes (a41).
 
       # Goldens are produced by the cargo dumper (third_party/flock) and consumed
       # from //artifacts runfiles by the bazel py_test gates. requirements.in stays
