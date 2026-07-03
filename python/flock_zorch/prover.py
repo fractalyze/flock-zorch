@@ -1,12 +1,16 @@
 """flock's fused R1CS prover (`prover::prove` / `prove_fast_core`), authored in
-jax — byte-identical to flock-core. Chains the byte-identical phases on ONE
-shared SHA-256 challenger with device-resident state (no per-phase host
-re-transfer): commit → bind_statement → zerocheck → lincheck → batched PCS open.
+jax — byte-identical to flock-core. Structured as a zorch `ProveChain` of stage
+`Round`s threading ONE shared SHA-256 challenger with device-resident state (no
+per-phase host re-transfer): commit+bind → zerocheck → lincheck → batched PCS
+open (see `prove_fast`).
 
 a = A·z, b = B·z are kept device-resident across the phases (no per-phase witness
 re-transfer). Gated by `testing/e2e_oracle_test.py` against flock `prover::prove`.
 """
 from __future__ import annotations
+
+from dataclasses import dataclass, replace
+from typing import Any
 
 import numpy as np
 import jax
@@ -15,6 +19,7 @@ import jax.numpy as jnp
 from flock_zorch import field, ring_switch, basefold, fri, pcs_commit, zerocheck, lincheck, ligerito
 from flock_zorch.sumcheck import build_eq
 from flock_zorch.challenger import Challenger  # noqa: F401  (re-exported for callers)
+from zorch.round import ProveChain, Round
 
 
 @jax.jit
@@ -122,14 +127,113 @@ def open_batch_mixed_ligerito(config, z_packed, codeword, init_tree, x_outers, p
     return {"ring_switches": s_hat_vs, "ligerito": lig}
 
 
+@dataclass(frozen=True)
+class _ProveCarry:
+    """State threaded between prove_fast's stage `Round`s — only what a later
+    stage reads from an earlier one. Static config (shapes, rates, mul) lives on
+    the Round instances, per zorch's Round convention (cf. sp1-zorch ShardCarry).
+    The `None` fields are the per-stage outputs, written via `replace`."""
+
+    z_packed: Any             # witness ẑ, device-resident across stages
+    statement_digest: Any     # R1CS instance digest (bound by _CommitRound)
+    z_lincheck: Any           # lincheck witness bytes
+    a0: Any                   # lincheck A matrix (dense)
+    b0: Any                   # lincheck B matrix (dense)
+    codeword: Any = None      # ← _CommitRound; read by _PcsOpenRound
+    tree: Any = None          # ← _CommitRound; read by _PcsOpenRound
+    zc: dict | None = None    # ← _ZerocheckRound; read by lincheck + open + assembly
+    lc_claim: dict | None = None  # ← _LincheckRound; read by open + assembly
+
+
+class _CommitRound(Round):
+    """Commit ẑ, then bind the transcript to the statement (flock
+    `bind_statement`): the commit + statement-binding first round, mirroring
+    sp1-zorch's TraceCommitRound (commit + preamble absorb). Message = the root."""
+
+    def __init__(self, m, log_inv_rate, log_batch_size, mul, use_host_sha):
+        self._m, self._lir, self._lbs = m, log_inv_rate, log_batch_size
+        self._mul, self._use_host_sha = mul, use_host_sha
+
+    def __call__(self, carry, transcript):
+        root, codeword, tree = pcs_commit.commit(
+            carry.z_packed, self._m, self._lir, self._lbs, self._mul, self._use_host_sha)
+        bind_statement(transcript, carry.statement_digest, root)
+        return replace(carry, codeword=codeword, tree=tree), transcript, root
+
+
+class _ZerocheckRound(Round):
+    """R1CS zerocheck on the identity witness (a = b = c = ẑ). Message = the
+    zerocheck proof/claim dict, also threaded onto the carry for later stages."""
+
+    def __init__(self, m, mul):
+        self._m, self._mul = m, mul
+
+    def __call__(self, carry, transcript):
+        bits = _unpack_bits_dev(jnp.asarray(carry.z_packed))   # device-resident
+        zc = zerocheck.prove_packed(bits, bits, bits, self._m, mul=self._mul, ch=transcript)
+        return replace(carry, zc=zc), transcript, zc
+
+
+class _LincheckRound(Round):
+    """Lincheck reducing a = A·z, b = B·z to the ab evaluation claim at the
+    zerocheck challenge point. Message = (rounds, z_partial); writes the ab claim
+    onto the carry."""
+
+    def __init__(self, m, k_log, k_skip, mul):
+        self._m, self._k_log, self._k_skip, self._mul = m, k_log, k_skip, mul
+
+    def __call__(self, carry, transcript):
+        if carry.zc is None:
+            raise ValueError("lincheck needs the zerocheck output on the carry; "
+                             "sequence a _ZerocheckRound before this Round")
+        inner_rest = self._k_log - self._k_skip
+        zc = carry.zc
+        x_ab = {"z_skip": zc["z"],
+                "x_inner_rest": zc["mlv_challenges"][:inner_rest],
+                "x_outer": zc["mlv_challenges"][inner_rest:]}
+        lc_rounds, lc_zp, lc_claim, _z_vec_pre = lincheck.prove(
+            carry.z_lincheck, carry.a0, carry.b0, x_ab, self._m,
+            self._k_log, self._k_skip, mul=self._mul, ch=transcript, capture=True)
+        return replace(carry, lc_claim=lc_claim), transcript, (lc_rounds, lc_zp)
+
+
+class _PcsOpenRound(Round):
+    """Batched dual-claim PCS open of the ab + c claims — the final round. ab
+    point = lincheck r_inner_rest ++ zerocheck x_outer; c point = the zerocheck
+    r_rest. Message = the BatchOpeningProof dict."""
+
+    def __init__(self, k_code, k_log, k_skip, log_inv_rate, log_batch_size, mul, use_host_sha):
+        self._k_code, self._k_log, self._k_skip = k_code, k_log, k_skip
+        self._lir, self._lbs = log_inv_rate, log_batch_size
+        self._mul, self._use_host_sha = mul, use_host_sha
+
+    def __call__(self, carry, transcript):
+        if (carry.zc is None or carry.lc_claim is None
+                or carry.codeword is None or carry.tree is None):
+            raise ValueError("the PCS open needs the commit codeword/tree plus the "
+                             "zerocheck and lincheck outputs on the carry; sequence "
+                             "the commit, zerocheck, and lincheck Rounds before it")
+        inner_rest = self._k_log - self._k_skip
+        zc, lc_claim = carry.zc, carry.lc_claim
+        x_outer = zc["mlv_challenges"][inner_rest:]
+        ab_full = np.concatenate([lc_claim["r_inner_rest"], x_outer], axis=0)
+        # c_full split-then-rejoined (not just zc["r_rest"]) to mirror Rust's
+        # QuirkyPoint / quirky_x_outer_full.
+        c_full = np.concatenate([zc["r_rest"][:inner_rest], zc["r_rest"][inner_rest:]], axis=0)
+        pcs_open_proof = open_batch(
+            carry.z_packed, carry.codeword, carry.tree, [ab_full, c_full], self._k_code,
+            self._lir, self._lbs, transcript, mul=self._mul, use_host_sha=self._use_host_sha)
+        return carry, transcript, pcs_open_proof
+
+
 def prove_fast(z_packed, m, k_log, k_skip, useful_bits, a0, b0, z_lincheck, statement_digest,
                log_inv_rate=1, log_batch_size=5, domain=b"flock-test-v0", mul=field.mul,
                use_host_sha=False, byte_hash=None) -> dict:
     """Fused single-call R1CS prover (identity-C path: c = z), byte-identical to
-    flock `prover::prove`. Keeps witness/codeword device-resident across all phases
-    on ONE shared challenger (no per-phase host re-transfer): commit → bind →
-    zerocheck → lincheck → batched dual-claim open. a = A·z, b = B·z; for the
-    identity R1CS a = b = c = z (the gated path). Returns the proof dict + claims.
+    flock `prover::prove`. A zorch `ProveChain` of stage `Round`s threading one
+    shared challenger + a `_ProveCarry` (no per-phase host re-transfer):
+    commit+bind → zerocheck → lincheck → batched dual-claim open. a = A·z, b = B·z;
+    for the identity R1CS a = b = c = z (the gated path). Returns the proof + claims.
 
     `byte_hash` selects the Fiat-Shamir backend injected into the single shared
     `ByteHashTranscript` threaded through every phase: None (the default) keeps the
@@ -139,28 +243,17 @@ def prove_fast(z_packed, m, k_log, k_skip, useful_bits, a0, b0, z_lincheck, stat
     (`byte_transcript_test.test_device_substrate_matches_host`), so flock keeps no
     device gate of its own; per #7 the marker regresses the host-driven prover."""
     k_code = (m - field.LOG_PACKING - log_batch_size) + log_inv_rate
-    inner_rest = k_log - k_skip
 
-    root, codeword, tree = pcs_commit.commit(z_packed, m, log_inv_rate, log_batch_size, mul, use_host_sha)
     ch = Challenger(domain, byte_hash=byte_hash)
-    bind_statement(ch, statement_digest, root)
-
-    bits = _unpack_bits_dev(jnp.asarray(z_packed))           # a = b = c = z, device-resident
-    zc = zerocheck.prove_packed(bits, bits, bits, m, mul=mul, ch=ch)
-
-    x_ab = {"z_skip": zc["z"],
-            "x_inner_rest": zc["mlv_challenges"][:inner_rest],
-            "x_outer": zc["mlv_challenges"][inner_rest:]}
-    lc_rounds, lc_zp, lc_claim, _z_vec_pre = lincheck.prove(
-        z_lincheck, a0, b0, x_ab, m, k_log, k_skip, mul=mul, ch=ch, capture=True)
-
-    ab_full = np.concatenate([lc_claim["r_inner_rest"], x_ab["x_outer"]], axis=0)
-    # c_full = x_inner_rest ++ x_outer for the C-claim point. Kept as the split-then-
-    # rejoin (not just zc["r_rest"]) to mirror Rust's QuirkyPoint / quirky_x_outer_full.
-    c_full = np.concatenate([zc["r_rest"][:inner_rest], zc["r_rest"][inner_rest:]], axis=0)
-    pcs_open_proof = open_batch(
-        z_packed, codeword, tree, [ab_full, c_full], k_code,
-        log_inv_rate, log_batch_size, ch, mul=mul, use_host_sha=use_host_sha)
+    carry = _ProveCarry(z_packed=z_packed, statement_digest=statement_digest,
+                        z_lincheck=z_lincheck, a0=a0, b0=b0)
+    carry, _ch, msgs = ProveChain([
+        _CommitRound(m, log_inv_rate, log_batch_size, mul, use_host_sha),
+        _ZerocheckRound(m, mul),
+        _LincheckRound(m, k_log, k_skip, mul),
+        _PcsOpenRound(k_code, k_log, k_skip, log_inv_rate, log_batch_size, mul, use_host_sha),
+    ])(carry, ch)
+    _root, zc, (lc_rounds, lc_zp), pcs_open_proof = msgs
 
     return {"zerocheck": zc, "lincheck": (lc_rounds, lc_zp), "pcs_open": pcs_open_proof,
-            "claim_ab_value": lc_claim["w"], "claim_c_value": zc["final_c_eval"]}
+            "claim_ab_value": carry.lc_claim["w"], "claim_c_value": zc["final_c_eval"]}
