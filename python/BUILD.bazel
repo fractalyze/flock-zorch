@@ -9,6 +9,7 @@ py_library(
     visibility = ["//visibility:public"],
     deps = [
         "@zorch//zorch:byte_transcript",
+        "@zorch//zorch:round",
         "@zorch//zorch/hash:byte_hash",
         "@zorch//zorch/hash:sha256",
         requirement("jax"),
