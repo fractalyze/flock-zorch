@@ -24,6 +24,7 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp  # noqa: E402
 import zk_dtypes  # noqa: E402
 
+from zorch.sha256_field_transcript import Sha256FieldTranscript  # noqa: E402
 from zorch.sumcheck.prover import INF, SumcheckRound, prove  # noqa: E402
 from zorch.sumcheck.verifier import (  # noqa: E402
     InfDomainSumcheckRound,
@@ -93,8 +94,43 @@ def test_default_domain_unchanged():
     assert inf.round_poly.shape == (n, 2)
 
 
+def test_scalar_framing_reuse():
+    """flock's round-poly message framing is round-owned too: flock observes each
+    element per-element scalar (`Challenger.observe_f128`, no length prefix), not as
+    one count-prefixed slice. `SumcheckRound(scalar_framing=True)` threads that
+    through zorch's driver, paired with the ∞-domain — flock's actual round shape
+    (∞-trick + per-element scalar framing).
+
+    Asserted over a scalar-capable `Sha256FieldTranscript` (a duplex sponge has no
+    length prefix, so scalar and slice coincide there): the prover and the
+    scalar-framed verifier stay in Fiat-Shamir lockstep. Full soundness is not
+    asserted here — over koalabear the transcript's raw-byte challenge sampling is
+    non-canonical for a prime field ~half the time (a stand-in artifact; flock's
+    GF(2^128) has no such issue). The byte-fidelity of the framing to flock's
+    convention is guarded upstream in zorch's `sumcheck.testing.prove_framing_test`.
+    """
+    n = 6
+    factors = [rand_field(11, (1 << n,), KB), rand_field(12, (1 << n,), KB)]
+    _, _, msgs = prove(
+        SumcheckRound(degree=2, domain=(1, INF), scalar_framing=True),
+        factors,
+        Sha256FieldTranscript.new(b"flock", KB),
+    )
+    assert msgs.round_poly.shape == (n, 2)
+
+    transcript, challenges = Sha256FieldTranscript.new(b"flock", KB), []
+    claim = jnp.sum(product(factors))
+    for i in range(n):
+        claim, transcript, r, _ok = InfDomainSumcheckRound(
+            degree=2, scalar_framing=True
+        )(claim, msgs.round_poly[i], transcript)
+        challenges.append(r)
+    assert bool(jnp.array_equal(msgs.challenge, jnp.stack(challenges)))
+
+
 if __name__ == "__main__":
     test_natural_domain_reuse()
     test_inf_domain_reuse()
     test_default_domain_unchanged()
+    test_scalar_framing_reuse()
     print(f"zorch sumcheck reuse over koalabear: PASS on {jax.default_backend()}")
