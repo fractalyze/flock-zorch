@@ -27,6 +27,16 @@ raw field bytes everywhere (Merkle leaves, SHA-256 transcript), so byte-identity
 demands flock's basis. We implement GF(2¹²⁸) over `uint64` lanes (`field.py`) —
 bytes match flock by construction. Verified on GPU: `x·x¹²⁷ = 0x87`.
 
+**Even the basis-correct native dtype is numpy-only (2026-07).** zk_dtypes#146
+added `binary_field_ghash` in flock's *exact* GHASH basis (numpy byte-matches
+`field_mul_golden.bin`), but jax rejects it (`not a valid JAX array type`; so
+does `binary_field_t7`) — GF(2¹²⁸) has no jax/XLA lowering in the pinned zkx
+jaxlib, while prime/EC fields do. So the `uint64`-lane `field.py` stays for every
+device / `lax.scan` / jit path; a native binary-field dtype is usable only once
+GPU binary-field lowering lands (milestone P4/P5). Corollary: prototype
+scheme-agnostic zorch reuse (e.g. the sumcheck driver) over a first-class jax
+field like `koalabear` as a GHASH stand-in, then swap the field when it's ready.
+
 ### 3. Sequential transcript on host; bulk arithmetic on device
 flock's Fiat-Shamir `Challenger` is a **SHA-256** duplex hash chain (NOT BLAKE3 —
 the upstream section comment is stale) — strictly sequential, runs on the host.
