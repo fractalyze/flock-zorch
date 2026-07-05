@@ -27,24 +27,19 @@ raw field bytes everywhere (Merkle leaves, SHA-256 transcript), so byte-identity
 demands flock's basis. We implement GF(2¹²⁸) over `uint64` lanes (`field.py`) —
 bytes match flock by construction. Verified on GPU: `x·x¹²⁷ = 0x87`.
 
-**Even the basis-correct native dtype is numpy-only (2026-07).** zk_dtypes#146
-added `binary_field_ghash` in flock's *exact* GHASH basis (numpy byte-matches
-`field_mul_golden.bin`), but jax rejects it (`not a valid JAX array type`; so
-does `binary_field_t7`) — GF(2¹²⁸) has no jax/XLA lowering in the pinned zkx
-jaxlib, while prime/EC fields do. So the `uint64`-lane `field.py` stays for every
-device / `lax.scan` / jit path; a native binary-field dtype is usable only once
-GPU binary-field lowering lands (milestone P4/P5). Corollary: prototype
-scheme-agnostic zorch reuse (e.g. the sumcheck driver) over a first-class jax
-field like `koalabear` as a GHASH stand-in, then swap the field when it's ready.
-The stand-in **leaks at the transcript boundary**, though: `Sha256FieldTranscript`
-squeezes challenges as raw bytes `.view(dtype)` (correct for a binary field, where
-every byte pattern is valid), which for a *prime* field like koalabear is
-non-canonical ~half the time (≥ the modulus) and breaks Montgomery arithmetic —
-so full sumcheck *soundness* can't be asserted over koalabear + a byte transcript.
-Assert **Fiat-Shamir lockstep** (prover/verifier derive identical challenges) and
-byte-fidelity of the wire framing instead; save real soundness for GHASH. (A
-duplex sponge like `cheap_transcript` samples canonical field elements, so it
-*can* assert soundness — but has no byte/scalar framing to exercise.)
+**The basis-correct native dtype is jax-native as of jaxlib dev2026-07-06.**
+zk_dtypes#146 added `binary_field_ghash` in flock's *exact* GHASH basis (numpy
+byte-matches `field_mul_golden.bin`); the chain zk_dtypes 0.0.8 → prime-ir#374
+(`!field.bf<7, ghash>`, portable GPU lowering) → xla#201 (`BINARY_FIELD_GHASH`
+end-to-end, closes xla#169) → jax#82 (dtype registration) makes it a first-class
+jax dtype on CPU and GPU — add/mul/eq/`lax.scan`/`jnp.sum`, host readback, and
+the additive NTT (byte-matched to flock's `additive_ntt_f128` by an in-tree
+xla KAT). The earlier koalabear stand-in for zorch-reuse prototyping is retired:
+GHASH itself now drives the device paths, and — unlike a prime-field stand-in —
+raw-byte challenge squeezing (`Sha256FieldTranscript`) is canonical for a binary
+field, so full sumcheck soundness is assertable in flock's real configuration.
+The `uint64`-lane `field.py` remains the arithmetic for layers not yet migrated
+to the native dtype; migration proceeds gate-by-gate under the byte-match rule.
 
 ### 3. Sequential transcript on host; bulk arithmetic on device
 flock's Fiat-Shamir `Challenger` is a **SHA-256** duplex hash chain (NOT BLAKE3 —
