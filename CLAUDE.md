@@ -36,6 +36,15 @@ device / `lax.scan` / jit path; a native binary-field dtype is usable only once
 GPU binary-field lowering lands (milestone P4/P5). Corollary: prototype
 scheme-agnostic zorch reuse (e.g. the sumcheck driver) over a first-class jax
 field like `koalabear` as a GHASH stand-in, then swap the field when it's ready.
+The stand-in **leaks at the transcript boundary**, though: `Sha256FieldTranscript`
+squeezes challenges as raw bytes `.view(dtype)` (correct for a binary field, where
+every byte pattern is valid), which for a *prime* field like koalabear is
+non-canonical ~half the time (≥ the modulus) and breaks Montgomery arithmetic —
+so full sumcheck *soundness* can't be asserted over koalabear + a byte transcript.
+Assert **Fiat-Shamir lockstep** (prover/verifier derive identical challenges) and
+byte-fidelity of the wire framing instead; save real soundness for GHASH. (A
+duplex sponge like `cheap_transcript` samples canonical field elements, so it
+*can* assert soundness — but has no byte/scalar framing to exercise.)
 
 ### 3. Sequential transcript on host; bulk arithmetic on device
 flock's Fiat-Shamir `Challenger` is a **SHA-256** duplex hash chain (NOT BLAKE3 —
