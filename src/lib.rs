@@ -12,7 +12,7 @@
 //!   -> additive NTT -> Merkle commit -> zerocheck -> lincheck -> PCS -> e2e proof
 //! ```
 //!
-//! See `CLAUDE.md` for the non-negotiables.
+//! See `CLAUDE.md` for the byte-identity non-negotiable.
 
 // Host driver modules (gpu/prove/...) land as the PJRT path is built out.
 
