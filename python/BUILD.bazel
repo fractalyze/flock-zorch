@@ -10,6 +10,7 @@ py_library(
     deps = [
         "@zorch//zorch:byte_transcript",
         "@zorch//zorch:round",
+        "@zorch//zorch/coding:reed_solomon",
         "@zorch//zorch/commit:merkle",
         "@zorch//zorch/hash:byte_hash",
         "@zorch//zorch/hash:sha256",

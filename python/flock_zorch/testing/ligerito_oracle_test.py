@@ -77,7 +77,7 @@ def run(mul):
     # M0: ligero_commit on the L0 poly (f) == the proof's initial_root + L0 codeword
     mat, tree = ligerito.ligero_commit(
         g["f"], cfg["initial_log_msg_cols"], cfg["initial_log_num_interleaved"],
-        cfg["log_inv_rates"][0], mul=mul)
+        cfg["log_inv_rates"][0])
     results.append(("ligero_commit L0 codeword", np.array_equal(mat, g["l0_codeword"])))
     results.append(("ligero_commit L0 root == initial_root", np.array_equal(tree[-1], g["initial_root"])))
 
