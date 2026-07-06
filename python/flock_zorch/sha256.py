@@ -17,8 +17,12 @@ import jax.numpy as jnp
 
 # Reuse the byte-identical SHA-256 core from zorch (the scheme-agnostic spine).
 # Re-exported so merkle and the flock oracle gate can reach them as sha256.<name>.
+# `_digest_words_marked` is the same digest wrapped in the name-routed
+# `zorch.sha256` composite (inlines its decomposition until an emitter is wired,
+# so bytes are unchanged) — the Merkle leaf/level path hashes through it.
 from zorch.hash.sha256 import (  # noqa: F401
-    U32, _K, _H0, _Kd, _rotr, _pad, _compress, _digest_words, digest,
+    U32, _K, _H0, _Kd, _rotr, _pad, _compress, _digest_words,
+    _digest_words_marked, digest,
 )
 
 

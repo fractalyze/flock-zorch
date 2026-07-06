@@ -1,21 +1,25 @@
-"""Binary SHA-256 Merkle tree, authored in jax — byte-identical to flock's
-`merkle::merkle_root` / `merkle_tree`.
+"""Binary SHA-256 Merkle tree — byte-identical to flock's `merkle::merkle_root` /
+`merkle_tree`, built on `zorch.commit.merkle.MerkleTree` (the scheme-agnostic
+commit/fold machinery) with flock's byte-SHA-256 as leaf hasher and compressor.
 
 flock's construction (no domain separation): each leaf hash = `SHA256(leaf_bytes)`,
-each internal node = `SHA256(left ‖ right)` (64-byte preimage). The tree is built
-bottom-up; the root is the single top node.
+each internal node = `SHA256(left ‖ right)` (64-byte preimage). zorch's binary
+`_fold_scan` produces the same per-level digests with an O(1)-in-height traced
+body (it compresses a full-width buffer each level and slices the live prefix —
+extra hashes, cheaper trace; Merkle is <1% of PCS commit). The flat tree layout
+(`tree[0..n]` leaf hashes, then each level up, root at `tree[2n-2]`) is the
+concatenation of zorch's `digest_layers`.
 
-Every level is one data-parallel batched SHA-256 (`flock_zorch.sha256.digest`) over
-all nodes at that level — leaves and each internal level map straight to the GPU's
-width. Levels are sequential (log2(n_leaves) of them).
+The octopus multi-proof and the SHA-NI host path (`use_host_sha`) stay flock-side:
+the proof layout is flock's assembly, and the host tree is one native call.
 """
 from __future__ import annotations
 
-import functools
-
-import numpy as np
 import jax
 import jax.numpy as jnp
+import numpy as np
+
+from zorch.commit.merkle import MerkleTree
 
 from flock_zorch import sha256
 from flock_zorch._merkle_host_ffi import (  # the SHA-NI off-GPU path (use_host_sha)
@@ -23,27 +27,81 @@ from flock_zorch._merkle_host_ffi import (  # the SHA-NI off-GPU path (use_host_
 )
 
 
-@functools.partial(jax.jit, static_argnums=(1, 2))
-def _root_dev(leaves, leaf_size: int, n_leaves: int):
-    """All log2(n) levels fused into ONE jit (the team's 'depth-d tree = d launches
-    → single While HLO' optimization). Each level is otherwise a separate jit launch
-    + a 64-round sequential compression → ~2 ms/level latency; fusing pipelines them."""
-    nodes = sha256._digest_words(sha256._pad_device(leaves, leaf_size))
-    n = n_leaves
-    while n > 1:
-        nodes = sha256._digest_words(sha256._pad_device(nodes.reshape(n // 2, 64), 64))
-        n //= 2
-    return nodes.reshape(32)
+def _digest(msgs, length: int):
+    """Marked batched SHA-256: uint8 [B, length] -> uint8 [B, 32] (`zorch.sha256`)."""
+    return sha256._digest_words_marked(sha256._pad_device(msgs, length))
+
+
+class _Sha256Leaf:
+    """Leaf hasher seam value: `SHA256(leaf_bytes)`. Batched hashing goes through
+    `_Sha256MerkleTree._hash_leaves`; this single-row form completes the seam
+    contract for the inherited open/reconstruct paths (unexercised here yet)."""
+    out = 32
+
+    def hash(self, row):
+        return _digest(row[None], row.shape[0])[0]
+
+    # Value equality for static jit-zone keys (zorch #214): param-free -> by type.
+    def __eq__(self, other):
+        return isinstance(other, _Sha256Leaf)
+
+    def __hash__(self):
+        return hash(_Sha256Leaf)
+
+
+class _Sha256Compress:
+    """2-to-1 `SHA256(left ‖ right)` (64-byte preimage) over 32-byte digests."""
+    arity = 2
+    chunk = 32
+
+    def compress(self, group):
+        return _digest(group.reshape(1, 64), 64)[0]
+
+    def __eq__(self, other):
+        return isinstance(other, _Sha256Compress)
+
+    def __hash__(self):
+        return hash(_Sha256Compress)
+
+
+class _Sha256MerkleTree(MerkleTree):
+    """`MerkleTree` with whole levels hashed batch-native: SHA-256's block schedule
+    reads the batch axis from the shape, so `vmap(single-hash)` would retrace the
+    marker decomposition at the wrong rank — override the two batching hooks with
+    the [B, L] contract `zorch.hash.sha256` is written for."""
+
+    def __init__(self, leaf_hasher, compressor):
+        # Row-major only: both hooks hash rows, ignoring the base column_major.
+        super().__init__(leaf_hasher, compressor)
+
+    def _hash_leaves(self, matrix):
+        return _digest(matrix, matrix.shape[1])
+
+    def _compress_groups(self, groups):
+        return _digest(groups.reshape(groups.shape[0], 64), 64)
+
+
+_TREE = _Sha256MerkleTree(_Sha256Leaf(), _Sha256Compress())
+
+
+@jax.jit
+def _root_dev(leaves):
+    return _TREE.commit(leaves)[0]
+
+
+@jax.jit
+def _tree_dev(leaves):
+    _, layers = _TREE.commit(leaves)
+    return jnp.concatenate(layers, axis=0)  # [2*n_leaves - 1, 32], flock's layout
 
 
 def merkle_root(leaves, use_host_sha: bool = False) -> np.ndarray:
     """32-byte Merkle root of `n_leaves` equal-sized leaves. uint8 [n_leaves, leaf_size]
-    -> uint8 [32], byte-identical to flock. All levels fused in one jit (`_root_dev`),
+    -> uint8 [32], byte-identical to flock. One jit (commit fold is a single scan),
     or built on the host with flock's SHA-NI Merkle when `use_host_sha`."""
     if use_host_sha:
         return _merkle_root_host(leaves)
-    leaves = jnp.asarray(leaves, dtype=jnp.uint8)
-    return np.asarray(_root_dev(leaves, int(leaves.shape[1]), int(leaves.shape[0])))
+    return np.asarray(_root_dev(jnp.asarray(leaves, dtype=jnp.uint8)))
 
 
 def merkle_root_from_flat(data, n_leaves: int) -> np.ndarray:
@@ -57,25 +115,11 @@ def merkle_tree(leaves, use_host_sha: bool = False) -> np.ndarray:
     `tree[0..n]` = leaf hashes (level k), then level k-1, …, root at `tree[2n-2]`.
 
     leaves: uint8 [n, leaf_size] (n a power of two). Returns uint8 [2n-1, 32].
-    Device-resident per level (one host copy of the concatenated tree), or built
-    on the host with flock's SHA-NI Merkle when `use_host_sha`."""
+    One jit (zorch digest_layers, concatenated), or built on the host with
+    flock's SHA-NI Merkle when `use_host_sha`."""
     if use_host_sha:
         return _merkle_tree_host(leaves)
-    leaves = jnp.asarray(leaves, dtype=jnp.uint8)
-    return np.asarray(_build_tree_dev(leaves, int(leaves.shape[1]), int(leaves.shape[0])))
-
-
-@functools.partial(jax.jit, static_argnums=(1, 2))
-def _build_tree_dev(leaves, leaf_size: int, n_leaves: int):
-    """Full flat tree, all levels fused into one jit (one launch instead of d)."""
-    nodes = sha256._digest_words(sha256._pad_device(leaves, leaf_size))   # [n,32]
-    levels = [nodes]
-    n = n_leaves
-    while n > 1:
-        nodes = sha256._digest_words(sha256._pad_device(nodes.reshape(n // 2, 64), 64))
-        levels.append(nodes)
-        n //= 2
-    return jnp.concatenate(levels, axis=0)               # [2*n_leaves - 1, 32]
+    return np.asarray(_tree_dev(jnp.asarray(leaves, dtype=jnp.uint8)))
 
 
 def merkle_multi_proof(tree: np.ndarray, num_leaves: int, positions) -> np.ndarray:
