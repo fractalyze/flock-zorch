@@ -16,9 +16,10 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from flock_zorch import field, ring_switch, basefold, fri, pcs_commit, zerocheck, lincheck, ligerito
+from flock_zorch import field, ring_switch, basefold, fri, zerocheck, lincheck, ligerito
 from flock_zorch.sumcheck import build_eq
 from flock_zorch.challenger import Challenger  # noqa: F401  (re-exported for callers)
+from flock_zorch.pcs import FlockPcsProver
 from zorch.round import ProveChain, Round
 
 
@@ -146,19 +147,18 @@ class _ProveCarry:
 
 
 class _CommitRound(Round):
-    """Commit ẑ, then bind the transcript to the statement (flock
-    `bind_statement`): the commit + statement-binding first round, mirroring
-    sp1-zorch's TraceCommitRound (commit + preamble absorb). Message = the root."""
+    """Commit ẑ through the `FlockPcsProver` seam, then bind the transcript to
+    the statement (flock `bind_statement`): the commit + statement-binding first
+    round, mirroring sp1-zorch's TraceCommitRound (commit + preamble absorb).
+    Message = the root."""
 
-    def __init__(self, m, log_inv_rate, log_batch_size, mul, use_host_sha):
-        self._m, self._lir, self._lbs = m, log_inv_rate, log_batch_size
-        self._mul, self._use_host_sha = mul, use_host_sha
+    def __init__(self, pcs: FlockPcsProver):
+        self._pcs = pcs
 
     def __call__(self, carry, transcript):
-        root, codeword, tree = pcs_commit.commit(
-            carry.z_packed, self._m, self._lir, self._lbs, self._mul, self._use_host_sha)
+        root, data = self._pcs.commit([carry.z_packed])
         bind_statement(transcript, carry.statement_digest, root)
-        return replace(carry, codeword=codeword, tree=tree), transcript, root
+        return replace(carry, codeword=data.codeword, tree=data.tree), transcript, root
 
 
 class _ZerocheckRound(Round):
@@ -202,10 +202,8 @@ class _PcsOpenRound(Round):
     point = lincheck r_inner_rest ++ zerocheck x_outer; c point = the zerocheck
     r_rest. Message = the BatchOpeningProof dict."""
 
-    def __init__(self, k_code, k_log, k_skip, log_inv_rate, log_batch_size, mul, use_host_sha):
-        self._k_code, self._k_log, self._k_skip = k_code, k_log, k_skip
-        self._lir, self._lbs = log_inv_rate, log_batch_size
-        self._mul, self._use_host_sha = mul, use_host_sha
+    def __init__(self, pcs: FlockPcsProver, k_log, k_skip):
+        self._pcs, self._k_log, self._k_skip = pcs, k_log, k_skip
 
     def __call__(self, carry, transcript):
         if (carry.zc is None or carry.lc_claim is None
@@ -220,9 +218,11 @@ class _PcsOpenRound(Round):
         # c_full split-then-rejoined (not just zc["r_rest"]) to mirror Rust's
         # QuirkyPoint / quirky_x_outer_full.
         c_full = np.concatenate([zc["r_rest"][:inner_rest], zc["r_rest"][inner_rest:]], axis=0)
+        pcs = self._pcs
         pcs_open_proof = open_batch(
-            carry.z_packed, carry.codeword, carry.tree, [ab_full, c_full], self._k_code,
-            self._lir, self._lbs, transcript, mul=self._mul, use_host_sha=self._use_host_sha)
+            carry.z_packed, carry.codeword, carry.tree, [ab_full, c_full], pcs.k_code,
+            pcs.log_inv_rate, pcs.log_batch_size, transcript, mul=pcs.mul,
+            use_host_sha=pcs.use_host_sha)
         return carry, transcript, pcs_open_proof
 
 
@@ -242,16 +242,16 @@ def prove_fast(z_packed, m, k_log, k_skip, useful_bits, a0, b0, z_lincheck, stat
     byte-identical to the host hashlib
     (`byte_transcript_test.test_device_substrate_matches_host`), so flock keeps no
     device gate of its own; per #7 the marker regresses the host-driven prover."""
-    k_code = (m - field.LOG_PACKING - log_batch_size) + log_inv_rate
+    pcs = FlockPcsProver(m, log_inv_rate, log_batch_size, mul, use_host_sha)
 
     ch = Challenger(domain, byte_hash=byte_hash)
     carry = _ProveCarry(z_packed=z_packed, statement_digest=statement_digest,
                         z_lincheck=z_lincheck, a0=a0, b0=b0)
     carry, _ch, msgs = ProveChain([
-        _CommitRound(m, log_inv_rate, log_batch_size, mul, use_host_sha),
+        _CommitRound(pcs),
         _ZerocheckRound(m, mul),
         _LincheckRound(m, k_log, k_skip, mul),
-        _PcsOpenRound(k_code, k_log, k_skip, log_inv_rate, log_batch_size, mul, use_host_sha),
+        _PcsOpenRound(pcs, k_log, k_skip),
     ])(carry, ch)
     _root, zc, (lc_rounds, lc_zp), pcs_open_proof = msgs
 
