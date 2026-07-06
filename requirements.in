@@ -14,13 +14,16 @@ numpy
 # wheels lack the interior-padding lowering lincheck's `_seg_xor_fold`
 # (jax.lax.associative_scan) needs — the sha2/blake3 GPU gates raise
 # NotImplementedError on them. Bump these together with the submodule pin.
-jax==0.10.0.dev20260624213155
-jaxlib==0.10.0.dev20260624213155
-jax-cuda12-plugin==0.10.0.dev20260624213155
-jax-cuda12-pjrt==0.10.0.dev20260624213155
+jax==0.10.0.dev20260706024414
+jaxlib==0.10.0.dev20260706024414
+jax-cuda12-plugin==0.10.0.dev20260706024414
+jax-cuda12-pjrt==0.10.0.dev20260706024414
 # zk_dtypes ships the native field dtypes jax lowers; arrives transitively via
 # jax but the resolver lags, so pin it so the lock tracks the jax wheel.
-zk-dtypes==0.0.7
+# 0.0.8 is the GHASH release: it registers the flat-GHASH `binary_field_ghash`
+# dtype (GF(2^128), p(x)=x^128+x^7+x^2+x+1) the Ligero/Ligerito instantiation
+# lowers over (zk_dtypes#146); the jax frontend above (post-jax#82) requires it.
+zk-dtypes==0.0.8
 
 # Benchmark harness (shared across fractalyze repos); used only by the
 # //flock_zorch/...:*bench* targets, not by the flock-zorch wheel itself.
