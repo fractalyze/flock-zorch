@@ -36,6 +36,24 @@ def _load_golden():
 _HOST = os.environ.get("FLOCK_HOST_SHA") == "1"  # gate the host SHA-NI path too
 
 
+def _hooks_on_commit_path() -> bool:
+    """Pin the subclass seam: zorch's commit must route through the two batching
+    hooks. They are underscore-private upstream, so a pin bump that renames or
+    bypasses them would fall back to the byte-identical vmap-of-single path —
+    every byte gate stays green while the batch-native `zorch.sha256` marker
+    (the reason `_Sha256MerkleTree` exists) silently evaporates."""
+    calls = set()
+    cls = merkle._Sha256MerkleTree
+    orig_h, orig_c = cls._hash_leaves, cls._compress_groups
+    cls._hash_leaves = lambda self, m: calls.add("leaves") or orig_h(self, m)
+    cls._compress_groups = lambda self, g: calls.add("compress") or orig_c(self, g)
+    try:
+        merkle.merkle_root(np.zeros((4, 64), np.uint8))
+    finally:
+        cls._hash_leaves, cls._compress_groups = orig_h, orig_c
+    return calls == {"leaves", "compress"}
+
+
 def main() -> int:
     n_leaves, leaf_size, data, golden_root = _load_golden()
     print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()}"
@@ -48,6 +66,12 @@ def main() -> int:
         print(" got :", bytes(got).hex())
         print(" want:", bytes(golden_root).hex())
         return 1
+
+    if not _HOST:
+        hooks_ok = _hooks_on_commit_path()
+        print(f"batch hooks on zorch commit path: {'PASS' if hooks_ok else 'FAIL'}")
+        if not hooks_ok:
+            return 1
 
     # Informational GPU timing (best-of-N).
     t0 = time.perf_counter()
