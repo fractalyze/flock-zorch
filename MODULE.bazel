@@ -30,8 +30,7 @@ bazel_dep(name = "rules_python", version = "1.7.0")
 bazel_dep(name = "zorch", version = "0.0.0")
 git_override(
     module_name = "zorch",
-    # flock-byte-fiat-shamir @ ByteHash collapse (zorch#360) + sha256->fusion BUILD fix.
-    commit = "e2d28dc47da4c3c43a7a9ac89f231bd32ceb0ad5",
+    commit = "e2525c92670afacd8c6644a611196c9a696f583c",
     remote = "https://github.com/fractalyze/zorch.git",
 )
 

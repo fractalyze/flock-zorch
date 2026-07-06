@@ -5,10 +5,12 @@ witness at R recursive levels (shrinking RS rate), driving one continuous
 interleaved sumcheck (fold / introduce / glue) with per-level OOD binding, query
 PoW, and a plaintext residual. Proof scales ~log²(log_n).
 
-Reuses flock-zorch's byte-identical primitives: `ntt` (compute_twiddles +
-forward_transform_interleaved), `merkle` (tree/multi_proof + host SHA-NI),
-`sumcheck` (build_eq / fold), `basefold` (the shared round message), `challenger`
-(SHA-256 FS + grind_pow).
+Reuses flock-zorch's byte-identical primitives: `merkle` (tree/multi_proof + host
+SHA-NI), `sumcheck` (build_eq / fold), `basefold` (the shared round message),
+`challenger` (SHA-256 FS + grind_pow). The per-level RS encode is zorch's
+`coding.ReedSolomon` over the `binary_field_ghash` dtype — `lax.ntt` dispatches
+the additive (LCH, GHASH-basis) transform, byte-identical to flock's
+`forward_transform_interleaved` per lane (flock-zorch#11).
 
 The full recursive driver lives here: `ligero_commit` (per-level RS-encode +
 Merkle), `induce_sumcheck_poly` + the LCH novel basis, the `SumcheckProver`
@@ -19,8 +21,11 @@ from __future__ import annotations
 
 import numpy as np
 import jax.numpy as jnp
+from jax import lax
 
-from flock_zorch import field, ntt as ntt_mod, merkle, sumcheck, basefold
+from zorch.coding.reed_solomon import ReedSolomon
+
+from flock_zorch import field, merkle, sumcheck, basefold
 from flock_zorch import _hostfield as hf
 from flock_zorch.field import _to_lohi
 
@@ -193,7 +198,7 @@ def recursive_prover_with_basis(config, packed_witness, b_initial, target, l0_co
 
     # ---- commit f^1 ----
     n1 = log_n - ik
-    mat_prev, tree_prev = ligero_commit(sc.f, n1 - rks[0], rks[0], lir[1], mul, use_host_sha)
+    mat_prev, tree_prev = ligero_commit(sc.f, n1 - rks[0], rks[0], lir[1], use_host_sha)
     bl_prev, ni_prev = mat_prev.shape[0] // (1 << rks[0]), (1 << rks[0])
     ch.observe_bytes(bytes(np.asarray(tree_prev[-1], np.uint8)))
     recursive_roots = [np.asarray(tree_prev[-1])]
@@ -244,7 +249,7 @@ def recursive_prover_with_basis(config, packed_witness, b_initial, target, l0_co
         # non-final: commit next level, OOD, open prev, induce, introduce/glue
         n_next = int(round(float(np.log2(np.asarray(sc.f).shape[0]))))
         lni_next = rks[i + 1]
-        mat_next, tree_next = ligero_commit(sc.f, n_next - lni_next, lni_next, lir[i + 2], mul, use_host_sha)
+        mat_next, tree_next = ligero_commit(sc.f, n_next - lni_next, lni_next, lir[i + 2], use_host_sha)
         ch.observe_bytes(bytes(np.asarray(tree_next[-1], np.uint8)))
         recursive_roots.append(np.asarray(tree_next[-1]))
         for _ in range(ood[i + 2]):
@@ -267,26 +272,33 @@ def recursive_prover_with_basis(config, packed_witness, b_initial, target, l0_co
 
 
 def ligero_commit(poly, log_msg_cols: int, log_num_interleaved: int, log_inv_rate: int,
-                  mul=field.mul, use_host_sha: bool = False):
+                  use_host_sha: bool = False):
     """Per-level Ligero commit (flock `pcs::ligerito::ligero_commit`): reshape `poly`
     (len num_interleaved·msg_cols, SoA `poly[col·num_interleaved + lane]`) into a
-    block_len × num_interleaved matrix, RS-encode each lane via the additive NTT
-    (zero-pad msg_cols→block_len then forward-transform — byte-identical to flock's
-    replicate-+-start-at-layer form, as the first log_inv_rate layers are copies),
-    and Merkle-commit the rows (leaf = num_interleaved F128). Returns (mat, tree).
+    block_len × num_interleaved matrix, RS-encode each lane with zorch's
+    `coding.ReedSolomon` over `binary_field_ghash` (`lax.ntt` dispatches the
+    additive GHASH-basis transform — byte-identical to flock's zero-pad +
+    forward-transform), and Merkle-commit the rows (leaf = num_interleaved F128).
+    Returns (mat, tree).
+
+    The uint64 (lo, hi) SoA lanes bitcast to the 128-bit dtype on device; the
+    codeword returns to SoA through host bytes (the device ghash→uint64 bitcast
+    direction currently returns zeros; the codeword is materialized for the
+    Merkle leaves right after anyway).
 
     mat: uint64 [block_len·num_interleaved, 2] (SoA); tree: uint8 [2·block_len-1, 32]."""
     msg_cols = 1 << log_msg_cols
     num_int = 1 << log_num_interleaved
     block_len = msg_cols << log_inv_rate
-    log_block_len = log_msg_cols + log_inv_rate
 
-    x = jnp.asarray(poly).reshape(msg_cols, num_int, 2)
-    pad = jnp.zeros((block_len - msg_cols, num_int, 2), dtype=x.dtype)
-    cw = jnp.concatenate([x, pad], axis=0).reshape(block_len * num_int, 2)
-    tw = jnp.asarray(ntt_mod.compute_twiddles(log_block_len))
-    cw = ntt_mod.forward_transform_interleaved(cw, tw, log_block_len, num_int, mul=mul)
-    mat = np.asarray(cw)
+    code = ReedSolomon(message_len=msg_cols, blowup=1 << log_inv_rate,
+                       dtype=jnp.binary_field_ghash)
+    x = lax.bitcast_convert_type(
+        jnp.asarray(poly).reshape(msg_cols, num_int, 2), jnp.binary_field_ghash)
+    cw = code.encode(x.T)  # [num_int, block_len]
+    mat = np.frombuffer(
+        np.ascontiguousarray(np.asarray(cw).T).tobytes(), np.uint64,
+    ).reshape(block_len * num_int, 2)
     leaves = mat.reshape(block_len, num_int * 2).view(np.uint8)
     tree = merkle.merkle_tree(leaves, use_host_sha=use_host_sha)
     return mat, tree
