@@ -19,6 +19,12 @@ A layer is not "done" until its `*_oracle_test` is green on GPU. Fixtures are
 dumped from flock-core itself (`examples/dump_*.rs`), so the gate transitively
 pins us to upstream. (cf. accumulation-zorch's three-way oracle.)
 
+Byte gates can't see non-byte properties. When a layer's value is structural —
+e.g. riding zorch's private batching hooks to keep the `zorch.sha256` marker
+batch-native — pin the structure with its own tripwire check: a byte-identical
+fallback keeps every gate green while the property silently evaporates
+(cf. `merkle_oracle_test._hooks_on_commit_path`).
+
 ### 2. Arithmetic in flock's GHASH basis, directly — NOT zk_dtypes binary fields
 `zk_dtypes.binary_field_t7` is GF(2¹²⁸) in the `x²+x+α` **tower** basis; flock
 uses the **GHASH** basis (p(x)=x¹²⁸+x⁷+x²+x+1, const 0x87). Isomorphic but NOT
