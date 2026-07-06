@@ -119,12 +119,15 @@ to upstream. Confirmed bit-for-bit on GPU:
 | **hash circuits** — Keccak-f[1600] · Keccak3 · SHA-256 · BLAKE3 (BaseFold + Ligerito) | clmad |
 
 flock-zorch matches flock on *both* the proving scheme and the full hash-circuit
-set. Architecture and the non-negotiable invariants are in [`CLAUDE.md`](CLAUDE.md).
+set. Run the core gates with `bazel test //python:all`; the heavy hash-circuit
+and GPU gates run on the venv — see [`docs/SETUP.md`](docs/SETUP.md).
 
 ## Setup
 
-`flock` and `zorch` are pinned git submodules under `third_party/`. One command
-bootstraps everything (submodules → venv → cargo build → goldens → smoke gates):
+`flock` is a pinned git submodule under `third_party/` (the byte-compare oracle);
+`zorch` is pinned via a bazel `git_override` in `MODULE.bazel` (bump = edit the
+commit there, keeping `requirements.in` in lockstep). One command bootstraps
+everything (submodules → venv → cargo build → goldens → smoke gates):
 
 ```bash
 git clone --recursive git@github.com:fractalyze/flock-zorch.git && cd flock-zorch

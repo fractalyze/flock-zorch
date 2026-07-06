@@ -159,7 +159,7 @@ def prove(z_packed_bytes, a_dense, b_dense, x_ab, m, k_log, k_skip,
 
     # Unfused on purpose: each round is _round_eval then _bind_top, mirroring flock's
     # steps. Do NOT hand-fuse into Rust's sumcheck_bind_both_and_eval_next — operator
-    # fusion is the zkx compiler's job (see CLAUDE.md).
+    # fusion is the zkx compiler's job.
     rounds, r_rounds = [], []
     if inner_rest > 0:
         e1, einf = _round_eval(comb, z_vec, mul)

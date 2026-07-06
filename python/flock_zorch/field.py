@@ -24,9 +24,9 @@ the 64 steps stay one while-loop body, so the kernel is O(1) memory and scales
 to flock's production codeword sizes (2^23+). A fully-unrolled version OOMs --
 XLA materializes the whole 256-step chain. This software multiply is correct but
 not the fast path: GPU acceleration is the PTX `clmad` (carryless multiply-ADD;
-PTX has no standalone CLMUL, only the fused multiply-add, so this agrees with
-CLAUDE.md's "no PTX CLMUL"), wired in the zkx compiler rather than here -- perf is
-the compiler's job (see CLAUDE.md; benchmarks in optim/clmad/README.md).
+PTX has no standalone CLMUL, only the fused multiply-add -- confirmed absent from
+the PTX ISA + the in-tree LLVM), wired in the zkx compiler rather than here --
+perf is the compiler's job (benchmarks in optim/clmad/README.md).
 
 Requires `jax_enable_x64`.
 """
