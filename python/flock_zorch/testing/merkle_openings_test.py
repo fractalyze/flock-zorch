@@ -1,10 +1,13 @@
-"""Unit test for `merkle.multi_proof_to_paths` — the octopus→per-query-path
-expander that lets the BaseFold verifier feed flock's octopus multi-proof into
-zorch's `pcs.fold.verify_openings`.
+"""Unit test for the octopus↔per-query-path pair in `merkle.py`:
+`multi_proof_to_paths` (octopus→paths, the expander that lets the BaseFold
+verifier feed flock's octopus multi-proof into zorch's `pcs.fold.verify_openings`)
+and its inverse `paths_to_multi_proof` (paths→octopus, the prover-side assembler
+that rebuilds flock's octopus from a zorch `Opening`'s per-query paths).
 
 Pure host (hashlib reference tree + flock's own `merkle_multi_proof`), no GPU:
-the expander is proof-format decoding, not field math. Verifies each
-reconstructed path equals the tree's actual siblings AND rebuilds the root.
+these are proof-format decoding, not field math. Verifies each reconstructed
+path equals the tree's actual siblings AND rebuilds the root, then round-trips
+paths→octopus back to the original multi-proof byte-for-byte.
 """
 from __future__ import annotations
 
@@ -78,7 +81,13 @@ def _check(num_leaves: int, leaf_bytes_len: int, positions: list[int], name: str
             idx >>= 1
         if not np.array_equal(np.frombuffer(node_hash, np.uint8), root):
             ok = False
-    print(f"multi_proof_to_paths ({name}, n={num_leaves} q={len(positions)}): "
+
+    # Inverse: paths→octopus must reproduce the original multi-proof byte-for-byte.
+    octopus = merkle.paths_to_multi_proof(paths, num_leaves, positions)
+    if octopus.shape != proof.shape or not np.array_equal(octopus, proof):
+        ok = False
+
+    print(f"octopus↔paths round-trip ({name}, n={num_leaves} q={len(positions)}): "
           f"{'PASS' if ok else 'FAIL'}")
     return ok
 

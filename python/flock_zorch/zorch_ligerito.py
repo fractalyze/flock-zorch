@@ -252,43 +252,6 @@ def _make_ghash_code(message_len: int, log_inv_rate: int) -> ReedSolomon:
     )
 
 
-def flock_octopus(path_layers: list[Array], positions: Array) -> np.ndarray:
-    """flock's `merkle.merkle_multi_proof` octopus, assembled from a zorch
-    `Opening`'s per-query authentication paths + the sampled query positions.
-
-    The deduplicated octopus layout is positional (which siblings are emitted
-    depends on which nodes are co-active), so it is not recoverable from
-    `Opening.path` alone — but every sibling hash it emits IS one of those paths'
-    entries: query `qi` at leaf `positions[qi]` carries, at tree level L,
-    `path_layers[L][qi]` = the digest of node `(positions[qi] >> L) ^ 1`, exactly
-    the sibling flock emits for an active node whose sibling is not itself active.
-    So this walks flock's `merkle_multi_proof` schedule (leaves→root, sorted,
-    dedup adjacent pairs) sourcing each emitted digest from the paths — no tree
-    rebuild, byte-identical to flock's octopus (gated by the ligerito oracle
-    tests' `merkle_proof` fields)."""
-    positions = [int(p) for p in np.asarray(positions).reshape(-1)]
-    layers = [np.asarray(pl) for pl in path_layers]
-    if not positions or not layers:
-        return np.zeros((0, 32), np.uint8)
-    proof: list[np.ndarray] = []
-    nodes = list(positions)  # each query's node index at the current level
-    for level in range(len(layers)):
-        node_to_qi: dict[int, int] = {}
-        for qi, node in enumerate(nodes):
-            node_to_qi.setdefault(node, qi)  # any query passing through this node
-        active = sorted(node_to_qi)
-        i = 0
-        while i < len(active):
-            p = active[i]
-            if i + 1 < len(active) and active[i + 1] == (p ^ 1):
-                i += 2  # sibling also active -> recomputed, not emitted
-            else:
-                proof.append(layers[level][node_to_qi[p]])  # digest of node p^1
-                i += 1
-        nodes = [n >> 1 for n in nodes]
-    return np.stack(proof) if proof else np.zeros((0, 32), np.uint8)
-
-
 def _flock_proof_dict(
     p, initial_root: np.ndarray, config: LigeritoConfig, chor: FlockChoreography
 ) -> dict:
@@ -296,17 +259,19 @@ def _flock_proof_dict(
 
     Transcript-visible fields map straight across (the driver oracle gate proves
     that mapping byte-identical); the per-level `merkle_proof` octopus is rebuilt
-    from each `Opening.path` + `component_positions` via `flock_octopus`, and the
-    schedule-order `pow_witnesses` are split back into flock's fold / query nonce
-    lists."""
+    from each `Opening.path` + `component_positions` via `merkle.paths_to_multi_proof`,
+    and the schedule-order `pow_witnesses` are split back into flock's fold / query
+    nonce lists."""
     num_levels = config.num_levels
 
     def level(j) -> dict:
         opening = p.component_openings[j]
         rows = list(_lohi(opening.row).reshape(opening.row.shape[0], -1, 2))
+        paths = np.stack(opening.path, axis=1)  # [Q, depth, 32], query-major
         return {
             "opened_rows": rows,
-            "merkle_proof": flock_octopus(opening.path, p.component_positions[j]),
+            "merkle_proof": merkle.paths_to_multi_proof(
+                paths, 1 << len(opening.path), p.component_positions[j]),
         }
 
     # each round message is the (u0, u2) F128 pair
