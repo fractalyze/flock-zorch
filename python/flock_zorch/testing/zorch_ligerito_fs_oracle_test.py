@@ -145,6 +145,7 @@ def test_config_mapping():
         and config.ood_samples == (1, 1)
         and config.alpha_lsb_first
         and config.compressed_sumcheck_messages
+        and config.monomial_commit
         and chor.fold_grinding_bits == (3, 2, 0)
         and chor.query_grinding_bits == (2, 1, 0),
     )
@@ -161,6 +162,7 @@ def test_round_trip_ghash():
         ood_samples=(1,),
         alpha_lsb_first=True,
         compressed_sumcheck_messages=True,
+        monomial_commit=True,
     )
     chor = FlockChoreography(fold_grinding_bits=(1, 0), query_grinding_bits=(1, 0))
 

@@ -19,10 +19,12 @@ flock side of both seams so the code-generic driver produces flock's byte wire:
   `LigeritoConfig` + `FlockChoreography` pair (LSB-first alpha weights,
   compressed `(c0, c2)` round messages).
 
-Byte-identity of the full proof additionally needs the commit/induce basis
-convention (flock encodes raw lanes; zorch's `_commit` encodes
-`mle_evals_to_coeffs`) — tracked on flock-zorch#32, not expressible through the
-FS seams alone.
+The algebra side rides zorch's `LigeritoConfig.monomial_commit` (flock commits
+the raw lanes — the bit-reversed coefficient basis) plus the raw-basis entries
+(`open_with_basis` / `verify_with_basis`): the driver's witness and initial
+basis are the full-index bit-reversals of flock's `w` / `b`, under which
+zorch's folds, commits, and induces reproduce flock's bytes exactly (gate:
+`testing/zorch_ligerito_driver_oracle_test.py`).
 """
 from __future__ import annotations
 
@@ -173,6 +175,14 @@ class FlockChoreography(LigeritoChoreography):
         out.sort()
         return FlockTranscript(inner), jnp.asarray(out, jnp.int32)
 
+    def observe_residual(
+        self, transcript: FlockTranscript, residual: Array
+    ) -> FlockTranscript:
+        # The driver's residual rides zorch's index orientation; flock's wire
+        # observes it in flock's (the two are bit-reversals of each other under
+        # the monomial-commit correspondence).
+        return transcript.observe(lax.bit_reverse(residual, dimensions=(0,)))
+
 
 def flock_ligerito_config(
     cfg: dict, log_n: int
@@ -203,6 +213,7 @@ def flock_ligerito_config(
         ood_samples=ood[1:num_levels],
         alpha_lsb_first=True,
         compressed_sumcheck_messages=True,
+        monomial_commit=True,
     )
     choreography = FlockChoreography(
         fold_grinding_bits=tuple(cfg["fold_grinding_bits"])[:num_levels],
