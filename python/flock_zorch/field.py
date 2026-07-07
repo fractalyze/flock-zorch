@@ -41,6 +41,27 @@ _ONE = U64(1)
 
 LOG_PACKING = 7  # an F128 packs 2^7 = 128 bits; witness log-size m -> 2^(m-7) packed elems
 
+_GHASH = jnp.binary_field_ghash
+
+
+def to_ghash(a):
+    """uint64 `[..., 2]` (lo, hi) F128 -> `binary_field_ghash [...]`, via uint32 lanes.
+
+    flock stores an F128 as its little-endian bytes; the dtype is the same bytes,
+    so this is a pure bitcast. It routes through uint32 lanes because the direct
+    uint64<->ghash bitcast silently miscompiles on the CPU PJRT path (a
+    fractalyze/xla BitcastConvertType bug), while the uint32 bitcast is correct on
+    both backends and is the dtype's native lane width."""
+    a = jnp.asarray(a, U64)
+    u32 = jax.lax.bitcast_convert_type(a, jnp.uint32).reshape(*a.shape[:-1], 4)
+    return jax.lax.bitcast_convert_type(u32, _GHASH)
+
+
+def from_ghash(g):
+    """`binary_field_ghash [...]` -> uint64 `[..., 2]` (lo, hi). Inverse of `to_ghash`."""
+    u32 = jax.lax.bitcast_convert_type(g, jnp.uint32)
+    return jax.lax.bitcast_convert_type(u32.reshape(*u32.shape[:-1], 2, 2), U64)
+
 
 def add(a, b):
     """GF(2^128) addition is bitwise XOR. a, b: uint64 [..., 2]."""

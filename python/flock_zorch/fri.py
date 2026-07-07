@@ -32,22 +32,25 @@ def default_fri_queries(log_inv_rate: int) -> int:
     return {1: DEFAULT_FRI_QUERIES, 2: 148}[log_inv_rate]
 
 
-def row_batch_fold_all(codeword, challenges, mul=field.mul):
+def row_batch_fold_all(codeword, challenges, mul=None):
     """Collapse each codeword position's `2^len(challenges)` lanes to one F128 via
     nested folds `buf[j] = u + r·(u+v)` (flock `row_batch_fold_all`).
 
     codeword: uint64 [n_pos·num_ntts, 2] (SoA, position-major); challenges:
     uint64 [log_batch_size, 2]. Returns uint64 [n_pos, 2]."""
-    lbs = int(challenges.shape[0])
+    del mul
+    ch = field.to_ghash(challenges)                        # [lbs]
+    lbs = int(ch.shape[0])
     num_ntts = 1 << lbs
-    n_pos = codeword.shape[0] // num_ntts
-    buf = codeword.reshape(n_pos, num_ntts, 2)
+    buf = field.to_ghash(codeword)                         # [n_pos·num_ntts]
+    n_pos = buf.shape[0] // num_ntts
+    buf = buf.reshape(n_pos, num_ntts)
     length = num_ntts
     for i in range(lbs):
-        r = challenges[i]
+        r = ch[i]
         half = length // 2
-        br = buf.reshape(n_pos, half, 2, 2)
-        u, v = br[:, :, 0, :], br[:, :, 1, :]
-        buf = field.add(u, mul(r, field.add(u, v)))       # [n_pos, half, 2]
+        br = buf.reshape(n_pos, half, 2)
+        u, v = br[:, :, 0], br[:, :, 1]
+        buf = u + r * (u + v)                              # [n_pos, half]
         length = half
-    return buf.reshape(n_pos, 2)
+    return field.from_ghash(buf.reshape(n_pos))            # [n_pos, 2]
