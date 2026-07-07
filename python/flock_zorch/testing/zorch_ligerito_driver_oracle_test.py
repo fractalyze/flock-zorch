@@ -5,14 +5,15 @@ Drives `zorch.pcs.ligerito` — code-generic recursion, flock wire via the
 `monomial_commit` + the raw-basis entry, witness/basis bit-reversed at entry —
 over the `dump_ligerito` golden, and byte-compares against flock-core:
 
-  - the WHOLE Fiat-Shamir byte stream vs the in-tree driver's `Challenger`
-    (itself golden-gated by `ligerito_oracle_test`), prover and verifier;
   - every transcript-visible proof field vs the golden: initial + recursive
     roots, all sumcheck messages, OOD values, PoW nonces, the residual, and
-    each level's opened rows.
+    each level's opened rows;
+  - the verifier accepts and its Fiat-Shamir byte stream mirrors the prover's.
 
 The Merkle multi-proof bytes are flock's octopus assembly — a proof-container
-format, not a transcript input — and stay with the in-tree serializer (T5).
+format, not a transcript input — so this driver-level gate does not cover them;
+`ligerito_oracle_test` byte-checks the whole flock `LigeritoProof` (octopus
+included) produced by `zorch_ligerito.prove_flock_ligerito` over the same golden.
 
 Run:
   JAX_PLATFORMS=cpu PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" \
@@ -33,8 +34,7 @@ from zorch.coding.reed_solomon import ReedSolomon  # noqa: E402
 from zorch.pcs.ligerito.prover import LigeritoProver  # noqa: E402
 from zorch.pcs.ligerito.verifier import LigeritoVerifier  # noqa: E402
 
-from flock_zorch import field, ligerito, merkle  # noqa: E402
-from flock_zorch.challenger import Challenger  # noqa: E402
+from flock_zorch import merkle  # noqa: E402
 from flock_zorch.zorch_ligerito import (  # noqa: E402
     flock_ligerito_config,
     flock_transcript,
@@ -134,14 +134,6 @@ def main() -> int:
     check("initial_root", np.array_equal(np.asarray(root), g["initial_root"]))
 
     proof, t_open = prover.open_with_basis(pdata, B, target, flock_transcript(DOMAIN))
-
-    # --- the whole prover FS byte stream vs the in-tree driver's ---
-    ch = Challenger(DOMAIN)
-    ligerito.recursive_prover_with_basis(
-        cfg, g["f"], g["b"], g["target"], g["l0_codeword"], g["l0_tree"], ch,
-        mul=field.mul)
-    div = _first_divergence(t_open.inner.buffer, ch._t.buffer)
-    check("prover FS stream", div == -1, f"first divergence at byte {div}")
 
     # --- transcript-visible proof fields vs the golden ---
     golden_msgs = np.stack([np.stack(p) for p in g["sumcheck_transcript"]])

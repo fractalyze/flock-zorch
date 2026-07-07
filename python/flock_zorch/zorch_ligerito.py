@@ -35,9 +35,13 @@ import numpy as np
 from jax import Array, lax
 
 from zorch.byte_transcript import ByteHashTranscript
+from zorch.coding.reed_solomon import ReedSolomon
 from zorch.hash.sha256 import HashlibSha256
 from zorch.pcs.ligerito.choreography import LigeritoChoreography
 from zorch.pcs.ligerito.config import LigeritoConfig
+from zorch.pcs.ligerito.prover import LigeritoProver
+
+from flock_zorch import merkle
 
 FLOCK_LIGERITO_LABEL = b"flock-ligerito-basis-v0"
 
@@ -220,3 +224,144 @@ def flock_ligerito_config(
         query_grinding_bits=tuple(cfg["grinding_bits"])[:num_levels],
     )
     return config, choreography
+
+
+# --- flock-wire assembly: zorch's LigeritoProof -> flock's proof dict --------
+
+
+def _ghash(lohi) -> Array:
+    """lo‖hi uint64 pairs -> ghash (the driver's algebra dtype)."""
+    return lax.bitcast_convert_type(
+        jnp.asarray(np.asarray(lohi, np.uint64)), jnp.binary_field_ghash
+    )
+
+
+def _lohi(x) -> np.ndarray:
+    """ghash (any shape) -> (-1, 2) uint64 lo‖hi, flock's F128 representation."""
+    b = np.asarray(lax.bitcast_convert_type(x, jnp.uint8))
+    return np.frombuffer(b.tobytes(), np.uint64).reshape(-1, 2)
+
+
+def _bitrev(x: Array) -> Array:
+    return lax.bit_reverse(x, dimensions=(0,))
+
+
+def _make_ghash_code(message_len: int, log_inv_rate: int) -> ReedSolomon:
+    return ReedSolomon(
+        message_len=message_len, blowup=1 << log_inv_rate, dtype=jnp.binary_field_ghash
+    )
+
+
+def flock_octopus(path_layers: list[Array], positions: Array) -> np.ndarray:
+    """flock's `merkle.merkle_multi_proof` octopus, assembled from a zorch
+    `Opening`'s per-query authentication paths + the sampled query positions.
+
+    The deduplicated octopus layout is positional (which siblings are emitted
+    depends on which nodes are co-active), so it is not recoverable from
+    `Opening.path` alone — but every sibling hash it emits IS one of those paths'
+    entries: query `qi` at leaf `positions[qi]` carries, at tree level L,
+    `path_layers[L][qi]` = the digest of node `(positions[qi] >> L) ^ 1`, exactly
+    the sibling flock emits for an active node whose sibling is not itself active.
+    So this walks flock's `merkle_multi_proof` schedule (leaves→root, sorted,
+    dedup adjacent pairs) sourcing each emitted digest from the paths — no tree
+    rebuild, byte-identical to flock's octopus (gated by the ligerito oracle
+    tests' `merkle_proof` fields)."""
+    positions = [int(p) for p in np.asarray(positions).reshape(-1)]
+    layers = [np.asarray(pl) for pl in path_layers]
+    num_leaves = 1 << len(layers)
+    if not positions or num_leaves == 1:
+        return np.zeros((0, 32), np.uint8)
+    proof: list[np.ndarray] = []
+    nodes = list(positions)  # each query's node index at the current level
+    for level in range(len(layers)):
+        node_to_qi: dict[int, int] = {}
+        for qi, node in enumerate(nodes):
+            node_to_qi.setdefault(node, qi)  # any query passing through this node
+        active = sorted(node_to_qi)
+        i = 0
+        while i < len(active):
+            p = active[i]
+            if i + 1 < len(active) and active[i + 1] == (p ^ 1):
+                i += 2  # sibling also active -> recomputed, not emitted
+            else:
+                proof.append(layers[level][node_to_qi[p]])  # digest of node p^1
+                i += 1
+        nodes = [n >> 1 for n in nodes]
+    return np.stack(proof) if proof else np.zeros((0, 32), np.uint8)
+
+
+def _flock_proof_dict(
+    p, initial_root: np.ndarray, config: LigeritoConfig, chor: FlockChoreography
+) -> dict:
+    """zorch `LigeritoProof` -> flock's `recursive_prover_with_basis` dict.
+
+    Transcript-visible fields map straight across (the driver oracle gate proves
+    that mapping byte-identical); the per-level `merkle_proof` octopus is rebuilt
+    from each `Opening.path` + `component_positions` via `flock_octopus`, and the
+    schedule-order `pow_witnesses` are split back into flock's fold / query nonce
+    lists."""
+    num_levels = config.num_levels
+
+    def level(j) -> dict:
+        opening = p.component_openings[j]
+        rows = list(_lohi(opening.row).reshape(opening.row.shape[0], -1, 2))
+        return {
+            "opened_rows": rows,
+            "merkle_proof": flock_octopus(opening.path, p.component_positions[j]),
+        }
+
+    sumcheck_transcript = []
+    for m in p.sumcheck_messages:
+        u0, u2 = _lohi(m)  # each round message is the (u0, u2) F128 pair
+        sumcheck_transcript.append((u0, u2))
+
+    # pow_witnesses ride in schedule order (fold grinds then the query grind, per
+    # level); flock splits them into fold_grinding_nonces + grinding_nonces.
+    witness = iter(int(w) for w in p.pow_witnesses)
+    fold_nonces, query_nonces = [], []
+    for j in range(num_levels):
+        for i in range(config.fold_ks[j]):
+            if chor.fold_grind_bits(j, i) is not None:
+                fold_nonces.append(next(witness))
+        if chor.query_grind_bits(j) is not None:
+            query_nonces.append(next(witness))
+
+    final = level(num_levels - 1)
+    final["yr"] = _lohi(_bitrev(p.final_residual))
+    return {
+        "initial_root": initial_root,
+        "initial_proof": level(0),
+        "recursive_roots": [np.asarray(r) for r in p.recursive_roots],
+        "recursive_proofs": [level(j) for j in range(1, num_levels - 1)],
+        "final_proof": final,
+        "sumcheck_transcript": sumcheck_transcript,
+        "grinding_nonces": query_nonces,
+        "ood_values": [_lohi(y).reshape(2) for y in p.ood_values],
+        "fold_grinding_nonces": fold_nonces,
+    }
+
+
+def prove_flock_ligerito(cfg: dict, z_packed, b_combined, target, ch) -> dict:
+    """Drive `zorch.pcs.ligerito` over flock's shared challenger and assemble a
+    flock `LigeritoProof` dict — byte-identical to the retired in-tree
+    `ligerito.recursive_prover_with_basis`.
+
+    The Fiat-Shamir rides flock's live `ch` (bridged into a `FlockTranscript`
+    at its current state, written back after the open) so the ligerito open
+    continues the transcript the commit / zerocheck / lincheck phases built.
+    The initial matrix is re-committed here (`prover.commit`, byte-identical to
+    flock's external L0 commit); reusing that external commit is a perf
+    follow-up (avoids a redundant L0 encode)."""
+    z = np.asarray(z_packed, np.uint64).reshape(-1, 2)
+    log_n = int(round(float(np.log2(z.shape[0]))))
+    config, chor = flock_ligerito_config(cfg, log_n)
+    prover = LigeritoProver(_make_ghash_code, merkle.GHASH_TREE, config, chor)
+
+    w = _bitrev(_ghash(z))
+    b = _bitrev(_ghash(np.asarray(b_combined, np.uint64).reshape(-1, 2)))
+    value = _ghash(np.asarray(target, np.uint64).reshape(1, 2))[0]
+
+    root, pdata = prover.commit([w])
+    proof, t_open = prover.open_with_basis(pdata, b, value, FlockTranscript(ch._t))
+    ch._t = t_open.inner
+    return _flock_proof_dict(proof, np.asarray(root), config, chor)

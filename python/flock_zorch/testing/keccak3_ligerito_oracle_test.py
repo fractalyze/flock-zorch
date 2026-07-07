@@ -84,7 +84,7 @@ def run(mul):
     k_log, k_skip = meta["k_log"], meta["k_skip"]; ir = k_log - k_skip   # inner_rest = 17 - 6 = 11
     results = []
 
-    root, codeword, tree = pcs_commit.commit(g["z"], m, lir, lbs, mul=mul)
+    root, codeword, tree = pcs_commit.commit(g["z"], m, lir, lbs)
     results.append(("commit root", np.array_equal(root, g["root"])))
 
     ch = Challenger(b"flock-keccak3-lig-v0")

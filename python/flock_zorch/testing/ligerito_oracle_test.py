@@ -1,14 +1,15 @@
 """GPU Ligerito recursive PCS byte gate vs flock (driver-isolated).
 
 Ingests the dump_ligerito golden (config + synthetic f/b/target + L0 commit + full
-LigeritoProof, via flock's pub recursive_prover_with_basis) and byte-compares the
-flock-zorch Ligerito port stage by stage. Built up across milestones:
-  M0: ligero_commit on the L0 poly == initial_root (+ L0 codeword matches)
-  [M1: SumcheckProver lane-folds; M2: L0 open/induce; ... as the port progresses]
+LigeritoProof) and byte-compares the whole flock `LigeritoProof` — every field,
+including the octopus `merkle_proof` — produced by `zorch_ligerito.prove_flock_ligerito`
+(the flock-zorch prove path: `zorch.pcs.ligerito` driven through the flock FS seam,
+octopus reassembled from the zorch openings). This is the golden that survived
+retiring the in-tree jax port (flock-zorch#32 T5); the transcript-visible fields
+are also gated at the driver level by `zorch_ligerito_driver_oracle_test`.
 
 Run (regen golden: cargo run --release --example dump_ligerito -- 15 artifacts/ligerito_golden.bin):
-  export PATH="$HOME/.local/cuda13/bin:$PATH"
-  JAX_PLATFORMS=cuda PYTHONPATH=python:/home/jooman/fractalyze/zorch <venv> \
+  JAX_PLATFORMS=cuda PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
       python/flock_zorch/testing/ligerito_oracle_test.py
 """
 import sys
@@ -19,7 +20,7 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
-from flock_zorch import field, ligerito  # noqa: E402
+from flock_zorch import zorch_ligerito  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 
 ART = Path(__file__).resolve().parents[3] / "artifacts"
@@ -63,22 +64,14 @@ def load():
     return rd, g
 
 
-def run(mul):
+def run():
     _, g = load()
     cfg = g["cfg"]
     results = []
 
-    # M0: ligero_commit on the L0 poly (f) == the proof's initial_root + L0 codeword
-    mat, tree = ligerito.ligero_commit(
-        g["f"], cfg["initial_log_msg_cols"], cfg["initial_log_num_interleaved"],
-        cfg["log_inv_rates"][0])
-    results.append(("ligero_commit L0 codeword", np.array_equal(mat, g["l0_codeword"])))
-    results.append(("ligero_commit L0 root == initial_root", np.array_equal(tree[-1], g["initial_root"])))
-
-    # Full driver → byte-gate every LigeritoProof field
+    # The flock-zorch prove path → byte-gate every LigeritoProof field.
     ch = Challenger(b"flock-ligerito-test")
-    p = ligerito.recursive_prover_with_basis(cfg, g["f"], g["b"], g["target"],
-                                             g["l0_codeword"], g["l0_tree"], ch, mul=mul)
+    p = zorch_ligerito.prove_flock_ligerito(cfg, g["f"], g["b"], g["target"], ch)
 
     def pairs(t): return np.array([np.concatenate([a, b]) for a, b in t]) if t else np.zeros((0, 4), np.uint64)
     def rows_eq(a, b): return len(a) == len(b) and all(np.array_equal(np.asarray(x), np.asarray(y)) for x, y in zip(a, b))
@@ -103,13 +96,13 @@ def run(mul):
 
 
 def main() -> int:
-    print(f"device {jax.devices()[0]} | mul software")
-    g, results = run(field.mul)
+    print(f"device {jax.devices()[0]}")
+    g, results = run()
     allok = True
     for nm, ok in results:
         print(f"  {'PASS' if ok else 'FAIL'}  {nm}"); allok = allok and ok
-    print(f"ligerito M0 (ligero_commit) vs flock (log_n={g['log_n']}, R={g['cfg']['recursive_steps']}): "
-          f"{'PASS' if allok else 'FAIL'}")
+    print(f"ligerito prove_flock_ligerito vs flock (log_n={g['log_n']}, "
+          f"R={g['cfg']['recursive_steps']}): {'PASS' if allok else 'FAIL'}")
     return 0 if allok else 1
 
 

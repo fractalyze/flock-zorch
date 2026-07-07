@@ -4,7 +4,7 @@ Two layers, both CPU:
   1. Framing lockstep: `FlockTranscript` / `FlockChoreography` byte streams equal
      the `Challenger` surface's (which `challenger_oracle_test` pins to
      flock-core), op by op — observes, scalar/slice sample split, PoW, and the
-     rejection-sampled distinct query draw vs `ligerito.sample_distinct_queries`.
+     rejection-sampled distinct query draw vs an independent Challenger reference.
   2. Round trip: `zorch.pcs.ligerito` prover+verifier over the GHASH
      `ReedSolomon` + the flock SHA-256 Merkle, driven end-to-end through the
      flock seams — verify ok, post-open == post-verify squeeze (FS lockstep),
@@ -31,7 +31,7 @@ from zorch.pcs.ligerito.prover import LigeritoProver  # noqa: E402
 from zorch.pcs.ligerito.verifier import LigeritoVerifier  # noqa: E402
 from zorch.poly.multilinear import eval_mle  # noqa: E402
 
-from flock_zorch import ligerito, merkle  # noqa: E402
+from flock_zorch import merkle  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 from flock_zorch.zorch_ligerito import (  # noqa: E402
     FlockChoreography,
@@ -118,14 +118,30 @@ def test_grind_lockstep():
     check("check_grind", bool(ok1) and bool(ok0) and v.inner.buffer == t.inner.buffer)
 
 
+def _ref_distinct_queries(ch: Challenger, block_len: int, count: int) -> list[int]:
+    """flock's rejection-sampled distinct queries (sample an F128, take its low
+    limb mod `block_len`, redraw on repeat, sort) — an independent Challenger-side
+    reference for `FlockChoreography.sample_queries`, spelled out here so the gate
+    holds without the retired in-tree Ligerito port."""
+    seen: set[int] = set()
+    out: list[int] = []
+    while len(out) < count:
+        q = int(ch.sample_f128()[0]) % block_len
+        if q not in seen:
+            seen.add(q)
+            out.append(q)
+    out.sort()
+    return out
+
+
 def test_distinct_queries_lockstep():
-    """sample_queries == ligerito.sample_distinct_queries on equal states."""
+    """sample_queries == flock's distinct-query rejection sampling on equal states."""
     chor = FlockChoreography()
     t = flock_transcript(DOMAIN)
     t, pos = chor.sample_queries(t, block_len=16, count=6)
 
     ch = Challenger(DOMAIN)
-    ref = ligerito.sample_distinct_queries(ch, 16, 6)
+    ref = _ref_distinct_queries(ch, 16, 6)
     check(
         "distinct queries",
         pos.tolist() == ref and t.inner.buffer == ch._t.buffer,
