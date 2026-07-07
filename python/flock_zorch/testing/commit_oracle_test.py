@@ -72,7 +72,7 @@ def main() -> int:
     print(f"commit params: m={m} rate=1/2^{lir} batch=2^{lbs}\n")
 
     # (1) Byte gate over the full commit root.
-    got = pcs_commit.commit_root(z_packed, m, lir, lbs, mul=_MUL, use_host_sha=_HOST)
+    got = pcs_commit.commit_root(z_packed, m, lir, lbs, use_host_sha=_HOST)
     ok = np.array_equal(got, golden)
     print(f"PCS commit root byte-identity vs flock: {'PASS' if ok else 'FAIL'}")
     if not ok:

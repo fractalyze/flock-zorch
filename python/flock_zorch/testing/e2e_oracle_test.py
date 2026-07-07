@@ -85,7 +85,7 @@ def run(mul, byte_hash=None):
     LIR, LBS = 1, 5
 
     # ---- Stage A: commit root ----
-    root, codeword, tree = pcs_commit.commit(z_packed, m, LIR, LBS, mul=mul)
+    root, codeword, tree = pcs_commit.commit(z_packed, m, LIR, LBS)
     _eq("commit root", root, g_root, results)
 
     # ---- shared challenger + bind_statement ----

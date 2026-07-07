@@ -57,7 +57,7 @@ class FlockPcsProver:
                 f"packed witness has {len(z_packed)} positions, m={self.m} expects {expect}")
         root, codeword, tree = pcs_commit.commit(
             z_packed, self.m, self.log_inv_rate, self.log_batch_size,
-            self.mul, self.use_host_sha)
+            self.use_host_sha)
         return root, FlockPcsProverData(z_packed=z_packed, codeword=codeword, tree=tree)
 
     def open(
