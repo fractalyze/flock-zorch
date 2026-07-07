@@ -72,19 +72,19 @@ def load():
     return g
 
 
-def run(mul):
+def run():
     g = load(); meta = g["meta"]; m, lir, lbs = meta["m"], meta["lir"], meta["lbs"]
     results = []
 
     # Stage A: commit root on the ingested packed witness
-    root, codeword, tree = pcs_commit.commit(g["z"], m, lir, lbs, mul=mul)
+    root, codeword, tree = pcs_commit.commit(g["z"], m, lir, lbs)
     _eq("commit root", root, g["root"], results)
 
     # Stage B: zerocheck on real a=A·z, b=B·z, c=z (useful_bits padding) — shared challenger
     ch = Challenger(b"flock-keccak-v0")
     prover.bind_statement(ch, g["stmt"], root)
     a_bits, b_bits, c_bits = _unpack(g["a"], m), _unpack(g["b"], m), _unpack(g["z"], m)
-    zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, mul=mul, ch=ch)
+    zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch)
     _eq("zerocheck round1_ab", zc["round1_ab"], g["zc"]["r1ab"], results)
     _eq("zerocheck round1_c", zc["round1_c"], g["zc"]["r1c"], results)
     got_mlv = np.array([np.concatenate([a, b]) for a, b in zc["multilinear_rounds"]])
@@ -98,8 +98,7 @@ def run(mul):
     x_ab = {"z_skip": zc["z"], "x_inner_rest": zc["mlv_challenges"][:ir],
             "x_outer": zc["mlv_challenges"][ir:]}
     lc_rounds, lc_zp, lc_claim, _zvp = lincheck.prove(
-        g["zlc"], None, None, x_ab, m, meta["k_log"], meta["k_skip"],
-        mul=mul, ch=ch, capture=True, circuit=circ)
+        g["zlc"], None, None, x_ab, m, meta["k_log"], meta["k_skip"], ch=ch, capture=True, circuit=circ)
     got_lcr = np.array([np.concatenate([a, b]) for a, b in lc_rounds]) if lc_rounds else np.zeros((0, 4), np.uint64)
     want_lcr = np.array([np.concatenate([a, b]) for a, b in g["lc"]["rounds"]]) if g["lc"]["rounds"] else np.zeros((0, 4), np.uint64)
     results.append((f"lincheck rounds (walker, inner_rest={ir})",
@@ -110,7 +109,7 @@ def run(mul):
     k_code = (m - 7 - lbs) + lir
     ab_full = np.concatenate([lc_claim["r_inner_rest"], x_ab["x_outer"]], axis=0)
     c_full = np.concatenate([zc["r_rest"][:ir], zc["r_rest"][ir:]], axis=0)
-    out = prover.open_batch(g["z"], codeword, tree, [ab_full, c_full], k_code, lir, lbs, ch, mul=mul)
+    out = prover.open_batch(g["z"], codeword, tree, [ab_full, c_full], k_code, lir, lbs, ch)
     for i in range(len(g["rs"])):
         _eq(f"open ring_switch[{i}]", out["ring_switches"][i], g["rs"][i], results)
     bf = out["basefold"]; gbf = g["bf"]
@@ -140,14 +139,14 @@ def run(mul):
 
     # Stage W: the M1 walker port — KeccakLincheckCircuit.fold_alpha_batched (standalone)
     for i, p in enumerate(g["probes"]):
-        comb = circ.fold_alpha_batched(p["alpha"], p["eq"], mul=mul)
+        comb = circ.fold_alpha_batched(p["alpha"], p["eq"])
         results.append((f"walker probe {i} (fold_alpha_batched)", np.array_equal(comb, p["comb"])))
     return m, results
 
 
 def main() -> int:
     print(f"device {jax.devices()[0]} | mul software")
-    m, results = run(field.mul)
+    m, results = run()
     allok = True
     for nm, ok in results:
         print(f"  {'PASS' if ok else 'FAIL'}  {nm}"); allok = allok and ok

@@ -52,7 +52,7 @@ def sanity_m13():
     if m != 13:
         print(f"  (golden is m={m}, skipping sanity)"); return
     out = prover.prove_fast(z_packed, m, K_LOG, K_SKIP, 1 << K_LOG, _identity(1 << K_LOG),
-                            _identity(1 << K_LOG), zlc, stmt, LIR, LBS, mul=field.mul, use_host_sha=HOST_SHA)
+                            _identity(1 << K_LOG), zlc, stmt, LIR, LBS, use_host_sha=HOST_SHA)
     # compare zc.round1_ab + bf.final_a to golden (full check is e2e_oracle_test)
     rd = raw
     # zc round1_ab is deep in the file; cheap check: re-run e2e_oracle_test for full gate.
@@ -71,7 +71,7 @@ def bench(m, n=3):
 
     def run():
         return prover.prove_fast(z_packed, m, K_LOG, K_SKIP, 1 << K_LOG, a0, b0, zlc, stmt,
-                                 LIR, LBS, mul=field.mul, use_host_sha=HOST_SHA)
+                                 LIR, LBS, use_host_sha=HOST_SHA)
     return best(run, n=n)
 
 

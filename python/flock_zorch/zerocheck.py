@@ -6,7 +6,7 @@ Proves `a(y)·b(y) ⊕ c(y) = 0 ∀ y ∈ {0,1}^m`. Structure: one univariate-sk
 round-1 (URM, `gf8.round1_naive`) over K_SKIP=6 skip variables, then a multilinear
 sumcheck over the remaining `m − K_SKIP` variables (the iter-10 `sumcheck`
 primitives). Fiat-Shamir is the host SHA-256 `Challenger`; the bulk field arith
-(`round_pair`/`fold_pair`) runs through `field.mul` (→ clmad on GPU).
+(`round_pair`/`fold_pair`) runs on the native `binary_field_ghash` multiply (→ clmad on GPU).
 
 The protocol fixes the inner 7 of the `r` challenge coordinates to constants
 (`small`/`medium`), and the C track is pinned at round 1 (extract_c), so only AB
@@ -20,7 +20,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from flock_zorch import field, gf8, sumcheck
+from flock_zorch import gf8, sumcheck
 from flock_zorch.field import _to_int, _to_lohi
 from flock_zorch import _hostfield as hf
 from flock_zorch.challenger import Challenger
@@ -48,23 +48,22 @@ def medium_challenges() -> list[int]:
     return out
 
 
-# Module-level jit cache for the per-round field ops, keyed by the `mul` callable.
-# Defining these ONCE (not per prove_packed call) lets jax reuse compiled kernels
-# across proofs and across rounds of the same shape — otherwise every call makes
-# fresh lambdas and recompiles all n_mlv round kernels from scratch.
-_JIT_CACHE: dict = {}
+# Module-level jit memo for the per-round field ops. Defining these ONCE (not per
+# prove_packed call) lets jax reuse compiled kernels across proofs and across
+# rounds of the same shape — otherwise every call makes fresh lambdas and
+# recompiles all n_mlv round kernels from scratch.
+_JIT_ROUND_FOLD = None
 
 
-def _jit_round_fold(mul):
-    fns = _JIT_CACHE.get(mul)
-    if fns is None:
-        fns = (jax.jit(lambda a, b, rr: sumcheck.round_pair(a, b, rr, mul=mul)),
-               jax.jit(lambda a, b, rr: sumcheck.fold_pair(a, b, rr, mul=mul)))
-        _JIT_CACHE[mul] = fns
-    return fns
+def _jit_round_fold():
+    global _JIT_ROUND_FOLD
+    if _JIT_ROUND_FOLD is None:
+        _JIT_ROUND_FOLD = (jax.jit(lambda a, b, rr: sumcheck.round_pair(a, b, rr)),
+                           jax.jit(lambda a, b, rr: sumcheck.fold_pair(a, b, rr)))
+    return _JIT_ROUND_FOLD
 
 
-def prove_packed(a_bits, b_bits, c_bits, m: int, domain: bytes = None, mul=field.mul, ch=None) -> dict:
+def prove_packed(a_bits, b_bits, c_bits, m: int, domain: bytes = None, ch=None) -> dict:
     """Returns the ZerocheckProof fields + the claim's z / mlv_challenges / r_rest
     (the latter for the oracle's localization cross-checks).
 
@@ -95,7 +94,7 @@ def prove_packed(a_bits, b_bits, c_bits, m: int, domain: bytes = None, mul=field
     a_rows = gf8.witness_to_rows(a_bits, m, k_skip)
     b_rows = gf8.witness_to_rows(b_bits, m, k_skip)
     c_rows = gf8.witness_to_rows(c_bits, m, k_skip)
-    round1_ab, round1_c = gf8.round1_rows(a_rows, b_rows, c_rows, m, k_skip, r, mul=mul)
+    round1_ab, round1_c = gf8.round1_rows(a_rows, b_rows, c_rows, m, k_skip, r)
     ch.observe_f128_slice(round1_ab)
     ch.observe_f128_slice(round1_c)
     z = ch.sample_f128()
@@ -108,7 +107,7 @@ def prove_packed(a_bits, b_bits, c_bits, m: int, domain: bytes = None, mul=field
     # Per-round field ops are jitted (values identical → byte-match preserved) so
     # each round runs as ONE fused GPU kernel instead of eager op-by-op dispatch.
     # Module-level cache → kernels compile once and are reused across proofs.
-    _round, _fold = _jit_round_fold(mul)
+    _round, _fold = _jit_round_fold()
 
     # ---- round 2: fold witness at z + first multilinear message ----
     weights = _lagrange_weights(k_skip, z_int, 0)  # S-domain

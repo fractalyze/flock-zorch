@@ -19,10 +19,23 @@ import jax.numpy as jnp
 jax.config.update("jax_enable_x64", True)
 
 from flock_zorch import field, basefold, merkle, pcs_commit, fri  # noqa: E402
+from flock_zorch import _hostfield as hf  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 
 DOMAIN = b"flock-basefold-test"
 ART = Path(__file__).resolve().parents[3] / "artifacts"
+
+
+def _target(x, b):
+    """Σ_e x[e]·b[e] in GF(2^128), computed host-side in big-int (`_hostfield`) —
+    an independent software reference for the claimed sum fed to `basefold.verify`,
+    not routed through the device `binary_field_ghash` path under test."""
+    xi = np.asarray(x, np.uint64).reshape(-1, 2)
+    bi = np.asarray(b, np.uint64).reshape(-1, 2)
+    acc = 0
+    for xe, be in zip(xi, bi):
+        acc ^= hf.mul(field._to_int(xe), field._to_int(be))
+    return field._to_lohi(acc)
 
 
 class _R:
@@ -70,7 +83,7 @@ def _check_golden(path):
     n_leaves = 1 << k_code
     tree = merkle.merkle_tree(codeword.reshape(n_leaves, num_ntts * 2).view(np.uint8))
     root = tree[-1]
-    target = np.asarray(field.sum(field.mul(jnp.asarray(z_packed), jnp.asarray(b))))
+    target = _target(z_packed, b)
     ch = Challenger(DOMAIN)
     ok, info = basefold.verify(target, proof, root, k_code, lir, lbs, ch)
     arities = fri.compute_fri_arities(k_code - lir)
@@ -90,7 +103,7 @@ def _build(m, lir, lbs, seed):
     z = rng.integers(0, 2**64, size=(n_a, 2), dtype=np.uint64)
     b = rng.integers(0, 2**64, size=(n_a, 2), dtype=np.uint64)
     root, codeword, tree = pcs_commit.commit(z, m, lir, lbs)
-    target = np.asarray(field.sum(field.mul(jnp.asarray(z), jnp.asarray(b))))
+    target = _target(z, b)
     ch = Challenger(DOMAIN)
     proof = basefold.prove(z, b, codeword, tree, k_code, lir, lbs, n_q, ch)
     return proof, target, root, k_code

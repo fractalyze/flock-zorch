@@ -44,13 +44,13 @@ def load():
     return a, b
 
 
-def run(mul):
+def run():
     ga, gb = load()
     results = []
 
     # ---- Gate A: shift sumcheck on a fresh shared challenger.
     ch = Challenger(b"flock-chain-shift-v0")
-    rounds, g_at, claims = chain.prove_chain_shift(ga["in_vals"], ga["out_vals"], ch, mul=mul)
+    rounds, g_at, claims = chain.prove_chain_shift(ga["in_vals"], ga["out_vals"], ch)
     got_r = np.array([np.concatenate([e1, ei]) for e1, ei in rounds]) if rounds else np.zeros((0, 4), np.uint64)
     want_r = np.array([np.concatenate([e1, ei]) for e1, ei in ga["rounds"]]) if ga["rounds"] else np.zeros((0, 4), np.uint64)
     results.append(("shift rounds", got_r.shape == want_r.shape and np.array_equal(got_r, want_r)))
@@ -61,7 +61,7 @@ def run(mul):
 
     # ---- Gate B: region fold.
     fin, fout = chain.fold_in_out(gb["packed"], gb["k_log"], gb["tau_pos"],
-                                  gb["input_byte_off"], gb["output_byte_off"], mul=mul)
+                                  gb["input_byte_off"], gb["output_byte_off"])
     results.append(("fold in_vals", np.array_equal(fin, gb["in_vals"])))
     results.append(("fold out_vals", np.array_equal(fout, gb["out_vals"])))
     return ga["n"], results
@@ -69,7 +69,7 @@ def run(mul):
 
 def main() -> int:
     print(f"device {jax.devices()[0]} | mul software")
-    n, results = run(field.mul)
+    n, results = run()
     allok = True
     for nm, ok in results:
         print(f"  {'PASS' if ok else 'FAIL'}  {nm}"); allok = allok and ok

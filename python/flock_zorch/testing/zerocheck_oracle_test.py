@@ -62,7 +62,7 @@ def _eq(name, got, golden):
         )
 
 
-def run(path: Path | None = None, mul=field.mul):
+def run(path: Path | None = None):
     path = path or (_artifacts_dir() / "zerocheck_golden.bin")
     raw = path.read_bytes()
     assert raw[:8] == _MAGIC, f"bad magic {raw[:8]!r}"
@@ -88,7 +88,7 @@ def run(path: Path | None = None, mul=field.mul):
         r_rest = rd.f128(m - K_SKIP)
         _a_eval, _b_eval, _c_eval = rd.f128(1)[0], rd.f128(1)[0], rd.f128(1)[0]
 
-        out = zerocheck.prove_packed(a, b, c, m, DOMAIN, mul=mul)
+        out = zerocheck.prove_packed(a, b, c, m, DOMAIN)
 
         # Localization cross-checks (claim) first.
         _eq(f"r_rest(m={m})", out["r_rest"], r_rest)
@@ -112,5 +112,5 @@ def test_zerocheck_oracle():
 
 
 if __name__ == "__main__":
-    cfgs = run(mul=field.mul)
+    cfgs = run()
     print(f"zerocheck prove_packed byte-match vs flock (software mul): PASS (m={cfgs})")

@@ -14,7 +14,6 @@ walker; const_pin = the shared Z_CONST.
 
 import numpy as np
 
-from flock_zorch import field
 from flock_zorch.keccak_lincheck import (
     accumulate_subkeccak, _combine_alpha_sides, _WLC, LANE_BITS, STATE_BITS, N_T,
 )
@@ -52,7 +51,7 @@ class Keccak3LincheckCircuit:
     n_cols = K
     const_pin = Z_CONST  # shared const-wire pin column (lincheck.prove applies +β here)
 
-    def fold_alpha_batched(self, alpha, eq_inner, mul=field.mul):
+    def fold_alpha_batched(self, alpha, eq_inner):
         """comb[c] = α·(A_0ᵀ·eq)[c] ⊕ (B_0ᵀ·eq)[c] — three disjoint sub-keccak walks
         XOR-merged into the shared comb (incl. the shared Z_CONST column)."""
         eq = np.asarray(eq_inner, np.uint64).reshape(K, 2)
@@ -67,4 +66,4 @@ class Keccak3LincheckCircuit:
         comb_a[Z_CONST] ^= e0
         comb_b[Z_CONST] ^= e0
 
-        return _combine_alpha_sides(comb_a, comb_b, alpha, mul)
+        return _combine_alpha_sides(comb_a, comb_b, alpha)

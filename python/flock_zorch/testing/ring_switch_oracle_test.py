@@ -18,7 +18,7 @@ def _fv(raw, o):
     return np.frombuffer(raw, np.uint64, 2 * n, o).reshape(n, 2).copy(), o + 16 * n
 
 
-def _check(mul, name):
+def _check(name):
     raw = (ART / "ring_switch_golden.bin").read_bytes()
     assert raw[:8] == b"FLKRSW01"
     o = 16  # magic + m
@@ -29,7 +29,7 @@ def _check(mul, name):
     g_claim = np.frombuffer(raw, np.uint64, 2, o).copy()
 
     ch = Challenger(b"flock-ring-switch-test")
-    shv, rei, claim = ring_switch.prove(pw, xo, ch, mul=mul)
+    shv, rei, claim = ring_switch.prove(pw, xo, ch)
     ok = (np.array_equal(shv, g_shv) and np.array_equal(rei, g_rei) and np.array_equal(claim, g_claim))
     bad = [k for k, v in {"s_hat_v": np.array_equal(shv, g_shv), "rs_eq_ind": np.array_equal(rei, g_rei),
                           "sumcheck_claim": np.array_equal(claim, g_claim)}.items() if not v]
@@ -39,7 +39,7 @@ def _check(mul, name):
 
 def main() -> int:
     print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()}")
-    ok = _check(field.mul, "software")
+    ok = _check("software")
     return 0 if ok else 1
 
 

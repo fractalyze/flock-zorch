@@ -13,7 +13,7 @@ dual-claim / Ligerito open assembly stays in `prover.py` (flock assembly).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Sequence
+from typing import Any, Sequence
 
 import numpy as np
 
@@ -39,7 +39,6 @@ class FlockPcsProver:
     m: int
     log_inv_rate: int
     log_batch_size: int
-    mul: Callable = field.mul
     use_host_sha: bool = False
 
     @property
@@ -72,5 +71,5 @@ class FlockPcsProver:
         proof = pcs_open.open(
             prover_data.z_packed, prover_data.codeword, prover_data.tree,
             points[0], self.k_code, self.log_inv_rate, self.log_batch_size,
-            transcript, mul=self.mul, use_host_sha=self.use_host_sha)
+            transcript, use_host_sha=self.use_host_sha)
         return proof["ring_switch"], proof, transcript

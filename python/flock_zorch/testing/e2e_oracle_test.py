@@ -50,7 +50,7 @@ def _unpack(z_packed, m):
     return np.concatenate([lo, hi], axis=1).reshape(-1)[: 1 << m]
 
 
-def run(mul, byte_hash=None):
+def run(byte_hash=None):
     rd = R((ART / "e2e_golden.bin").read_bytes())
     assert bytes(rd.take(8)) == b"FLKE2E01", "bad magic"
     m, k_log, k_skip, ub = rd.u(), rd.u(), rd.u(), rd.u()
@@ -92,7 +92,7 @@ def run(mul, byte_hash=None):
     # ---- Stage B: zerocheck (a=b=c=z for identity) ----
     bits = _unpack(z_packed, m)
     _eq("a==z", g_a, z_packed, results)  # confirm identity witness in golden
-    zc = zerocheck.prove_packed(bits, bits, bits, m, mul=mul, ch=ch)
+    zc = zerocheck.prove_packed(bits, bits, bits, m, ch=ch)
     _eq("zc round1_ab", zc["round1_ab"], g_zc["r1ab"], results)
     _eq("zc round1_c", zc["round1_c"], g_zc["r1c"], results)
     got_mlv = np.array([np.concatenate([a, b]) for a, b in zc["multilinear_rounds"]])
@@ -114,7 +114,7 @@ def run(mul, byte_hash=None):
             "x_inner_rest": zc["mlv_challenges"][:inner_rest],
             "x_outer": zc["mlv_challenges"][inner_rest:]}
     lc_rounds, lc_zp, lc_claim, z_vec_pre = lincheck.prove(
-        zlc, a0, b0, x_ab, m, k_log, k_skip, mul=mul, ch=ch, capture=True)
+        zlc, a0, b0, x_ab, m, k_log, k_skip, ch=ch, capture=True)
     got_lcr = np.array([np.concatenate([a, b]) for a, b in lc_rounds]) if lc_rounds else np.zeros((0, 4), np.uint64)
     want_lcr = np.array([np.concatenate([a, b]) for a, b in g_lc["rounds"]]) if g_lc["rounds"] else np.zeros((0, 4), np.uint64)
     _eq("lc rounds", got_lcr, want_lcr, results)
@@ -138,7 +138,7 @@ def run(mul, byte_hash=None):
     ab_full = np.concatenate([ab_pt["xir"], ab_pt["xo"]], axis=0)
     c_full = np.concatenate([c_pt["xir"], c_pt["xo"]], axis=0)
     out = prover.open_batch(z_packed, codeword, tree, [ab_full, c_full], (m - 7 - LBS) + LIR,
-                            LIR, LBS, ch, mul=mul)
+                            LIR, LBS, ch)
     # ring_switches (s_hat_v per claim)
     for i in range(2):
         _eq(f"open ring_switch[{i}].s_hat_v", out["ring_switches"][i], g_rs[i], results)
@@ -167,7 +167,7 @@ def run(mul, byte_hash=None):
     # ---- Stage F: packaged prover.prove_fast reproduces the staged proof ----
     a0 = np.eye(1 << k_log, dtype=np.uint64)
     pf = prover.prove_fast(z_packed, m, k_log, k_skip, ub, a0, a0, zlc, stmt,
-                           LIR, LBS, mul=mul, use_host_sha=False, byte_hash=byte_hash)
+                           LIR, LBS, use_host_sha=False, byte_hash=byte_hash)
     _eq("prove_fast zc round1_ab", pf["zerocheck"]["round1_ab"], g_zc["r1ab"], results)
     _eq("prove_fast lc z_partial", pf["lincheck"][1], g_lc["zp"], results)
     _eq("prove_fast open ring_switch[1]", pf["pcs_open"]["ring_switches"][1], g_rs[1], results)
@@ -180,7 +180,7 @@ def run(mul, byte_hash=None):
 def main() -> int:
     name = "software"
     print(f"device {jax.devices()[0]} | mul {name}")
-    m, results = run(field.mul)
+    m, results = run()
     allok = True
     for nm, ok in results:
         print(f"  {'PASS' if ok else 'FAIL'}  {nm}")

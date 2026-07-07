@@ -71,28 +71,28 @@ def _ifft_dev(v, tw, k: int):
     return v
 
 
-_R1_CACHE: dict = {}
+_R1_CORE = None
 
 
-def _round1_core(mul):
-    """Fused round-1 core, cached per `mul`: extend a/b/c S→Λ, a·b, φ8-embed, AND
+def _round1_core():
+    """Fused round-1 core (memoized): extend a/b/c S→Λ, a·b, φ8-embed, AND
     eq-accumulate — all in ONE jit kernel so the large [N,ell,2] φ8 intermediate is
     consumed in-fusion and never written to HBM (halves round1's bandwidth vs the
     separate extend + accumulate)."""
-    fn = _R1_CACHE.get(mul)
-    if fn is None:
+    global _R1_CORE
+    if _R1_CORE is None:
         @functools.partial(jax.jit, static_argnums=(3,))
         def core(a, b, c, k_skip, tw_s, tw_l, eqx):
             a_l = _fft_dev(_ifft_dev(a, tw_s, k_skip), tw_l, k_skip)
             b_l = _fft_dev(_ifft_dev(b, tw_s, k_skip), tw_l, k_skip)
             c_l = _fft_dev(_ifft_dev(c, tw_s, k_skip), tw_l, k_skip)
-            phi_ab = _PHI_DEV[_gf8_mul_dev(a_l, b_l).astype(jnp.int32)]
-            phi_c = _PHI_DEV[c_l.astype(jnp.int32)]
-            return (field.sum(mul(eqx, phi_ab), axis=0),
-                    field.sum(mul(eqx, phi_c), axis=0))
-        fn = core
-        _R1_CACHE[mul] = fn
-    return fn
+            phi_ab = field.to_ghash(_PHI_DEV[_gf8_mul_dev(a_l, b_l).astype(jnp.int32)])
+            phi_c = field.to_ghash(_PHI_DEV[c_l.astype(jnp.int32)])
+            eqx_g = field.to_ghash(eqx)                        # [n_chunks, 1]
+            return (field.from_ghash(jnp.sum(eqx_g * phi_ab, axis=0)),
+                    field.from_ghash(jnp.sum(eqx_g * phi_c, axis=0)))
+        _R1_CORE = core
+    return _R1_CORE
 
 
 @functools.partial(jax.jit, static_argnums=(1, 2))

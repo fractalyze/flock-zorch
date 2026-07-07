@@ -80,7 +80,7 @@ def main() -> int:
           "aarch64-gated — see flock-baseline-needs-macbook)\n")
 
     # 1. byte-identity gate (reuse the oracle on the dumped fixture).
-    oracle.run(mul=field.mul)
+    oracle.run()
     print("byte-identity vs flock (build_eq / round_pair / fold_single): PASS")
 
     # 2. speed.
@@ -88,7 +88,7 @@ def main() -> int:
     worst = float("inf")
     for n in SIZES:
         r = jnp.asarray(np.random.default_rng(7).integers(0, 2**64, size=(n, 2), dtype=np.uint64))
-        fn = jax.jit(lambda rr: sumcheck.build_eq(rr, mul=field.mul))
+        fn = jax.jit(lambda rr: sumcheck.build_eq(rr))
         gpu = _gpu_eq_ms(fn, r)
         cpu = _cpu_eq_ms(n)
         spd = cpu / gpu

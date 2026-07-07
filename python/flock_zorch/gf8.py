@@ -6,7 +6,7 @@ needs. Byte-identical to flock-core's `field/gf2_8.rs`, `field/phi8.rs`,
 F8 work is small (64-wide columns, one pass per witness row) and one-time per
 prove; byte-identity is the goal, not throughput — the bulk GPU win is the F128
 multilinear rounds + NTT. So the F8 field/NTT live on host (numpy), and only the
-final F128 eq-accumulation routes through the device `field.mul`.
+final F128 eq-accumulation runs on device in the native `binary_field_ghash` multiply.
 
 F8 is a DIFFERENT tower from the F128 GHASH basis: AES poly x⁸+x⁴+x³+x+1 = 0x11B,
 linked to F128 only through φ₈ (a field homomorphism into a subfield). The
@@ -21,7 +21,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from flock_zorch import field, sumcheck
+from flock_zorch import sumcheck
 
 # ---------------------------------------------------------------------------
 # F8 = GF(2^8), AES irreducible x^8+x^4+x^3+x+1 = 0x11B (reduction const 0x1B).
@@ -218,7 +218,7 @@ def witness_to_rows(bits, m: int, k_skip: int):
     return jnp.asarray(np.asarray(bits, np.uint8).reshape(n_chunks, ell))
 
 
-def round1_rows(a, b, c, m: int, k_skip: int, r, mul=field.mul):
+def round1_rows(a, b, c, m: int, k_skip: int, r):
     """Round-1 URM from device witness rows (uint8 [2^(m-k_skip), 2^k_skip]). The
     compute half of `round1_naive`, so the witness can be transferred once and
     reused by `zerocheck._fold_at_z_rows`. Returns (P^AB, P^C) as numpy."""
@@ -228,12 +228,12 @@ def round1_rows(a, b, c, m: int, k_skip: int, r, mul=field.mul):
     tw_s = jnp.asarray(_compute_twiddles(k_skip, 0))     # S = {0..ell-1}
     tw_l = jnp.asarray(_compute_twiddles(k_skip, ell))   # Lambda = {ell..2*ell-1}
     r = np.asarray(r, dtype=np.uint64)
-    eqx = sumcheck.build_eq_fused(jnp.asarray(r[k_skip:]), mul=mul)[:, None, :]  # [n_chunks, 1, 2]
-    p_ab, p_c = _gf8_device._round1_core(mul)(a, b, c, k_skip, tw_s, tw_l, eqx)  # fused extend+phi+accum
+    eqx = sumcheck.build_eq_fused(jnp.asarray(r[k_skip:]))[:, None, :]  # [n_chunks, 1, 2]
+    p_ab, p_c = _gf8_device._round1_core()(a, b, c, k_skip, tw_s, tw_l, eqx)  # fused extend+phi+accum
     return np.asarray(p_ab), np.asarray(p_c)
 
 
-def round1_naive(a_bits, b_bits, c_bits, m: int, k_skip: int, r, mul=field.mul):
+def round1_naive(a_bits, b_bits, c_bits, m: int, k_skip: int, r):
     """Round-1 univariate-skip message (P^AB, P^C), each F128 [2^k_skip] on Λ.
 
     a/b/c_bits: uint8 [2^m] (0/1). r: uint64 [m, 2] (F128). Per row of 2^k_skip
@@ -246,4 +246,4 @@ def round1_naive(a_bits, b_bits, c_bits, m: int, k_skip: int, r, mul=field.mul):
     a = witness_to_rows(a_bits, m, k_skip)
     b = witness_to_rows(b_bits, m, k_skip)
     c = witness_to_rows(c_bits, m, k_skip)
-    return round1_rows(a, b, c, m, k_skip, r, mul=mul)
+    return round1_rows(a, b, c, m, k_skip, r)

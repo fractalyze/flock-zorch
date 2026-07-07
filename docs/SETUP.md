@@ -24,7 +24,7 @@ flock-zorch is the GPU port; it depends on two pinned sibling repos:
 - **SSH access to `fractalyze/zorch`** (bazel's `git_override` clones it).
 - Optional, for the GPU fast path: a **CUDA 13.x `ptxas`** at `~/.local/cuda13/bin`
   (assembles the `clmad` cubin). Without it everything still runs on the software
-  `field.mul` — byte-identical, just slower. See `optim/clmad/README.md`.
+  `binary_field_ghash` multiply — byte-identical, just slower. See `optim/clmad/README.md`.
 
 ## Quick start
 
@@ -89,15 +89,16 @@ Two gates sweep configs with their own runners instead of a single default golde
 
 ## Optional: clmad GPU acceleration
 
-The carryless `field.mul` fast path is the PTX `clmad` cubin. Build it (needs CUDA
+The carryless `binary_field_ghash` multiply's fast path is the PTX `clmad` cubin,
+emitted by the zkx compiler when the cubin is present. Build it (needs CUDA
 13.x ptxas + sm_120):
 
 ```bash
 VENV=.venv/bin/python bash optim/clmad/build_ffi.sh
 ```
 
-Gates/benches pick it up automatically (`field_clmad.available()`); otherwise they
-use the software `field.mul`, which is byte-identical. Details in
+Gates/benches pick it up automatically; otherwise they use the software
+`binary_field_ghash` multiply, which is byte-identical. Details in
 `optim/clmad/README.md`.
 
 ## Benchmarks
