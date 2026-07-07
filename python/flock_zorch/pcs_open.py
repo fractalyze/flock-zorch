@@ -1,9 +1,10 @@
 """Full single-claim PCS opening, authored in jax — byte-identical to flock-core
 `pcs::open`: observe `flock-pcs-open-v0` → ring-switch (s_hat_v + rs_eq_ind=b +
-target) → BaseFold. The entry point is `open()`; the FRI primitives it drives
-(`fri_fold` / `row_batch_fold_all` / `compute_fri_arities` / `default_fri_queries`)
-live in `fri.py` — a leaf module that this open frontend and the basefold backend
-both import down from. Requires `jax_enable_x64`.
+target) → BaseFold. The entry point is `open()`; the FRI helpers it drives
+(`row_batch_fold_all` / `compute_fri_arities` / `default_fri_queries`) live in
+`fri.py` — a leaf module that this open frontend and the basefold backend both
+import down from. The per-round codeword fold is zorch's
+`coding.AdditiveReedSolomon.fold` (see `basefold.py`). Requires `jax_enable_x64`.
 """
 from __future__ import annotations
 

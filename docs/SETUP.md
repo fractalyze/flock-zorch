@@ -110,7 +110,7 @@ plonky3 / hashcaster — are not ported here). The two halves:
   (thin-LTO, `codegen-units=1`, `target-cpu=native`) so it is flock's honest best on
   this box. e.g. `cargo run --release --example bench_e2e_cpu`.
 - **GPU** — `python/flock_zorch/testing/*bench*.py` (driver: `bench_all.py`); e.g.
-  `e2e_fused_bench.py`, `cpu_vs_gpu.py`, `e2e_{sha2,blake3,keccak3_ligerito}_bench.py`.
+  `e2e_fused_bench.py`, `e2e_{sha2,blake3,keccak3_ligerito}_bench.py`.
 
 Upstream `flock/benchmarks` → flock-zorch mapping:
 
@@ -120,7 +120,7 @@ Upstream `flock/benchmarks` → flock-zorch mapping:
 | SHA-256 throughput (§3) | `e2e_sha2_*_bench.py` vs `bench_sha2{,_ligerito}_cpu` |
 | BLAKE3 throughput (§4, §7) | `e2e_blake3_bench.py` vs `bench_blake3_cpu` |
 | per-phase prover breakdown (§6) | `prover_phase_gpu_bench.py` |
-| NTT / commit / sumcheck micro | `cpu_vs_gpu.py`, `commit_oracle_test.py`, `sumcheck_gpu_vs_cpu.py` |
+| NTT / commit / sumcheck micro | `commit_oracle_test.py`, `sumcheck_gpu_vs_cpu.py` |
 
 > **Run benches on an IDLE machine.** A shared GPU (VRAM contention) or a loaded CPU
 > inflates the speedup dishonestly — the CPU baseline must be flock's true best. The
