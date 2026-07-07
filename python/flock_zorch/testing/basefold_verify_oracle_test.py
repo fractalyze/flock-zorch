@@ -3,8 +3,8 @@ tampered proofs must REJECT. Byte-anchored indirectly — the prover is byte-gre
 vs flock (`basefold_oracle_test`), so a verifier that accepts its output and
 rejects tampering matches flock's `pcs::basefold::verify` acceptance semantics.
 
-Runs over configs spanning 1/2/3 FRI epochs (arity schedule `compute_fri_arities`).
-GHASH fold math ⇒ GPU only (`JAX_PLATFORMS=cuda`, `XLA_PYTHON_CLIENT_PREALLOCATE=false`).
+Runs over configs spanning 1/2/3 FRI epochs (arity schedule `compute_fri_arities`),
+on CPU (bazel `//python:all`) or GPU (venv, `JAX_PLATFORMS=cuda`).
 """
 from __future__ import annotations
 
