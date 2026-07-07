@@ -13,6 +13,7 @@ py_library(
         "@zorch//zorch/coding:additive_reed_solomon",
         "@zorch//zorch/coding:reed_solomon",
         "@zorch//zorch/commit:merkle",
+        "@zorch//zorch/pcs:fold",
         "@zorch//zorch/hash:byte_hash",
         "@zorch//zorch/hash:sha256",
         "@zorch//zorch/pcs:ring_switch",
@@ -68,3 +69,15 @@ _HEAVY = [
         exclude = ["flock_zorch/testing/%s_oracle_test.py" % _h for _h in _HEAVY],
     )
 ]
+
+# Pure-host unit test (no golden): the octopus->per-query-path expander that
+# feeds the BaseFold verifier's zorch verify_openings reuse.
+py_test(
+    name = "merkle_openings_test",
+    size = "small",
+    srcs = ["flock_zorch/testing/merkle_openings_test.py"],
+    deps = [
+        ":flock_zorch",
+        ":test_support",
+    ],
+)

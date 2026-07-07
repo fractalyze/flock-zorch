@@ -111,6 +111,16 @@ _TREE = _Sha256MerkleTree(_Sha256Leaf(), _Sha256Compress())
 GHASH_TREE = _GhashSha256MerkleTree(_GhashSha256Leaf(), _Sha256Compress())
 
 
+def verify_openings_flock(legs) -> bool:
+    """`zorch.pcs.fold.verify_openings` over flock's SHA-256 Merkle tree: AND of
+    "every opened leaf rebuilds its committed root" across `legs`
+    (`(root, indices, Opening)`). The BaseFold verifier assembles legs by
+    expanding flock's octopus proof (`multi_proof_to_paths`) into per-query
+    `Opening`s. Returns a python bool."""
+    from zorch.pcs.fold import verify_openings
+    return bool(verify_openings(_TREE, legs))
+
+
 @jax.jit
 def _root_dev(leaves):
     return _TREE.commit(leaves)[0]
@@ -174,3 +184,70 @@ def merkle_multi_proof(tree: np.ndarray, num_leaves: int, positions) -> np.ndarr
         level_start += level_len
         level_len >>= 1
     return np.stack(proof) if proof else np.zeros((0, 32), dtype=np.uint8)
+
+
+def _sha(*parts: bytes) -> bytes:
+    import hashlib
+    h = hashlib.sha256()
+    for p in parts:
+        h.update(p)
+    return h.digest()
+
+
+def multi_proof_to_paths(proof: np.ndarray, num_leaves: int, positions,
+                         leaf_bytes: np.ndarray) -> np.ndarray:
+    """Invert `merkle_multi_proof`: reconstruct each query's per-level sibling
+    path from flock's octopus proof, so the BaseFold verifier can feed zorch's
+    `pcs.fold.verify_openings` (which wants per-query `Opening(row, path)` rather
+    than flock's shared/deduped wire — see `merkle.py` header: octopus is flock's
+    proof assembly, kept host-side).
+
+    `positions`: length-Q query leaf indices (dups allowed); `leaf_bytes`:
+    uint8 [Q, leaf_len] the queried leaves aligned to `positions`. Returns
+    `paths` uint8 [Q, depth, 32], leaf-first, `depth = log2(num_leaves)`.
+
+    Replays flock's bottom-up walk, filling each active node's sibling from the
+    next proof element (sibling inactive) or the co-active node's running hash
+    (sibling active, computed from the level below). Roots are NOT trusted from
+    this host walk — `verify_openings` independently rebuilds them on-device."""
+    positions = [int(p) for p in positions]
+    depth = num_leaves.bit_length() - 1
+    q = len(positions)
+    if depth == 0:
+        return np.zeros((q, 0, 32), dtype=np.uint8)
+
+    leaf_hash = {}
+    for qi, p in enumerate(positions):
+        leaf_hash.setdefault(p, _sha(leaf_bytes[qi].tobytes()))
+
+    active = sorted(leaf_hash)
+    cur = dict(leaf_hash)                 # node index -> running digest at this level
+    sibling_at_level: list[dict] = []     # level k: node index -> its sibling digest
+    pit = 0
+    for _level in range(depth):
+        sib, parents, i = {}, {}, 0
+        while i < len(active):
+            p = active[i]
+            if i + 1 < len(active) and active[i + 1] == (p ^ 1):
+                s = cur[p ^ 1]
+                sib[p] = cur[p ^ 1]
+                sib[p ^ 1] = cur[p]
+                i += 2
+            else:
+                s = proof[pit]; pit += 1
+                sib[p] = np.asarray(s, np.uint8)
+                i += 1
+            lo, hi = (cur[p], sib[p]) if p % 2 == 0 else (sib[p], cur[p])
+            lo = lo if isinstance(lo, bytes) else lo.tobytes()
+            hi = hi if isinstance(hi, bytes) else hi.tobytes()
+            parents[p >> 1] = _sha(lo, hi)
+        sibling_at_level.append(sib)
+        active = sorted(parents)
+        cur = parents
+
+    paths = np.zeros((q, depth, 32), dtype=np.uint8)
+    for qi, p in enumerate(positions):
+        for k in range(depth):
+            s = sibling_at_level[k][p >> k]
+            paths[qi, k] = np.frombuffer(s, np.uint8) if isinstance(s, bytes) else s
+    return paths
