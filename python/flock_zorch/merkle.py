@@ -81,7 +81,34 @@ class _Sha256MerkleTree(MerkleTree):
         return _digest(groups.reshape(groups.shape[0], 64), 64)
 
 
+class _GhashSha256Leaf(_Sha256Leaf):
+    """`_Sha256Leaf` over a `binary_field_ghash` row: hash the raw lo‖hi LE
+    element bytes, flock's leaf preimage. The uint8 bitcast is the one working
+    device ghash→integer direction (ghash→uint64 returns zeros, zorch#399)."""
+
+    def hash(self, row):
+        return super().hash(jax.lax.bitcast_convert_type(row, jnp.uint8).reshape(-1))
+
+    def __eq__(self, other):
+        return isinstance(other, _GhashSha256Leaf)
+
+    def __hash__(self):
+        return hash(_GhashSha256Leaf)
+
+
+class _GhashSha256MerkleTree(_Sha256MerkleTree):
+    """`_Sha256MerkleTree` whose leaves are `binary_field_ghash` rows instead of
+    uint8 — the tree zorch's `commit_matrix` builds for a GHASH codeword (its
+    `to_base_field` passes the 128-bit dtype through). Byte-identical to flock:
+    each leaf hashes to `SHA256(row bytes)`, exactly `merkle_tree`'s preimage."""
+
+    def _hash_leaves(self, matrix):
+        u8 = jax.lax.bitcast_convert_type(matrix, jnp.uint8)
+        return super()._hash_leaves(u8.reshape(matrix.shape[0], -1))
+
+
 _TREE = _Sha256MerkleTree(_Sha256Leaf(), _Sha256Compress())
+GHASH_TREE = _GhashSha256MerkleTree(_GhashSha256Leaf(), _Sha256Compress())
 
 
 @jax.jit

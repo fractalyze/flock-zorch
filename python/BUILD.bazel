@@ -15,6 +15,7 @@ py_library(
         "@zorch//zorch/commit:merkle",
         "@zorch//zorch/hash:byte_hash",
         "@zorch//zorch/hash:sha256",
+        "@zorch//zorch/pcs/ligerito",
         requirement("jax"),
         requirement("numpy"),
         requirement("zk_dtypes"),
@@ -39,6 +40,7 @@ py_library(
 # Non-bazel gates (heavy hash circuits + commit GPU); everything else defaults in.
 _HEAVY = [
     "commit",
+    "zorch_ligerito_driver",
     "keccak",
     "keccak_ligerito",
     "keccak_chain",
