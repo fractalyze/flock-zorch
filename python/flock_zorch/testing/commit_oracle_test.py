@@ -15,7 +15,6 @@ Run:
   export PATH="$HOME/.local/cuda13/bin:$PATH"
   JAX_PLATFORMS=cuda PYTHONPATH=python <venv> python/flock_zorch/testing/commit_oracle_test.py
 """
-import os
 import subprocess
 import sys
 import time
@@ -35,7 +34,6 @@ REPO = Path(__file__).resolve().parents[3]
 ART = REPO / "artifacts"
 GPU_ITERS = 50
 TARGET = 10.0
-_HOST = os.environ.get("FLOCK_HOST_SHA") == "1"  # gate the host SHA-NI Merkle path too
 
 
 def _load_golden():
@@ -62,12 +60,11 @@ def _cpu_commit_ms(m, lir, lbs):
 
 def main() -> int:
     m, lir, lbs, z_packed, golden = _load_golden()
-    print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()}"
-          f"{' | HOST SHA-NI Merkle' if _HOST else ''}")
+    print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()}")
     print(f"commit params: m={m} rate=1/2^{lir} batch=2^{lbs}\n")
 
     # (1) Byte gate over the full commit root.
-    got = pcs_commit.commit_root(z_packed, m, lir, lbs, use_host_sha=_HOST)
+    got = pcs_commit.commit_root(z_packed, m, lir, lbs)
     ok = np.array_equal(got, golden)
     print(f"PCS commit root byte-identity vs flock: {'PASS' if ok else 'FAIL'}")
     if not ok:

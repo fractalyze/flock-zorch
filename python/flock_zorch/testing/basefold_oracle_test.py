@@ -10,7 +10,6 @@ Run:
   JAX_PLATFORMS=cuda PYTHONPATH=python:/home/jooman/fractalyze/zorch <venv> \
       python/flock_zorch/testing/basefold_oracle_test.py
 """
-import os
 import sys
 from pathlib import Path
 
@@ -23,7 +22,6 @@ from flock_zorch import field, basefold, merkle  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 
 ART = Path(__file__).resolve().parents[3] / "artifacts"
-_HOST = os.environ.get("FLOCK_HOST_SHA") == "1"  # gate the host SHA-NI Merkle path too
 
 
 class R:
@@ -55,12 +53,10 @@ def _check(name):
     k_code = (m - 7 - lbs) + lir
     num_ntts = 1 << lbs
     n_leaves = (1 << k_code)
-    init_tree = merkle.merkle_tree(codeword.reshape(n_leaves, num_ntts * 2).view(np.uint8),
-                                   use_host_sha=_HOST)
+    init_tree = merkle.merkle_tree(codeword.reshape(n_leaves, num_ntts * 2).view(np.uint8))
 
     ch = Challenger(b"flock-basefold-test")
-    p = basefold.prove(z_packed, b, codeword, init_tree, k_code, lir, lbs, n_queries, ch,
-                       use_host_sha=_HOST)
+    p = basefold.prove(z_packed, b, codeword, init_tree, k_code, lir, lbs, n_queries, ch)
 
     def eq(x, y): return np.array_equal(np.asarray(x), np.asarray(y))
     checks = {

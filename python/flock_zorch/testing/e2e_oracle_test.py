@@ -167,7 +167,7 @@ def run(byte_hash=None):
     # ---- Stage F: packaged prover.prove_fast reproduces the staged proof ----
     a0 = np.eye(1 << k_log, dtype=np.uint64)
     pf = prover.prove_fast(z_packed, m, k_log, k_skip, ub, a0, a0, zlc, stmt,
-                           LIR, LBS, use_host_sha=False, byte_hash=byte_hash)
+                           LIR, LBS, byte_hash=byte_hash)
     _eq("prove_fast zc round1_ab", pf["zerocheck"]["round1_ab"], g_zc["r1ab"], results)
     _eq("prove_fast lc z_partial", pf["lincheck"][1], g_lc["zp"], results)
     _eq("prove_fast open ring_switch[1]", pf["pcs_open"]["ring_switches"][1], g_rs[1], results)

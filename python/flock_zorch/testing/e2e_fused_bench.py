@@ -24,7 +24,6 @@ import jax.numpy as jnp  # noqa: E402
 from flock_zorch import field, prover  # noqa: E402
 
 ART = Path(__file__).resolve().parents[3] / "artifacts"
-HOST_SHA = os.environ.get("FLOCK_HOST_SHA", "1") == "1"   # host SHA-NI Merkle by default
 LIR, LBS, K_LOG, K_SKIP = 1, 5, 6, 6
 # Apples-to-apples CPU baseline: flock's prove on the SAME identity R1CS, x86
 # scalar (examples/bench_e2e_cpu.rs). NOT the blake3 config (whose sparse
@@ -52,7 +51,7 @@ def sanity_m13():
     if m != 13:
         print(f"  (golden is m={m}, skipping sanity)"); return
     out = prover.prove_fast(z_packed, m, K_LOG, K_SKIP, 1 << K_LOG, _identity(1 << K_LOG),
-                            _identity(1 << K_LOG), zlc, stmt, LIR, LBS, use_host_sha=HOST_SHA)
+                            _identity(1 << K_LOG), zlc, stmt, LIR, LBS)
     # compare zc.round1_ab + bf.final_a to golden (full check is e2e_oracle_test)
     rd = raw
     # zc round1_ab is deep in the file; cheap check: re-run e2e_oracle_test for full gate.
@@ -71,7 +70,7 @@ def bench(m, n=3):
 
     def run():
         return prover.prove_fast(z_packed, m, K_LOG, K_SKIP, 1 << K_LOG, a0, b0, zlc, stmt,
-                                 LIR, LBS, use_host_sha=HOST_SHA)
+                                 LIR, LBS)
     return best(run, n=n)
 
 
@@ -81,8 +80,7 @@ def bench(m, n=3):
 def main():
     ms = [int(x) for x in sys.argv[1:]] or [26]
     n = int(os.environ.get("FLOCK_BENCH_N", "3"))
-    print(f"device {jax.devices()[0]} | mul software "
-          f"| Merkle {'HOST SHA-NI' if HOST_SHA else 'GPU SHA-256'}")
+    print(f"device {jax.devices()[0]} | mul software | Merkle GPU SHA-256")
     sanity_m13()
     for m in ms:
         cpu = CPU_IDENTITY.get(m)

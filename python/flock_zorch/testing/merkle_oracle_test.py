@@ -2,14 +2,13 @@
 
 Loads flock's golden (`merkle_root` over N leaves) and asserts the jax port
 reproduces the 32-byte root bit-for-bit — the oracle gate. Merkle is a <1% PCS
-component (NTT dominates 96-322x, see README), and CPU SHA-NI wins the hashing,
-so the gate here is correctness, not a 10x speed target; GPU time is informational.
+component (NTT dominates 96-322x, see README); the gate here is correctness, not a
+speed target; GPU time is informational.
 
 Run:
   cargo run --release --example dump_merkle -- 4096 64 artifacts/merkle_golden.bin
   JAX_PLATFORMS=cuda PYTHONPATH=python <venv> python/flock_zorch/testing/merkle_oracle_test.py
 """
-import os
 import sys
 import time
 from pathlib import Path
@@ -33,9 +32,6 @@ def _load_golden():
     return n_leaves, leaf_size, data, root
 
 
-_HOST = os.environ.get("FLOCK_HOST_SHA") == "1"  # gate the host SHA-NI path too
-
-
 def _hooks_on_commit_path() -> bool:
     """Pin the subclass seam: zorch's commit must route through the two batching
     hooks. They are underscore-private upstream, so a pin bump that renames or
@@ -56,9 +52,8 @@ def _hooks_on_commit_path() -> bool:
 
 def main() -> int:
     n_leaves, leaf_size, data, golden_root = _load_golden()
-    print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()}"
-          f"{' | HOST SHA-NI path' if _HOST else ''}")
-    got = merkle.merkle_root(data, use_host_sha=_HOST)
+    print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()}")
+    got = merkle.merkle_root(data)
     ok = np.array_equal(got, golden_root)
     print(f"Merkle root byte-identity vs flock ({n_leaves} x {leaf_size}B leaves): "
           f"{'PASS' if ok else 'FAIL'}")
@@ -67,16 +62,18 @@ def main() -> int:
         print(" want:", bytes(golden_root).hex())
         return 1
 
-    if not _HOST:
+    # disable_jit so `_root_dev` runs eagerly: the probe observes the Python
+    # routing hooks, which a persistent-compilation-cache hit would bypass.
+    with jax.disable_jit():
         hooks_ok = _hooks_on_commit_path()
-        print(f"batch hooks on zorch commit path: {'PASS' if hooks_ok else 'FAIL'}")
-        if not hooks_ok:
-            return 1
+    print(f"batch hooks on zorch commit path: {'PASS' if hooks_ok else 'FAIL'}")
+    if not hooks_ok:
+        return 1
 
     # Informational GPU timing (best-of-N).
     t0 = time.perf_counter()
     for _ in range(20):
-        merkle.merkle_root(data, use_host_sha=_HOST)
+        merkle.merkle_root(data)
     print(f"GPU merkle_root ({n_leaves} leaves): {(time.perf_counter()-t0)/20*1e3:.3f} ms "
           f"(informational; Merkle is <1% of PCS commit)")
     return 0

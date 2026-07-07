@@ -40,8 +40,8 @@ log "2. python venv -> $VENV_DIR (jax fork + zk_dtypes + zkx CUDA PJRT from the 
 "$VENV_DIR/bin/pip" install -q -r requirements.in --extra-index-url "$PYPI_INDEX"
 "$VENV_DIR/bin/python" -c 'import jax; print("  jax", jax.__version__)'
 
-log "3. build Rust against third_party/flock — cdylib (host SHA-NI Merkle FFI) + golden dumpers + CPU benches"
-cargo build --release             # lib: rlib + cdylib
+log "3. build Rust against third_party/flock — golden dumpers + CPU benches"
+cargo build --release             # lib (rlib)
 cargo build --release --examples  # dump_* (goldens) + bench_*_cpu (apple-to-apple CPU baselines)
 
 log "4. clmad GPU FFI (OPTIONAL — needs CUDA 13.x ptxas + sm_120; gates fall back to the software binary_field_ghash multiply)"

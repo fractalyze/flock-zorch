@@ -12,7 +12,6 @@ Run:
   JAX_PLATFORMS=cuda PYTHONPATH=python:/home/jooman/fractalyze/zorch <venv> \
       python/flock_zorch/testing/e2e_gpu_bench.py [m ...]
 """
-import os
 import sys
 
 import numpy as np
@@ -30,9 +29,6 @@ from flock_zorch.challenger import Challenger  # noqa: E402
 from flock_zorch.testing._util import best  # noqa: E402
 
 LIR, LBS = 1, 5
-# Route Merkle (commit root + BaseFold T2/epoch trees) through flock's host SHA-NI
-# instead of GPU SHA-256 — the "SHA-off-GPU" optimization (byte-identical; gated).
-HOST_SHA = os.environ.get("FLOCK_HOST_SHA") == "1"
 # flock CPU prove_fast (blake3_proof bench, this box): m -> ms.
 CPU_PROVE_FAST = {20: 19.94 * 4, 22: 19.94, 26: 218.73, 28: 940.01}  # m=20 approx scale
 
@@ -55,8 +51,8 @@ def bench(m):
     cw_np = np.frombuffer(
         np.ascontiguousarray(np.asarray(cw).T).tobytes(), np.uint64).reshape(n_pos_code * num_ntts, 2)
     leaves = cw_np.reshape(n_pos_code, num_ntts * 2).view(np.uint8)
-    t_merkle = best(lambda: merkle.merkle_tree(leaves, use_host_sha=HOST_SHA), n=2)
-    init_tree = merkle.merkle_tree(leaves, use_host_sha=HOST_SHA)
+    t_merkle = best(lambda: merkle.merkle_tree(leaves), n=2)
+    init_tree = merkle.merkle_tree(leaves)
 
     # --- zerocheck (random a/b/c bits) ---
     a = rng.integers(0, 2, size=1 << m, dtype=np.uint8)
@@ -80,8 +76,7 @@ def bench(m):
     x_outer = jnp.asarray(rng.integers(0, 2**64, size=(m - 6, 2), dtype=np.uint64))
     def open_fn():
         ch = Challenger(b"e2e")
-        return pcs_open.open(z_packed, codeword, init_tree, x_outer, k_code, LIR, LBS, ch,
-                             use_host_sha=HOST_SHA)
+        return pcs_open.open(z_packed, codeword, init_tree, x_outer, k_code, LIR, LBS, ch)
     t_open = best(open_fn, n=2)
 
     gpu = t_commit + t_merkle + t_zc + t_lc + t_open
@@ -95,8 +90,7 @@ def bench(m):
 
 def main():
     ms = [int(x) for x in sys.argv[1:]] or [22, 26]
-    print(f"device: {jax.devices()[0]} | mul: software"
-          f" | Merkle: {'HOST SHA-NI' if HOST_SHA else 'GPU SHA-256'}")
+    print(f"device: {jax.devices()[0]} | mul: software | Merkle: GPU SHA-256")
     for m in ms:
         bench(m)
 
