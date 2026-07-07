@@ -15,6 +15,7 @@ py_library(
         "@zorch//zorch/commit:merkle",
         "@zorch//zorch/hash:byte_hash",
         "@zorch//zorch/hash:sha256",
+        "@zorch//zorch/pcs:ring_switch",
         "@zorch//zorch/pcs/ligerito",
         requirement("jax"),
         requirement("numpy"),
