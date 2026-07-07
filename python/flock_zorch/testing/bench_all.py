@@ -1,7 +1,7 @@
 """Consolidated per-layer benchmark for flock-zorch — run each iteration to track
-improvement. Reports field-mul (current fori_loop vs the original unroll),
-additive-NTT, the sumcheck core (build_eq / round_pair / fold), and the XOR-add
-bandwidth ceiling on the active backend.
+improvement. Reports the additive-NTT, the sumcheck core (build_eq / round_pair /
+fold), and the XOR-add bandwidth ceiling on the active backend. Field multiplies
+now run on the native `binary_field_ghash` dtype (no software field to bench).
 """
 import gc
 import time
@@ -15,37 +15,7 @@ import jax.numpy as jnp  # noqa: E402
 from jax import lax  # noqa: E402
 from zorch.coding.additive_reed_solomon import AdditiveReedSolomon  # noqa: E402
 
-from flock_zorch import field, sumcheck  # noqa: E402
-
-U64 = jnp.uint64
-_ONE = U64(1)
-
-
-# --- iter-2 baseline: the original Python-unrolled clmul, kept for A/B only ---
-def _clmul64_unroll(a, b):
-    lo = jnp.zeros_like(a)
-    hi = jnp.zeros_like(a)
-    for i in range(64):
-        mask = U64(0) - ((a >> U64(i)) & _ONE)
-        lo = lo ^ (mask & (b << U64(i)))
-        if i != 0:
-            hi = hi ^ (mask & (b >> U64(64 - i)))
-    return lo, hi
-
-
-def _mul_unroll(a, b):
-    alo, ahi = a[..., 0], a[..., 1]
-    blo, bhi = b[..., 0], b[..., 1]
-    ll = _clmul64_unroll(alo, blo)
-    lh = _clmul64_unroll(alo, bhi)
-    hl = _clmul64_unroll(ahi, blo)
-    hh = _clmul64_unroll(ahi, bhi)
-    r0 = ll[0]
-    r1 = ll[1] ^ lh[0] ^ hl[0]
-    r2 = hh[0] ^ lh[1] ^ hl[1]
-    r3 = hh[1]
-    lo, hi = field._ghash_reduce(r0, r1, r2, r3)
-    return jnp.stack([lo, hi], axis=-1)
+from flock_zorch import sumcheck  # noqa: E402
 
 
 def _rand(n, seed):
@@ -68,24 +38,6 @@ def _oom(e):
 
 def main():
     print("device:", jax.devices()[0], "| backend:", jax.default_backend())
-    mul_loop = jax.jit(field.mul)
-    mul_unroll = jax.jit(_mul_unroll)
-    add = jax.jit(field.add)
-
-    print("\n[field mul]  G mul/s   (iter2 unroll  vs  iter3 fori_loop)")
-    for log in (20, 22, 23):
-        n = 1 << log
-        a, b = _rand(n, 1), _rand(n, 2)
-        line = f"  2^{log:<2}"
-        for name, fn in (("unroll", mul_unroll), ("loop", mul_loop)):
-            try:
-                dt = _bench(fn, (a, b), 30)
-                line += f"  {name}={n/dt/1e9:6.3f}"
-            except Exception as e:  # noqa: BLE001
-                line += f"  {name}={'OOM' if _oom(e) else type(e).__name__}"
-        print(line)
-        del a, b
-        gc.collect()
 
     print("\n[additive NTT]  AdditiveReedSolomon.encode (blowup=1, ghash)")
     for log in (16, 18, 20):
@@ -101,8 +53,7 @@ def main():
         del d
         gc.collect()
 
-    sc_tag = "software"
-    print(f"\n[sumcheck core]  mul={sc_tag}")
+    print("\n[sumcheck core]")
     for log in (16, 18, 20):
         n = 1 << log
         r = _rand(log, 5)
@@ -119,6 +70,7 @@ def main():
         gc.collect()
 
     print("\n[XOR add]  bandwidth ceiling")
+    add = jax.jit(lambda a, b: a ^ b)
     n = 1 << 24
     a, b = _rand(n, 1), _rand(n, 2)
     dt = _bench(add, (a, b), 50)

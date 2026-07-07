@@ -44,20 +44,20 @@ log "3. build Rust against third_party/flock — cdylib (host SHA-NI Merkle FFI)
 cargo build --release             # lib: rlib + cdylib
 cargo build --release --examples  # dump_* (goldens) + bench_*_cpu (apple-to-apple CPU baselines)
 
-log "4. clmad GPU FFI (OPTIONAL — needs CUDA 13.x ptxas + sm_120; gates fall back to software field.mul)"
+log "4. clmad GPU FFI (OPTIONAL — needs CUDA 13.x ptxas + sm_120; gates fall back to the software binary_field_ghash multiply)"
 if [ -x "${PTXAS:-$HOME/.local/cuda13/bin/ptxas}" ]; then
   echo "  ptxas found — building the clmad cubin + handler (best-effort)"
-  VENV="$VENV_DIR/bin/python" bash optim/clmad/build_ffi.sh || echo "  WARN: clmad build failed; gates/benches use software field.mul (slower, byte-identical)"
+  VENV="$VENV_DIR/bin/python" bash optim/clmad/build_ffi.sh || echo "  WARN: clmad build failed; gates/benches use the software binary_field_ghash multiply (slower, byte-identical)"
 else
   echo "  skip: no CUDA-13.x ptxas. clmad is the GPU fast path; without it everything still runs"
-  echo "        (software field.mul, byte-identical). See optim/clmad/README.md + docs/SETUP.md."
+  echo "        (software binary_field_ghash multiply, byte-identical). See optim/clmad/README.md + docs/SETUP.md."
 fi
 
 log "5. regenerate the core golden fixtures from the pinned flock"
 scripts/dump_goldens.sh core
 
 log "6. smoke gates — byte-identity end-to-end (CPU; bazel manages the pip deps + the git_override'd zorch)"
-bazel test //python:field_oracle_test //python:e2e_oracle_test
+bazel test //python:sumcheck_oracle_test //python:e2e_oracle_test
 
 log "DONE — box is set up and byte-identity is green."
 cat <<EOF
