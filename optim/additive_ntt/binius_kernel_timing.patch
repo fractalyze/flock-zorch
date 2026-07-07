@@ -1,0 +1,74 @@
+diff --git a/src/ulvt/ntt/additive_ntt.cuh b/src/ulvt/ntt/additive_ntt.cuh
+index 8a34f02..650eead 100644
+--- a/src/ulvt/ntt/additive_ntt.cuh
++++ b/src/ulvt/ntt/additive_ntt.cuh
+@@ -175,6 +175,8 @@ static constexpr void print_kern_launch(dim3 dim_grids, dim3 dim_blocks, int ker
+ template <typename T, typename P>
+ class AdditiveNTT {
+ public:
++	float last_kernel_ms = 0.0f;  // bench: kernel-only time (excl. H2D/D2H) of the last apply()
++
+ 	AdditiveNTT(const AdditiveNTTConf<T, P>& nttconf) : ntt_conf(nttconf) {
+ 		const int input_size = 1 << ntt_conf.log_h;
+ 		const int output_size = 1 << (ntt_conf.log_h + ntt_conf.log_rate);
+@@ -230,6 +232,10 @@ public:
+ 		kernel_params.log_rate = log_rate;
+ 
+ 		auto [kernel_launch_conf, num_kerns] = ntt_conf.get_kernel_launch_confs();
++		cudaEvent_t _bench_start, _bench_stop;
++		cudaEventCreate(&_bench_start);
++		cudaEventCreate(&_bench_stop);
++		cudaEventRecord(_bench_start);
+ 		for (int kern = num_kerns - 1; kern >= 0; kern--) {
+ 			// int
+ 			kernel_params.start_stage = kern * max_stages_per_kernel;
+@@ -245,6 +251,11 @@ public:
+ #endif  // DEBUG
+ 			additive_ntt_kernel<T, P><<<kernel_launch_conf[kern][1], kernel_launch_conf[kern][0]>>>(kernel_params);
+ 		}
++		cudaEventRecord(_bench_stop);
++		cudaEventSynchronize(_bench_stop);
++		cudaEventElapsedTime(&last_kernel_ms, _bench_start, _bench_stop);
++		cudaEventDestroy(_bench_start);
++		cudaEventDestroy(_bench_stop);
+ 
+ 		// At the end copy back the data from the output into a single contiguous memory
+ 		output.order = DataOrder::IN_ORDER;
+diff --git a/src/ulvt/ntt/tests/test_ntt.cu b/src/ulvt/ntt/tests/test_ntt.cu
+index eed3030..a3930a3 100644
+--- a/src/ulvt/ntt/tests/test_ntt.cu
++++ b/src/ulvt/ntt/tests/test_ntt.cu
+@@ -232,3 +232,33 @@ TEST_CASE("Additive NTT r 0 large inputs", "[ntt][additive][0][slow]") {
+ 	REQUIRE(run_and_check_additive_ntt(29, 0));
+ 	REQUIRE(run_and_check_additive_ntt(30, 0));
+ }
++
++// Kernel-only throughput sweep (data device-resident, H2D/D2H excluded) for the
++// #23 head-to-head vs the compiler's fused lax.ntt on binary_field_t5. Hidden by
++// default ([.]); run with:  ./ntt_tests "[bench]"
++TEST_CASE("Additive NTT kernel timing sweep", "[.][bench]") {
++	const int log_rate = 0;
++	const int iters = 50;
++	std::cout << "log_h,kernel_ms,elem_per_s\n";
++	for (int log_h = 10; log_h <= 23; log_h++) {
++		std::mt19937 gen(0xdeadbeef + log_h + log_rate);
++		size_t inp_size = 1 << log_h;
++		size_t out_size = 1 << (log_h + log_rate);
++		NTTData<uint32_t> ntt_inp(DataOrder::IN_ORDER, inp_size);
++		for (size_t i = 0; i < inp_size; i++) ntt_inp.data[i] = gen();
++
++		AdditiveNTTConf<uint32_t, FanPaarTowerField<5>> conf(log_h, log_rate);
++		AdditiveNTT<uint32_t, FanPaarTowerField<5>> ntt(conf);
++		NTTData<uint32_t> ntt_out(out_size);
++
++		ntt.apply(ntt_inp, ntt_out);  // warmup (compile/caches)
++		double acc_ms = 0.0;
++		for (int it = 0; it < iters; it++) {
++			ntt.apply(ntt_inp, ntt_out);
++			acc_ms += ntt.last_kernel_ms;
++		}
++		double ms = acc_ms / iters;
++		double eps = (double)inp_size / (ms / 1e3);
++		printf("%d,%.5f,%.4e\n", log_h, ms, eps);
++	}
++}
