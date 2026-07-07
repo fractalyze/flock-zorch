@@ -25,3 +25,10 @@ A layer is not "done" until its `*_oracle_test` is green on GPU. Fixtures are
 dumped from flock-core itself (`examples/dump_*.rs`), so the gate transitively
 pins us to upstream. Core gates: `bazel test //python:all`; the heavy/GPU gates
 run on the venv (`docs/SETUP.md`).
+
+The `.bin` goldens are the source of truth; the jax ports under
+`python/flock_zorch/` are scaffolding. When a layer migrates onto a zorch
+primitive (e.g. the NTT/FRI fold onto `coding.AdditiveReedSolomon`), re-anchor
+its gate to the golden directly and delete the flock port + its now-redundant
+`*_oracle_test` — keep the byte-anchor, drop the dead code. Don't keep a python
+port alive only to diff a zorch primitive against it.
