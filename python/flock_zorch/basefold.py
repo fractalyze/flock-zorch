@@ -35,11 +35,13 @@ def _round_message(a, b, mul):
     """Round message (u_0, u_2) = (Σ a_e·b_e, Σ (a_e+a_o)·(b_e+b_o)) over the
     even/odd split (flock's round-0 prime / fused next-round message). Returns
     jnp (device) — the caller converts to np for the transcript/proof."""
-    ae, ao = a[0::2], a[1::2]
-    be, bo = b[0::2], b[1::2]
-    u0 = field.sum(mul(ae, be))
-    u2 = field.sum(mul(field.add(ae, ao), field.add(be, bo)))
-    return u0, u2
+    del mul
+    ag, bg = field.to_ghash(a), field.to_ghash(b)
+    ae, ao = ag[0::2], ag[1::2]
+    be, bo = bg[0::2], bg[1::2]
+    u0 = jnp.sum(ae * be)
+    u2 = jnp.sum((ae + ao) * (be + bo))
+    return field.from_ghash(u0), field.from_ghash(u2)
 
 
 # Per-round field ops jitted (cache per mul) so each round is ONE fused kernel,
