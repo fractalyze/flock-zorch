@@ -178,8 +178,7 @@ def run(byte_hash=None):
 
 
 def main() -> int:
-    name = "software"
-    print(f"device {jax.devices()[0]} | mul {name}")
+    print(f"device {jax.devices()[0]}")
     m, results = run()
     allok = True
     for nm, ok in results:

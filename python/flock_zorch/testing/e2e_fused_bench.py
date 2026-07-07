@@ -80,7 +80,7 @@ def bench(m, n=3):
 def main():
     ms = [int(x) for x in sys.argv[1:]] or [26]
     n = int(os.environ.get("FLOCK_BENCH_N", "3"))
-    print(f"device {jax.devices()[0]} | mul software | Merkle GPU SHA-256")
+    print(f"device {jax.devices()[0]} | Merkle GPU SHA-256")
     sanity_m13()
     for m in ms:
         cpu = CPU_IDENTITY.get(m)

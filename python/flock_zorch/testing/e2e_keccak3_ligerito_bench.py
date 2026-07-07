@@ -21,7 +21,7 @@ def main():
     circ = Keccak3LincheckCircuit()
     a_bits, b_bits, c_bits = _unpack(g["a"], m), _unpack(g["b"], m), _unpack(g["z"], m)
     z, stmt = g["z"], g["stmt"]
-    print(f"device {jax.devices()[0]} | mul software | keccak3-ligerito m={m}")
+    print(f"device {jax.devices()[0]} | keccak3-ligerito m={m}")
 
     def prove_once():
         root, codeword, tree = pcs_commit.commit(z, m, lir, lbs)
