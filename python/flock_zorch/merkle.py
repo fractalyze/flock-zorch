@@ -159,28 +159,41 @@ def merkle_tree(leaves, use_host_sha: bool = False) -> np.ndarray:
     return np.asarray(_tree_dev(jnp.asarray(leaves, dtype=jnp.uint8)))
 
 
+def _octopus_levels(positions, num_leaves: int):
+    """flock's octopus dedup schedule — the shared walk behind all three octopus
+    assemblers (`merkle_multi_proof`, `multi_proof_to_paths`, `paths_to_multi_proof`).
+
+    Yields, per tree level (leaves→root), the sorted-left-to-right list of active
+    groups `(p, paired)`: `p` is the group's lower active node index and `paired`
+    is True when its sibling `p ^ 1` is also active (recomputed from below, no proof
+    element) or False when the sibling is a distinct emitted digest. The active set
+    halves each level (`p >> 1`, deduped); callers attach the digest source (a `tree`
+    slice or a path entry) and emit only on `not paired`."""
+    active = sorted({int(p) for p in positions})
+    for _level in range(num_leaves.bit_length() - 1):
+        groups, i, n = [], 0, len(active)
+        while i < n:
+            p = active[i]
+            paired = i + 1 < n and active[i + 1] == (p ^ 1)
+            groups.append((p, paired))
+            i += 2 if paired else 1
+        yield groups
+        active = sorted({p >> 1 for p in active})
+
+
 def merkle_multi_proof(tree: np.ndarray, num_leaves: int, positions) -> np.ndarray:
     """Octopus multi-proof, byte-identical to flock `merkle::merkle_multi_proof`.
 
     Emits, per level (leaves→root), the sibling `tree[level_start + (p^1)]` of each
-    active node whose sibling is NOT itself active — sorted+deduped positions,
-    bottom-up, left-to-right. Returns uint8 [num_siblings, 32]."""
+    active node whose sibling is NOT itself active — the shared `_octopus_levels`
+    dedup schedule sourced from the flat tree. Returns uint8 [num_siblings, 32]."""
     if len(positions) == 0 or num_leaves == 1:
         return np.zeros((0, 32), dtype=np.uint8)
-    active = sorted(set(int(p) for p in positions))
-    proof = []
-    level_start, level_len = 0, num_leaves
-    while level_len > 1:
-        nxt, i = [], 0
-        while i < len(active):
-            p = active[i]
-            if i + 1 < len(active) and active[i + 1] == (p ^ 1):
-                i += 2                                   # sibling also active → no emit
-            else:
+    proof, level_start, level_len = [], 0, num_leaves
+    for groups in _octopus_levels(positions, num_leaves):
+        for p, paired in groups:
+            if not paired:
                 proof.append(tree[level_start + (p ^ 1)])
-                i += 1
-            nxt.append(p >> 1)
-        active = nxt
         level_start += level_len
         level_len >>= 1
     return np.stack(proof) if proof else np.zeros((0, 32), dtype=np.uint8)
@@ -220,29 +233,22 @@ def multi_proof_to_paths(proof: np.ndarray, num_leaves: int, positions,
     for qi, p in enumerate(positions):
         leaf_hash.setdefault(p, _sha(leaf_bytes[qi].tobytes()))
 
-    active = sorted(leaf_hash)
     cur = dict(leaf_hash)                 # node index -> running digest at this level
     sibling_at_level: list[dict] = []     # level k: node index -> its sibling digest
     pit = 0
-    for _level in range(depth):
-        sib, parents, i = {}, {}, 0
-        while i < len(active):
-            p = active[i]
-            if i + 1 < len(active) and active[i + 1] == (p ^ 1):
-                s = cur[p ^ 1]
+    for groups in _octopus_levels(positions, num_leaves):
+        sib, parents = {}, {}
+        for p, paired in groups:
+            if paired:                    # sibling co-active → recomputed from below
                 sib[p] = cur[p ^ 1]
                 sib[p ^ 1] = cur[p]
-                i += 2
-            else:
-                s = proof[pit]; pit += 1
-                sib[p] = np.asarray(s, np.uint8)
-                i += 1
+            else:                         # sibling inactive → next proof element
+                sib[p] = np.asarray(proof[pit], np.uint8); pit += 1
             lo, hi = (cur[p], sib[p]) if p % 2 == 0 else (sib[p], cur[p])
             lo = lo if isinstance(lo, bytes) else lo.tobytes()
             hi = hi if isinstance(hi, bytes) else hi.tobytes()
             parents[p >> 1] = _sha(lo, hi)
         sibling_at_level.append(sib)
-        active = sorted(parents)
         cur = parents
 
     paths = np.zeros((q, depth, 32), dtype=np.uint8)
@@ -251,3 +257,35 @@ def multi_proof_to_paths(proof: np.ndarray, num_leaves: int, positions,
             s = sibling_at_level[k][p >> k]
             paths[qi, k] = np.frombuffer(s, np.uint8) if isinstance(s, bytes) else s
     return paths
+
+
+def paths_to_multi_proof(paths: np.ndarray, num_leaves: int, positions) -> np.ndarray:
+    """Inverse of `multi_proof_to_paths`: assemble flock's octopus multi-proof from a
+    zorch `Opening`'s per-query authentication paths + the sampled query positions,
+    byte-identical to `merkle_multi_proof` (gated by the ligerito oracle tests'
+    `merkle_proof` fields).
+
+    The deduplicated octopus layout is positional (which siblings are emitted depends
+    on which nodes are co-active), so it is not recoverable from the paths' shape
+    alone — but every sibling it emits IS one path entry: query `qi` at leaf
+    `positions[qi]` carries, at level L, `paths[qi, L]` = the digest of node
+    `(positions[qi] >> L) ^ 1`, exactly the sibling flock emits for an active node
+    whose sibling is not itself active. So this walks the shared `_octopus_levels`
+    schedule, sourcing each emission from the paths — no tree rebuild.
+
+    `paths`: uint8 [Q, depth, 32] (query-major, `np.stack(opening.path, axis=1)`);
+    `positions`: length-Q query leaf indices (dups allowed). Returns uint8
+    [num_siblings, 32]."""
+    positions = [int(p) for p in positions]
+    if not positions or num_leaves == 1:
+        return np.zeros((0, 32), np.uint8)
+    paths = np.asarray(paths)
+    proof = []
+    for level, groups in enumerate(_octopus_levels(positions, num_leaves)):
+        node_to_qi = {}
+        for qi, leaf in enumerate(positions):
+            node_to_qi.setdefault(leaf >> level, qi)  # any query passing through this node
+        for p, paired in groups:
+            if not paired:
+                proof.append(paths[node_to_qi[p], level])  # digest of node p^1
+    return np.stack(proof) if proof else np.zeros((0, 32), np.uint8)
