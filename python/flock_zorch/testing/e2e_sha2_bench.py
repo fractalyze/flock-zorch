@@ -26,13 +26,11 @@ jax.config.update("jax_enable_x64", True)
 from flock_zorch import field, pcs_commit, zerocheck, lincheck, prover  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 from flock_zorch.testing.sha2_oracle_test import load, _unpack  # noqa: E402
-from flock_zorch.testing._util import best, select_mul  # noqa: E402
+from flock_zorch.testing._util import best  # noqa: E402
 
 ART = Path(__file__).resolve().parents[3] / "artifacts"
 # flock BaseFold prove on the same instance (bench_sha2_cpu.rs), x86 scalar.
 CPU_SHA2 = {18: None, 21: None}  # filled in by the runner from bench_sha2_cpu output
-
-MUL = select_mul()
 
 
 def main():
@@ -43,7 +41,7 @@ def main():
     meta = g["meta"]; m = meta["m"]; lir = meta["lir"]; lbs = meta["lbs"]
     k_log = meta["k_log"]; k_skip = meta["k_skip"]; ir = k_log - k_skip
     k_code = (m - 7 - lbs) + lir
-    print(f"device {jax.devices()[0]} | mul {'clmad' if MUL is not field.mul else 'software'} | sha2 m={m}")
+    print(f"device {jax.devices()[0]} | mul software | sha2 m={m}")
 
     # setup (host witness-prep / circuit build — not the GPU prover, not timed)
     csc = lincheck.CscCircuit(g["a0_rows"], g["b0_rows"], 1 << k_log, const_pin=meta["const_pin"])
@@ -51,18 +49,18 @@ def main():
     z = g["z"]; stmt = g["stmt"]
 
     def prove_once():
-        root, codeword, tree = pcs_commit.commit(z, m, lir, lbs, mul=MUL, use_host_sha=True)
+        root, codeword, tree = pcs_commit.commit(z, m, lir, lbs, mul=field.mul, use_host_sha=True)
         ch = Challenger(b"flock-sha2-v0")
         prover.bind_statement(ch, stmt, root)
-        zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, mul=MUL, ch=ch)
+        zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, mul=field.mul, ch=ch)
         x_ab = {"z_skip": zc["z"], "x_inner_rest": zc["mlv_challenges"][:ir],
                 "x_outer": zc["mlv_challenges"][ir:]}
         _r, _zp, lc_claim, _zv = lincheck.prove(g["zlc"], None, None, x_ab, m, k_log, k_skip,
-                                                mul=MUL, ch=ch, capture=True, circuit=csc)
+                                                mul=field.mul, ch=ch, capture=True, circuit=csc)
         ab_full = np.concatenate([lc_claim["r_inner_rest"], x_ab["x_outer"]], axis=0)
         c_full = np.concatenate([zc["r_rest"][:ir], zc["r_rest"][ir:]], axis=0)
         return prover.open_batch(z, codeword, tree, [ab_full, c_full], k_code, lir, lbs, ch,
-                                 mul=MUL, use_host_sha=True)
+                                 mul=field.mul, use_host_sha=True)
 
     t = best(prove_once, n=3)
     sp = f"{cpu/t:.1f}x vs same-instance flock BaseFold CPU {cpu:.0f}ms" if cpu else "(pass CPU ms as argv[1])"

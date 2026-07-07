@@ -20,11 +20,6 @@ import jax.numpy as jnp  # noqa: E402
 
 from flock_zorch import field, sumcheck  # noqa: E402
 
-try:
-    from flock_zorch import field_clmad  # noqa: E402
-except Exception:  # pragma: no cover
-    field_clmad = None
-
 _MAGIC = b"FLKSUM01"
 
 
@@ -131,8 +126,3 @@ if __name__ == "__main__":
     print(f"sumcheck byte-match (software mul): PASS on {jax.default_backend()} | "
           f"build_eq n={sizes['eq']} round_pair log_n={sizes['round_pair']} "
           f"fold log_n={sizes['fold']}")
-    if field_clmad is not None and field_clmad.available():
-        run(mul=field_clmad.mul)
-        print(f"sumcheck byte-match (clmad FFI):    PASS on {jax.default_backend()}")
-    else:
-        print("clmad FFI unavailable — skipped the accelerated byte-check.")

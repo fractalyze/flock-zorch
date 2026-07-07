@@ -115,7 +115,7 @@ def mul(a, b):
     a, b: uint64 [..., 2] (lo, hi), broadcastable on the leading dims (e.g. a
     scalar [2] against a [N, 2] table). Returns the broadcast shape. Both operands
     are broadcast to a common shape first so the bit-serial `_clmul64` carry stays
-    consistent regardless of operand order — same contract as `field_clmad.mul`.
+    consistent regardless of operand order.
     """
     shape = jnp.broadcast_shapes(a.shape, b.shape)
     a = jnp.broadcast_to(a, shape)

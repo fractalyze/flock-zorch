@@ -4,8 +4,8 @@ flock's `zerocheck::{univariate_skip,multilinear}` primitives.
 These are the reusable kernels shared by BOTH sumchecks in flock's PIOP
 (zerocheck and lincheck): the eq-table expansion, the multilinear fold, and the
 per-round prover message. They are pure GF(2^128) arithmetic over uint64 lanes,
-so they inherit the clmad FFI on GPU (pass `mul=field_clmad.mul`) and are fully
-data-parallel — the multilinear sumcheck is the prover's biggest GPU win.
+so they are fully data-parallel — the multilinear sumcheck is the prover's
+biggest GPU win.
 
 Conventions match flock exactly:
   * Field add is XOR; `1 + r` is `r ^ ONE` (ONE = [1, 0] in [lo, hi] lanes).

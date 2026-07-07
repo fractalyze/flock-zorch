@@ -77,12 +77,6 @@ def main() -> int:
         print("no lincheck golden — run: cargo run --release --example dump_lincheck")
         return 1
     muls = [("software", field.mul)]
-    try:
-        from flock_zorch import field_clmad
-        if field_clmad.available():
-            muls.append(("clmad", field_clmad.mul))
-    except Exception:  # noqa: BLE001
-        pass
     print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()}")
     for name, mul in muls:
         cfgs = [_check(p, mul, name) for p in paths]

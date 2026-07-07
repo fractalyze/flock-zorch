@@ -23,12 +23,6 @@ from flock_zorch.challenger import Challenger  # noqa: E402
 
 ART = Path(__file__).resolve().parents[3] / "artifacts"
 
-try:
-    from flock_zorch import field_clmad
-    MUL = field_clmad.mul if field_clmad.available() else field.mul
-except Exception:  # noqa: BLE001
-    MUL = field.mul
-
 
 class R:
     def __init__(self, buf): self.b = buf; self.o = 0
@@ -184,9 +178,9 @@ def run(mul, byte_hash=None):
 
 
 def main() -> int:
-    name = "clmad" if MUL is not field.mul else "software"
+    name = "software"
     print(f"device {jax.devices()[0]} | mul {name}")
-    m, results = run(MUL)
+    m, results = run(field.mul)
     allok = True
     for nm, ok in results:
         print(f"  {'PASS' if ok else 'FAIL'}  {nm}")

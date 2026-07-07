@@ -32,7 +32,7 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp  # noqa: E402
 
-from flock_zorch import field, field_clmad, sumcheck  # noqa: E402
+from flock_zorch import field, sumcheck  # noqa: E402
 from flock_zorch.testing import sumcheck_oracle_test as oracle  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[3]
@@ -74,15 +74,13 @@ def _gpu_eq_ms(fn, r) -> float:
 
 
 def main() -> int:
-    use_clmad = field_clmad.available()
-    mul = field_clmad.mul if use_clmad else field.mul
     print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()} | "
-          f"mul: {'clmad (FFI)' if use_clmad else 'software loop'}")
+          "mul: software loop")
     print("CPU baseline: unmodified flock build_eq (x86 scalar; flock's NEON is "
           "aarch64-gated — see flock-baseline-needs-macbook)\n")
 
     # 1. byte-identity gate (reuse the oracle on the dumped fixture).
-    oracle.run(mul=mul)
+    oracle.run(mul=field.mul)
     print("byte-identity vs flock (build_eq / round_pair / fold_single): PASS")
 
     # 2. speed.
@@ -90,7 +88,7 @@ def main() -> int:
     worst = float("inf")
     for n in SIZES:
         r = jnp.asarray(np.random.default_rng(7).integers(0, 2**64, size=(n, 2), dtype=np.uint64))
-        fn = jax.jit(lambda rr: sumcheck.build_eq(rr, mul=mul))
+        fn = jax.jit(lambda rr: sumcheck.build_eq(rr, mul=field.mul))
         gpu = _gpu_eq_ms(fn, r)
         cpu = _cpu_eq_ms(n)
         spd = cpu / gpu

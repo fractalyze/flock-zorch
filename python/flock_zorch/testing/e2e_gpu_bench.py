@@ -27,9 +27,7 @@ from zorch.coding.additive_reed_solomon import AdditiveReedSolomon  # noqa: E402
 from flock_zorch import (field, pcs_commit, zerocheck,  # noqa: E402
                          lincheck, pcs_open, merkle)
 from flock_zorch.challenger import Challenger  # noqa: E402
-from flock_zorch.testing._util import best, select_mul  # noqa: E402
-
-MUL = select_mul()
+from flock_zorch.testing._util import best  # noqa: E402
 
 LIR, LBS = 1, 5
 # Route Merkle (commit root + BaseFold T2/epoch trees) through flock's host SHA-NI
@@ -64,7 +62,7 @@ def bench(m):
     a = rng.integers(0, 2, size=1 << m, dtype=np.uint8)
     b = rng.integers(0, 2, size=1 << m, dtype=np.uint8)
     c = rng.integers(0, 2, size=1 << m, dtype=np.uint8)
-    t_zc = best(lambda: zerocheck.prove_packed(a, b, c, m, b"e2e", mul=MUL), n=3)
+    t_zc = best(lambda: zerocheck.prove_packed(a, b, c, m, b"e2e", mul=field.mul), n=3)
 
     # --- lincheck (k_log/k_skip like flock; sparse A0/B0) ---
     k_log, k_skip = 7, 6
@@ -76,13 +74,13 @@ def bench(m):
     x_ab = {"z_skip": rng.integers(0, 2**64, size=2, dtype=np.uint64),
             "x_inner_rest": rng.integers(0, 2**64, size=(k_log - k_skip, 2), dtype=np.uint64),
             "x_outer": rng.integers(0, 2**64, size=(n_log, 2), dtype=np.uint64)}
-    t_lc = best(lambda: lincheck.prove(zp_lin, A, B, x_ab, m, k_log, k_skip, mul=MUL), n=3)
+    t_lc = best(lambda: lincheck.prove(zp_lin, A, B, x_ab, m, k_log, k_skip, mul=field.mul), n=3)
 
     # --- pcs.open ---
     x_outer = jnp.asarray(rng.integers(0, 2**64, size=(m - 6, 2), dtype=np.uint64))
     def open_fn():
         ch = Challenger(b"e2e")
-        return pcs_open.open(z_packed, codeword, init_tree, x_outer, k_code, LIR, LBS, ch, mul=MUL,
+        return pcs_open.open(z_packed, codeword, init_tree, x_outer, k_code, LIR, LBS, ch, mul=field.mul,
                              use_host_sha=HOST_SHA)
     t_open = best(open_fn, n=2)
 
@@ -97,7 +95,7 @@ def bench(m):
 
 def main():
     ms = [int(x) for x in sys.argv[1:]] or [22, 26]
-    print(f"device: {jax.devices()[0]} | mul: {'clmad' if MUL is not field.mul else 'software'}"
+    print(f"device: {jax.devices()[0]} | mul: software"
           f" | Merkle: {'HOST SHA-NI' if HOST_SHA else 'GPU SHA-256'}")
     for m in ms:
         bench(m)
