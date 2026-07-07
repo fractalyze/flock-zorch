@@ -27,8 +27,15 @@ from jax import lax
 from zorch.coding.additive_reed_solomon import AdditiveReedSolomon
 
 from flock_zorch import field, sumcheck, merkle, fri
+from flock_zorch import _hostfield as hf
 
 LABEL = b"flock-basefold-v0"
+
+
+def _hf_mul(a, b):
+    """Host GF(2^128) multiply on a uint64[2] (lo, hi) scalar pair — for the
+    verify sumcheck replay, which runs on host numpy scalars (not device)."""
+    return field._to_lohi(hf.mul(field._to_int(a), field._to_int(b)))
 
 
 def _round_message(a, b, mul):
@@ -294,9 +301,9 @@ def verify(target, proof, initial_codeword_root, k_code, log_inv_rate,
         r = np.asarray(ch.sample_f128(), np.uint64)
         challenges.append(r)
         # running_target = u0 + r·(running_target + u2) + r²·u2   (flock).
-        u1 = field.add(running_target, u2)
-        rr = mul(r, r)
-        running_target = field.add(field.add(u0, mul(r, u1)), mul(rr, u2))
+        u1 = running_target ^ u2
+        rr = _hf_mul(r, r)
+        running_target = (u0 ^ _hf_mul(r, u1)) ^ _hf_mul(rr, u2)
 
         if rnd + 1 == log_batch_size and arities:
             ch.observe_f128(_root_f128(np.asarray(proof["post_row_batch_commit"])))
@@ -313,7 +320,7 @@ def verify(target, proof, initial_codeword_root, k_code, log_inv_rate,
     # ---- final sumcheck + codeword-constancy checks ----
     final_a = np.asarray(proof["final_a"], np.uint64)
     final_b = np.asarray(proof["final_b"], np.uint64)
-    if not np.array_equal(mul(final_a, final_b), running_target):
+    if not np.array_equal(_hf_mul(final_a, final_b), running_target):
         return reject("SumcheckFinalMismatch", challenges)
     final_cw = np.asarray(proof["final_codeword"], np.uint64)
     if final_cw.shape[0] != (1 << log_inv_rate):
