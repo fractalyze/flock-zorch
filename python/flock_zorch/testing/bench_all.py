@@ -17,11 +17,6 @@ from zorch.coding.additive_reed_solomon import AdditiveReedSolomon  # noqa: E402
 
 from flock_zorch import field, sumcheck  # noqa: E402
 
-try:
-    from flock_zorch import field_clmad  # noqa: E402
-except Exception:  # pragma: no cover
-    field_clmad = None
-
 U64 = jnp.uint64
 _ONE = U64(1)
 
@@ -106,8 +101,8 @@ def main():
         del d
         gc.collect()
 
-    sc_mul = field_clmad.mul if (field_clmad and field_clmad.available()) else field.mul
-    sc_tag = "clmad" if sc_mul is not field.mul else "software"
+    sc_mul = field.mul
+    sc_tag = "software"
     print(f"\n[sumcheck core]  mul={sc_tag}")
     for log in (16, 18, 20):
         n = 1 << log

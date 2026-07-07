@@ -40,12 +40,6 @@ def _check(mul, name):
 def main() -> int:
     print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()}")
     ok = _check(field.mul, "software")
-    try:
-        from flock_zorch import field_clmad
-        if field_clmad.available():
-            ok = _check(field_clmad.mul, "clmad") and ok
-    except Exception:  # noqa: BLE001
-        pass
     return 0 if ok else 1
 
 

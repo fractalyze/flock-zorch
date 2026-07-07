@@ -23,11 +23,7 @@ from flock_zorch.challenger import Challenger  # noqa: E402
 
 ART = Path(__file__).resolve().parents[3] / "artifacts"
 
-try:
-    from flock_zorch import field_clmad
-    MUL = field_clmad.mul if field_clmad.available() else field.mul
-except Exception:  # noqa: BLE001
-    MUL = field.mul
+MUL = field.mul
 
 
 class R:

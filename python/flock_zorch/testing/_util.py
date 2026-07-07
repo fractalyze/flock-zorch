@@ -15,13 +15,8 @@ from flock_zorch import field
 
 
 def select_mul():
-    """Fastest available GF(2^128) multiply: the clmad FFI cubin if it built,
-    else the byte-identical software `field.mul`."""
-    try:
-        from flock_zorch import field_clmad
-        return field_clmad.mul if field_clmad.available() else field.mul
-    except Exception:  # noqa: BLE001  (clmad optional; software path is byte-identical)
-        return field.mul
+    """The software GF(2^128) multiply `field.mul`."""
+    return field.mul
 
 
 def best(fn, n=3):

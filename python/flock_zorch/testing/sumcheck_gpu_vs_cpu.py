@@ -32,7 +32,7 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp  # noqa: E402
 
-from flock_zorch import field, field_clmad, sumcheck  # noqa: E402
+from flock_zorch import field, sumcheck  # noqa: E402
 from flock_zorch.testing import sumcheck_oracle_test as oracle  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[3]
@@ -74,10 +74,9 @@ def _gpu_eq_ms(fn, r) -> float:
 
 
 def main() -> int:
-    use_clmad = field_clmad.available()
-    mul = field_clmad.mul if use_clmad else field.mul
+    mul = field.mul
     print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()} | "
-          f"mul: {'clmad (FFI)' if use_clmad else 'software loop'}")
+          "mul: software loop")
     print("CPU baseline: unmodified flock build_eq (x86 scalar; flock's NEON is "
           "aarch64-gated — see flock-baseline-needs-macbook)\n")
 

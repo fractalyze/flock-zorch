@@ -19,13 +19,8 @@ from flock_zorch.field import _to_int, _to_lohi
 _ONE = np.array([1, 0], dtype=np.uint64)
 
 # The small fixed-size Lagrange/inverse helpers here are deeply sequential (254 muls
-# for the Fermat inverse), so the software fori_loop mul is slow. Route them through
-# clmad when available (one hardware carryless-mul per step).
-try:
-    from flock_zorch import field_clmad as _fc
-    _LMUL = _fc.mul if _fc.available() else field.mul
-except Exception:  # noqa: BLE001
-    _LMUL = field.mul
+# for the Fermat inverse). They use the software `field.mul`.
+_LMUL = field.mul
 
 
 def _phi_int(v: int) -> int:

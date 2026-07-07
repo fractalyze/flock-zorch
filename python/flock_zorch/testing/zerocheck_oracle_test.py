@@ -21,11 +21,6 @@ jax.config.update("jax_enable_x64", True)
 
 from flock_zorch import field, zerocheck  # noqa: E402
 
-try:
-    from flock_zorch import field_clmad  # noqa: E402
-except Exception:  # pragma: no cover
-    field_clmad = None
-
 _MAGIC = b"FLKZC001"
 K_SKIP = 6
 DOMAIN = b"flock-zc-oracle"
@@ -119,7 +114,3 @@ def test_zerocheck_oracle():
 if __name__ == "__main__":
     cfgs = run(mul=field.mul)
     print(f"zerocheck prove_packed byte-match vs flock (software mul): PASS (m={cfgs})")
-    # clmad is a CUDA-only FFI handler; only exercise it on the GPU backend.
-    if field_clmad is not None and field_clmad.available() and jax.default_backend() == "gpu":
-        run(mul=field_clmad.mul)
-        print(f"zerocheck prove_packed byte-match vs flock (clmad FFI):    PASS (m={cfgs})")
