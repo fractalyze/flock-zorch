@@ -26,21 +26,16 @@ import jax
 
 jax.config.update("jax_enable_x64", True)  # uint64 field lanes
 import jax.numpy as jnp  # noqa: E402
+from jax import lax  # noqa: E402
+from zorch.coding.additive_reed_solomon import AdditiveReedSolomon  # noqa: E402
 
-from flock_zorch import field, ntt as ntt_mod, pcs_commit  # noqa: E402
+from flock_zorch import pcs_commit  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[3]
 ART = REPO / "artifacts"
 GPU_ITERS = 50
 TARGET = 10.0
 _HOST = os.environ.get("FLOCK_HOST_SHA") == "1"  # gate the host SHA-NI Merkle path too
-
-try:
-    from flock_zorch import field_clmad
-    _MUL = field_clmad.mul if field_clmad.available() else field.mul
-    _MULNAME = "clmad" if field_clmad.available() else "software"
-except Exception:  # noqa: BLE001
-    _MUL, _MULNAME = field.mul, "software"
 
 
 def _load_golden():
@@ -67,12 +62,12 @@ def _cpu_commit_ms(m, lir, lbs):
 
 def main() -> int:
     m, lir, lbs, z_packed, golden = _load_golden()
-    print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()} | mul: {_MULNAME}"
+    print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()}"
           f"{' | HOST SHA-NI Merkle' if _HOST else ''}")
     print(f"commit params: m={m} rate=1/2^{lir} batch=2^{lbs}\n")
 
     # (1) Byte gate over the full commit root.
-    got = pcs_commit.commit_root(z_packed, m, lir, lbs, mul=_MUL, use_host_sha=_HOST)
+    got = pcs_commit.commit_root(z_packed, m, lir, lbs, use_host_sha=_HOST)
     ok = np.array_equal(got, golden)
     print(f"PCS commit root byte-identity vs flock: {'PASS' if ok else 'FAIL'}")
     if not ok:
@@ -80,19 +75,17 @@ def main() -> int:
         print(" want:", bytes(golden).hex())
         return 1
 
-    # (2) Speedup on the dominant compute (interleaved forward NTT).
-    log_msg, log_dim = m - 7, m - 7 - lbs
-    k_code = log_dim + lir
-    num_ntts, n_pos_code, n_pos_msg = 1 << lbs, 1 << k_code, 1 << log_dim
-    x = jnp.asarray(z_packed).reshape(n_pos_msg, num_ntts, 2)
-    pad = jnp.zeros((n_pos_code - n_pos_msg, num_ntts, 2), x.dtype)
-    codeword = jnp.concatenate([x, pad], 0).reshape(n_pos_code * num_ntts, 2)
-    tw = jnp.asarray(ntt_mod.compute_twiddles(k_code))  # amortized (data-independent)
-    fn = jax.jit(lambda c, t: ntt_mod.forward_transform_interleaved(c, t, k_code, num_ntts, mul=_MUL))
-    r = fn(codeword, tw); r.block_until_ready()
+    # (2) Speedup on the dominant compute (the RS encode).
+    log_dim = m - 7 - lbs
+    num_ntts, n_pos_msg = 1 << lbs, 1 << log_dim
+    code = AdditiveReedSolomon(n_pos_msg, 1 << lir, jnp.binary_field_ghash)
+    zj = jnp.asarray(z_packed)
+    fn = jax.jit(lambda z: code.encode(lax.bitcast_convert_type(
+        z.reshape(n_pos_msg, num_ntts, 2), jnp.binary_field_ghash).T))
+    r = fn(zj); r.block_until_ready()
     best = float("inf")
     for _ in range(GPU_ITERS):
-        t0 = time.perf_counter(); r = fn(codeword, tw); r.block_until_ready()
+        t0 = time.perf_counter(); r = fn(zj); r.block_until_ready()
         best = min(best, time.perf_counter() - t0)
     gpu_ntt_ms = best * 1e3
 

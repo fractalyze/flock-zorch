@@ -21,7 +21,10 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp  # noqa: E402
 
-from flock_zorch import (field, ntt as ntt_mod, pcs_commit, zerocheck,  # noqa: E402
+from jax import lax  # noqa: E402
+from zorch.coding.additive_reed_solomon import AdditiveReedSolomon  # noqa: E402
+
+from flock_zorch import (field, pcs_commit, zerocheck,  # noqa: E402
                          lincheck, pcs_open, merkle)
 from flock_zorch.challenger import Challenger  # noqa: E402
 from flock_zorch.testing._util import best, select_mul  # noqa: E402
@@ -44,16 +47,15 @@ def bench(m):
     k_code = (log_msg - LBS) + LIR
     num_ntts = 1 << LBS
 
-    # --- commit (NTT + merkle); twiddles amortized (computed once, reused by open) ---
-    tw = jnp.asarray(ntt_mod.compute_twiddles(k_code))
+    # --- commit (RS encode + merkle) ---
     n_pos_msg, n_pos_code = 1 << (log_msg - LBS), 1 << k_code
-    x = z_packed.reshape(n_pos_msg, num_ntts, 2)
-    pad = jnp.zeros((n_pos_code - n_pos_msg, num_ntts, 2), x.dtype)
-    cw_in = jnp.concatenate([x, pad], 0).reshape(n_pos_code * num_ntts, 2)
-    ntt_fn = jax.jit(lambda c, t: ntt_mod.forward_transform_interleaved(c, t, k_code, num_ntts, mul=MUL))
-    codeword = ntt_fn(cw_in, tw); codeword.block_until_ready()
-    t_commit = best(lambda: ntt_fn(cw_in, tw), n=4)
-    cw_np = np.asarray(codeword)
+    code = AdditiveReedSolomon(n_pos_msg, 1 << LIR, jnp.binary_field_ghash)
+    enc = jax.jit(lambda z: code.encode(lax.bitcast_convert_type(
+        z.reshape(n_pos_msg, num_ntts, 2), jnp.binary_field_ghash).T))  # [num_ntts, n_pos_code]
+    cw = enc(z_packed); cw.block_until_ready()
+    t_commit = best(lambda: enc(z_packed), n=4)
+    cw_np = np.frombuffer(
+        np.ascontiguousarray(np.asarray(cw).T).tobytes(), np.uint64).reshape(n_pos_code * num_ntts, 2)
     leaves = cw_np.reshape(n_pos_code, num_ntts * 2).view(np.uint8)
     t_merkle = best(lambda: merkle.merkle_tree(leaves, use_host_sha=HOST_SHA), n=2)
     init_tree = merkle.merkle_tree(leaves, use_host_sha=HOST_SHA)

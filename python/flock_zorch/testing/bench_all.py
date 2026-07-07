@@ -12,7 +12,10 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp  # noqa: E402
 
-from flock_zorch import field, ntt as ntt_mod, sumcheck  # noqa: E402
+from jax import lax  # noqa: E402
+from zorch.coding.additive_reed_solomon import AdditiveReedSolomon  # noqa: E402
+
+from flock_zorch import field, sumcheck  # noqa: E402
 
 try:
     from flock_zorch import field_clmad  # noqa: E402
@@ -89,17 +92,18 @@ def main():
         del a, b
         gc.collect()
 
-    print("\n[additive NTT]  forward_transform_scalar (random twiddles)")
+    print("\n[additive NTT]  AdditiveReedSolomon.encode (blowup=1, ghash)")
     for log in (16, 18, 20):
         n = 1 << log
-        d, tw = _rand(n, 3), _rand(n - 1, 4)
-        fn = jax.jit(lambda dd, tt, ld=log: ntt_mod.forward_transform_scalar(dd, tt, ld))
+        d = _rand(n, 3)
+        code = AdditiveReedSolomon(n, 1, jnp.binary_field_ghash)
+        fn = jax.jit(lambda dd, c=code: c.encode(lax.bitcast_convert_type(dd, jnp.binary_field_ghash)))
         try:
-            dt = _bench(fn, (d, tw), 20)
+            dt = _bench(fn, (d,), 20)
             print(f"  log_d={log:<2} {dt*1e3:8.2f} ms/transform  {n/dt/1e9:6.3f} G elem/s")
         except Exception as e:  # noqa: BLE001
             print(f"  log_d={log:<2} {'OOM' if _oom(e) else type(e).__name__}: {str(e)[:70]}")
-        del d, tw
+        del d
         gc.collect()
 
     sc_mul = field_clmad.mul if (field_clmad and field_clmad.available()) else field.mul

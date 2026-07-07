@@ -33,7 +33,7 @@ LOG_BATCH = 5
 def bench_commit(m):
     n_packed = 1 << (m - 7)
     z_packed = jnp.asarray(np.random.default_rng(1).integers(0, 2**64, size=(n_packed, 2), dtype=np.uint64))
-    return best(lambda: pcs_commit.commit_root(z_packed, m, LOG_INV_RATE, LOG_BATCH, mul=MUL), 5)
+    return best(lambda: pcs_commit.commit_root(z_packed, m, LOG_INV_RATE, LOG_BATCH), 5)
 
 
 def bench_zerocheck(m):

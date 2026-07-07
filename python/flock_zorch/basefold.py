@@ -5,9 +5,12 @@ byte-identical to flock-core. The keystone of the PCS open: a sumcheck over
 query openings.
 
 Reuses flock-zorch's verified primitives: `sumcheck.fold_single` (the low-bit
-a/b fold), `fri.{row_batch_fold_all, fri_fold, compute_fri_arities}`,
-`merkle.{merkle_tree, merkle_multi_proof}`, `ntt.compute_twiddles`, and the
-SHA-256 `Challenger`.
+a/b fold), `fri.{row_batch_fold_all, compute_fri_arities}`, and
+`merkle.{merkle_tree, merkle_multi_proof}` + the SHA-256 `Challenger`. The
+per-round codeword fold is zorch's `coding.AdditiveReedSolomon.fold` (its
+LCH-basis twiddle schedule + fold byte-match flock's additive NTT / FRI goldens;
+see `coding_oracle_test`), run on the native `binary_field_ghash` dtype instead
+of the SoA software/clmad field ops.
 
 `target`/running_target do NOT affect the proof bytes (the proof carries the
 round messages, commitments, final values, and query openings — not the running
@@ -16,13 +19,14 @@ bytes of the 32-byte root. Requires `jax_enable_x64`.
 """
 from __future__ import annotations
 
-import functools
-
 import numpy as np
 import jax
 import jax.numpy as jnp
+from jax import lax
 
-from flock_zorch import field, sumcheck, merkle, ntt as ntt_mod, fri
+from zorch.coding.additive_reed_solomon import AdditiveReedSolomon
+
+from flock_zorch import field, sumcheck, merkle, fri
 
 LABEL = b"flock-basefold-v0"
 
@@ -39,7 +43,8 @@ def _round_message(a, b, mul):
 
 
 # Per-round field ops jitted (cache per mul) so each round is ONE fused kernel,
-# not eager op-by-op dispatch. fri_fold takes a static layer.
+# not eager op-by-op dispatch. The codeword fold lives on `code.fold` (below),
+# on the ghash dtype, so it is not part of this mul-keyed bundle.
 _BF_CACHE: dict = {}
 
 
@@ -49,12 +54,22 @@ def _bf_ops(mul):
         o = (
             jax.jit(lambda a, b: _round_message(a, b, mul)),
             jax.jit(lambda a, r: sumcheck.fold_single(a, r, mul)),
-            jax.jit(functools.partial(lambda c, t, r, layer: fri.fri_fold(c, t, layer, r, mul)),
-                    static_argnums=(3,)),
             jax.jit(lambda cw, ch: fri.row_batch_fold_all(cw, ch, mul)),
         )
         _BF_CACHE[mul] = o
     return o
+
+
+def _to_ghash(soa):
+    """uint64 SoA (last axis size 2) -> binary_field_ghash on device."""
+    return lax.bitcast_convert_type(jnp.asarray(soa), jnp.binary_field_ghash)
+
+
+def _from_ghash(g):
+    """binary_field_ghash -> uint64 SoA [n, 2] via host bytes (the device
+    ghash->uint64 bitcast returns zeros, zorch#399)."""
+    arr = np.asarray(g)
+    return np.frombuffer(arr.tobytes(), np.uint64).reshape(arr.shape[0], 2)
 
 
 def _leaf_bytes(codeword_np, n_leaves, leaf_f128):
@@ -81,15 +96,21 @@ def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_s
     num_fri_commits = max(num_epochs - 1, 0)
     arity_0 = arities[0] if arities else 0
     post_rb_leaf_f128 = 1 << arity_0
-    twiddles = jnp.asarray(ntt_mod.compute_twiddles(k_code)) if log_dim > 0 else None
+    # The fold chain rides ONE additive-RS instance (block_len = 2^k_code); its
+    # LCH twiddles are anchored to that block_len, so a folded layer is not a
+    # smaller code's codeword — every round must go through this instance.
+    code = AdditiveReedSolomon(1 << log_dim, 1 << log_inv_rate,
+                               jnp.binary_field_ghash) if log_dim > 0 else None
+    fold_fn = jax.jit(code.fold) if code is not None else None
 
     ch.observe_label(LABEL)
-    round_message, fold_single, fri_fold, row_batch = _bf_ops(mul)
+    round_message, fold_single, row_batch = _bf_ops(mul)
 
     a = jnp.asarray(z_packed)
     bb = jnp.asarray(b)
     cw_full = jnp.asarray(codeword)        # initial SoA codeword (kept for T1 leaves)
     cw_active = cw_full
+    cw_g = None                            # ghash fold state; entered on the first FRI round
     round_messages, rb_challenges, round_commitments = [], [], []
     post_rb_codeword = post_rb_tree = None
     post_rb_root = np.zeros(32, np.uint8)
@@ -121,14 +142,14 @@ def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_s
                     ch.observe_f128(_root_f128(post_rb_root))
                     post_rb_codeword = cw_np
         else:
-            fri_round_idx = rnd - log_batch_size
-            layer = k_code - fri_round_idx - 1
-            cw_active = fri_fold(cw_active, twiddles, r, layer)
+            if cw_g is None:
+                cw_g = _to_ghash(cw_active)      # enter the additive-RS fold domain
+            cw_g = fold_fn(cw_g, _to_ghash(r.reshape(1, 2)))
             rounds_in_epoch += 1
             if rounds_in_epoch == arities[current_epoch]:
                 if current_epoch + 1 < num_epochs:
                     leaf_f128 = 1 << arities[current_epoch + 1]
-                    cw_np = np.asarray(cw_active)
+                    cw_np = _from_ghash(cw_g)
                     n_leaves = cw_np.shape[0] // leaf_f128
                     tree = merkle.merkle_tree(_leaf_bytes(cw_np, n_leaves, leaf_f128),
                                               use_host_sha=use_host_sha)
@@ -142,7 +163,7 @@ def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_s
 
     final_a = np.asarray(a)[0]
     final_b = np.asarray(bb)[0]
-    final_codeword = np.asarray(cw_active)
+    final_codeword = _from_ghash(cw_g) if cw_g is not None else np.asarray(cw_active)
 
     # ---- query openings: sample positions, gather each layer's leaf, Merkle multi-proofs ----
     cw_full_np = np.asarray(cw_full)
