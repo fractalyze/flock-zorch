@@ -1,7 +1,8 @@
 // XLA FFI handler that runs flock's GF(2^128) GHASH multiply via the PTX `clmad`
-// cubin on XLA's GPU stream. Lets the jax-exported prover call clmad for field.mul
-// without rebuilding the zkx plugin: jax `field.mul` -> ffi_call -> this handler ->
-// clmad kernel (optim/clmad/ghash_mul.ptx, assembled by ptxas 13.3).
+// cubin on XLA's GPU stream. Lets the jax-exported prover call clmad for the
+// binary-field multiply without rebuilding the zkx plugin: jax binary-field mul
+// -> ffi_call -> this handler -> clmad kernel (optim/clmad/ghash_mul.ptx,
+// assembled by ptxas 13.3).
 //
 // Build: see build_ffi.sh. Register from jax with jax.ffi.register_ffi_target.
 #include <cuda.h>
@@ -28,7 +29,7 @@ static void load_kernel() {
   cuInit(0);
   const char* path = std::getenv("FLOCK_CLMAD_CUBIN");
   std::string cubin = path ? path
-      : "/home/jooman/fractalyze/flock-zorch/optim/clmad/ghash_mul.cubin";
+      : "optim/clmad/ghash_mul.cubin";  // repo-relative default; override with FLOCK_CLMAD_CUBIN
   FILE* f = std::fopen(cubin.c_str(), "rb");
   if (!f) { std::fprintf(stderr, "clmad-ffi: cannot open %s\n", cubin.c_str()); std::abort(); }
   std::fseek(f, 0, SEEK_END);

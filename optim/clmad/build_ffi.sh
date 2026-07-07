@@ -2,7 +2,7 @@
 # Build the clmad GHASH-multiply XLA FFI handler (libghash_clmad.so) + the cubin.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV=/home/jooman/fractalyze/zorch/.venv/bin/python
+VENV="${VENV:-$(cd "$HERE/../.." && pwd)/.venv/bin/python}"
 INC="$("$VENV" -c 'import jax.ffi; print(jax.ffi.include_dir())')"
 PTXAS="$HOME/.local/cuda13/bin/ptxas"
 # driver-API header (stable across versions) + link stub from the system CUDA 12.9

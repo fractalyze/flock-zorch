@@ -1,8 +1,9 @@
 """Validate + benchmark the clmad GHASH multiply called from jax via XLA FFI.
 
 Registers libghash_clmad.so's handler, calls it inside a jitted jax function, and
-byte-compares against flock's golden. This is the in-prover integration path:
-jax `field.mul` -> ffi_call -> clmad kernel, no zkx rebuild.
+byte-compares against flock's golden (the now-retired `field_mul_golden.bin` — see
+README Status). Standalone FFI path for the binary-field multiply:
+jax binary-field mul -> ffi_call -> clmad kernel, no zkx rebuild.
 """
 import ctypes
 import time

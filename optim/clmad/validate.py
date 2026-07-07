@@ -35,7 +35,8 @@ def main():
     if not os.path.exists(PTXAS):
         sys.exit(f"need CUDA 13.x ptxas at {PTXAS} (see README)")
     if not GOLDEN.exists():
-        sys.exit(f"missing {GOLDEN}: run `cargo run --release --example dump_field_mul`")
+        sys.exit(f"missing {GOLDEN}: dump_field_mul was retired in #44/#45 — "
+                 "regenerate a reference (see README Status)")
     subprocess.run([PTXAS, "-arch=sm_120", "-O3", str(PTX), "-o", str(CUBIN)], check=True)
 
     cr.init()
