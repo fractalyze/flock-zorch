@@ -60,10 +60,10 @@ def _load(path):
                x_ab=x_ab, rounds=rounds, z_partial=z_partial)
 
 
-def _check(path, mul, name):
+def _check(path, name):
     g = _load(path)
     rounds, z_partial = lincheck.prove(
-        g["z_packed"], g["a"], g["b"], g["x_ab"], g["m"], g["k_log"], g["k_skip"], mul=mul)
+        g["z_packed"], g["a"], g["b"], g["x_ab"], g["m"], g["k_log"], g["k_skip"])
     assert len(rounds) == len(g["rounds"]), (len(rounds), len(g["rounds"]))
     for i, ((e1, einf), (ge1, geinf)) in enumerate(zip(rounds, g["rounds"])):
         assert np.array_equal(e1, ge1) and np.array_equal(einf, geinf), f"round {i} mismatch ({name})"
@@ -76,11 +76,9 @@ def main() -> int:
     if not paths:
         print("no lincheck golden — run: cargo run --release --example dump_lincheck")
         return 1
-    muls = [("software", field.mul)]
     print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()}")
-    for name, mul in muls:
-        cfgs = [_check(p, mul, name) for p in paths]
-        print(f"lincheck prove byte-match vs flock ({name}): PASS  cfgs(m,k_log,k_skip)={cfgs}")
+    cfgs = [_check(p, "native") for p in paths]
+    print(f"lincheck prove byte-match vs flock: PASS  cfgs(m,k_log,k_skip)={cfgs}")
     return 0
 
 

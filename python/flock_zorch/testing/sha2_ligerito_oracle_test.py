@@ -75,31 +75,30 @@ def load():
     return g
 
 
-def run(mul):
+def run():
     g = load(); meta = g["meta"]; cfg = g["cfg"]
     m, lir, lbs = meta["m"], meta["lir"], meta["lbs"]
     k_log, k_skip = meta["k_log"], meta["k_skip"]; ir = k_log - k_skip
     results = []
 
-    root, codeword, tree = pcs_commit.commit(g["z"], m, lir, lbs, mul=mul)
+    root, codeword, tree = pcs_commit.commit(g["z"], m, lir, lbs)
     results.append(("commit root", np.array_equal(root, g["root"])))
 
     ch = Challenger(b"flock-sha2-lig-v0")
     prover.bind_statement(ch, g["stmt"], root)
     a_bits, b_bits, c_bits = g["a"], g["b"], g["z"]  # packed F128 — witness_to_rows unpacks on device
-    zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, mul=mul, ch=ch)
+    zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch)
     results.append(("zerocheck round1_ab", np.array_equal(zc["round1_ab"], g["zc"]["r1ab"])))
     results.append(("zerocheck final_c", np.array_equal(zc["final_c_eval"], g["zc"]["fc"])))
 
     csc = lincheck.CscCircuit(g["a0_rows"], g["b0_rows"], 1 << k_log, const_pin=meta["const_pin"])
     x_ab = {"z_skip": zc["z"], "x_inner_rest": zc["mlv_challenges"][:ir], "x_outer": zc["mlv_challenges"][ir:]}
-    _lr, lc_zp, lc_claim, _zv = lincheck.prove(g["zlc"], None, None, x_ab, m, k_log, k_skip,
-                                               mul=mul, ch=ch, capture=True, circuit=csc)
+    _lr, lc_zp, lc_claim, _zv = lincheck.prove(g["zlc"], None, None, x_ab, m, k_log, k_skip, ch=ch, capture=True, circuit=csc)
     results.append(("lincheck z_partial", np.array_equal(lc_zp, g["lc"]["zp"])))
 
     ab_full = np.concatenate([lc_claim["r_inner_rest"], x_ab["x_outer"]], axis=0)
     c_full = np.concatenate([zc["r_rest"][:ir], zc["r_rest"][ir:]], axis=0)
-    out = prover.open_batch_ligerito(cfg, g["z"], codeword, tree, [ab_full, c_full], ch, mul=mul)
+    out = prover.open_batch_ligerito(cfg, g["z"], codeword, tree, [ab_full, c_full], ch)
 
     for i in range(len(g["rs"])):
         results.append((f"open ring_switch[{i}]", np.array_equal(out["ring_switches"][i], g["rs"][i])))
@@ -129,7 +128,7 @@ def run(mul):
 
 def main() -> int:
     print(f"device {jax.devices()[0]} | mul software")
-    m, results = run(field.mul)
+    m, results = run()
     allok = True
     for nm, ok in results:
         print(f"  {'PASS' if ok else 'FAIL'}  {nm}"); allok = allok and ok

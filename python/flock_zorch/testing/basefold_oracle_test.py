@@ -36,7 +36,7 @@ class R:
     def raw(s, n): v = s.b[s.o:s.o + n]; s.o += n; return v
 
 
-def _check(mul, name):
+def _check(name):
     rd = R((ART / "basefold_golden.bin").read_bytes())
     assert rd.raw(8) == b"FLKBSF01"
     m, lir, lbs, n_queries = rd.u(), rd.u(), rd.u(), rd.u()
@@ -59,7 +59,7 @@ def _check(mul, name):
                                    use_host_sha=_HOST)
 
     ch = Challenger(b"flock-basefold-test")
-    p = basefold.prove(z_packed, b, codeword, init_tree, k_code, lir, lbs, n_queries, ch, mul=mul,
+    p = basefold.prove(z_packed, b, codeword, init_tree, k_code, lir, lbs, n_queries, ch,
                        use_host_sha=_HOST)
 
     def eq(x, y): return np.array_equal(np.asarray(x), np.asarray(y))
@@ -85,7 +85,7 @@ def _check(mul, name):
 
 def main() -> int:
     print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()}")
-    ok = _check(field.mul, "software")
+    ok = _check("software")
     return 0 if ok else 1
 
 

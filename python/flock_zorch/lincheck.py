@@ -34,10 +34,9 @@ U64 = jnp.uint64
 LABEL = b"flock-lincheck-v0"
 
 
-def build_quirky_eq_table(z_skip_int: int, x_inner_rest, k_skip: int, mul=None):
+def build_quirky_eq_table(z_skip_int: int, x_inner_rest, k_skip: int):
     """eq_inner[i_skip + i_rest·2^k_skip] = λ_skip[i_skip]·eq_rest[i_rest]
     (flock `build_quirky_eq_table`; i_skip in the LOW bits)."""
-    del mul
     lam = _lagrange_weights(k_skip, z_skip_int, 0)             # S-domain, len 2^k_skip
     lam = field.to_ghash(jnp.asarray(np.stack([_to_lohi(x) for x in lam])))  # [ell_skip]
     eq_rest = field.to_ghash(build_eq_fused(jnp.asarray(x_inner_rest)))  # [ell_rest] — fused (avoids per-layer eager dispatch)
@@ -45,19 +44,17 @@ def build_quirky_eq_table(z_skip_int: int, x_inner_rest, k_skip: int, mul=None):
     return field.from_ghash(prod.reshape(-1))                 # [ell_rest·ell_skip, 2]
 
 
-def _mat_fold(mat_dense, eq, mul=None):
+def _mat_fold(mat_dense, eq):
     """Transposed binary-matrix·vector: out[c] = Σ_{r: M[r,c]=1} eq[r].
 
     mat_dense: uint64 [k, k] (0/1, indexed [row, col]); eq: [k, 2] -> [k, 2]."""
-    del mul
     sel = mat_dense[:, :, None] * eq[:, None, :]              # M[r,c]·eq[r]  (0/1 select)
     return field.from_ghash(jnp.sum(field.to_ghash(sel), axis=0))  # XOR over rows -> [c, 2]
 
 
-def fold_alpha_batched(alpha, a_dense, b_dense, eq_inner, mul=None):
+def fold_alpha_batched(alpha, a_dense, b_dense, eq_inner):
     """comb[c] = α·(A₀ᵀ·eq_inner)[c] ⊕ (B₀ᵀ·eq_inner)[c] (flock
     `sparse_row_fold_alpha_batched`)."""
-    del mul
     ae = field.to_ghash(_mat_fold(a_dense, eq_inner))
     be = field.to_ghash(_mat_fold(b_dense, eq_inner))
     alpha_g = field.to_ghash(jnp.asarray(alpha))
@@ -82,8 +79,7 @@ class CscCircuit:
         self._a_seg = _csc_segments(a_col, a_row)
         self._b_seg = _csc_segments(b_col, b_row)
 
-    def fold_alpha_batched(self, alpha, eq_inner, mul=None):
-        del mul
+    def fold_alpha_batched(self, alpha, eq_inner):
         eq = jnp.asarray(np.asarray(eq_inner, np.uint64).reshape(-1, 2))
         zero = jnp.zeros((self.k, 2), U64)
         out_a = _seg_xor_fold(eq, *self._a_seg, self.k) if self._a_seg else zero
@@ -92,13 +88,12 @@ class CscCircuit:
         return field.from_ghash(alpha_g * field.to_ghash(out_a) + field.to_ghash(out_b))
 
 
-def partial_fold_packed_z(z_packed_bytes: bytes, m: int, k_log: int, eq_outer, mul=None):
+def partial_fold_packed_z(z_packed_bytes: bytes, m: int, k_log: int, eq_outer):
     """z_vec[i_inner] = Σ_{i_outer} z(i_inner, i_outer)·eq_outer[i_outer]
     (flock `partial_fold_packed_z`, useful_bits = 2^k_log).
 
     z_packed layout: byte `z_packed[byte_idx·k + i_inner]` holds outer bits
     `z[i_inner, 8·byte_idx + r]` at bit r."""
-    del mul
     k = 1 << k_log
     n_outer = 1 << (m - k_log)
     n_bytes = n_outer // 8
@@ -116,10 +111,9 @@ def _partial_fold_dev(zp, eq_outer, n_outer):
     return field.from_ghash(jnp.sum(field.to_ghash(sel), axis=0))                 # [k, 2]
 
 
-def _round_eval(c, z, mul=None):
+def _round_eval(c, z):
     """Product-sumcheck round message (q(1), q(∞)) over the TOP-bit split (flock
     `sumcheck_round_eval`): half = len/2; (Σ chi·zhi, Σ (chi+clo)(zhi+zlo))."""
-    del mul
     cg, zg = field.to_ghash(c), field.to_ghash(z)
     half = cg.shape[0] // 2
     clo, chi = cg[:half], cg[half:]
@@ -129,10 +123,9 @@ def _round_eval(c, z, mul=None):
     return field.from_ghash(e1), field.from_ghash(einf)
 
 
-def _bind_top(v, r, mul=None):
+def _bind_top(v, r):
     """Bind the top variable at r (flock `sumcheck_bind_top`):
     v'[i] = v[i] + r·(v[i+half] + v[i]); length halves."""
-    del mul
     vg, rg = field.to_ghash(v), field.to_ghash(r)
     half = vg.shape[0] // 2
     vlo, vhi = vg[:half], vg[half:]
@@ -140,7 +133,7 @@ def _bind_top(v, r, mul=None):
 
 
 def prove(z_packed_bytes, a_dense, b_dense, x_ab, m, k_log, k_skip,
-          domain=b"flock-test-v0", mul=field.mul, ch=None, capture=False, circuit=None):
+          domain=b"flock-test-v0", ch=None, capture=False, circuit=None):
     """Run lincheck. x_ab = dict(z_skip:[2], x_inner_rest:[*,2], x_outer:[*,2]).
     Byte-identical to flock `lincheck::prove`/`prove_padded_capture_z_vec`.
 
@@ -155,19 +148,19 @@ def prove(z_packed_bytes, a_dense, b_dense, x_ab, m, k_log, k_skip,
     ch.observe_label(LABEL)
     alpha = jnp.asarray(ch.sample_f128())
 
-    eq_inner = build_quirky_eq_table(_to_int(x_ab["z_skip"]), x_ab["x_inner_rest"], k_skip, mul)
+    eq_inner = build_quirky_eq_table(_to_int(x_ab["z_skip"]), x_ab["x_inner_rest"], k_skip)
     if circuit is not None:
-        comb = jnp.asarray(circuit.fold_alpha_batched(alpha, eq_inner, mul))
+        comb = jnp.asarray(circuit.fold_alpha_batched(alpha, eq_inner))
         if circuit.const_pin is not None:
             beta = jnp.asarray(ch.sample_f128())          # sampled AFTER alpha (flock order)
             col = circuit.const_pin
             comb = comb.at[col].set(
                 field.from_ghash(field.to_ghash(comb[col]) + field.to_ghash(beta)))
     else:
-        comb = fold_alpha_batched(alpha, jnp.asarray(a_dense), jnp.asarray(b_dense), eq_inner, mul)
+        comb = fold_alpha_batched(alpha, jnp.asarray(a_dense), jnp.asarray(b_dense), eq_inner)
 
-    eq_outer = build_eq_fused(jnp.asarray(x_ab["x_outer"]), mul=mul)
-    z_vec = partial_fold_packed_z(z_packed_bytes, m, k_log, eq_outer, mul)
+    eq_outer = build_eq_fused(jnp.asarray(x_ab["x_outer"]))
+    z_vec = partial_fold_packed_z(z_packed_bytes, m, k_log, eq_outer)
     z_vec_pre = np.asarray(z_vec) if capture else None  # pre-sumcheck (PCS open reuse)
 
     # Unfused on purpose: each round is _round_eval then _bind_top, mirroring flock's
@@ -175,17 +168,17 @@ def prove(z_packed_bytes, a_dense, b_dense, x_ab, m, k_log, k_skip,
     # fusion is the zkx compiler's job.
     rounds, r_rounds = [], []
     if inner_rest > 0:
-        e1, einf = _round_eval(comb, z_vec, mul)
+        e1, einf = _round_eval(comb, z_vec)
         for t in range(inner_rest):
             ch.observe_f128(e1)
             ch.observe_f128(einf)
             r = jnp.asarray(ch.sample_f128())
             rounds.append((np.asarray(e1), np.asarray(einf)))
             r_rounds.append(r)
-            comb = _bind_top(comb, r, mul)
-            z_vec = _bind_top(z_vec, r, mul)
+            comb = _bind_top(comb, r)
+            z_vec = _bind_top(z_vec, r)
             if t + 1 < inner_rest:
-                e1, einf = _round_eval(comb, z_vec, mul)
+                e1, einf = _round_eval(comb, z_vec)
     z_partial = np.asarray(z_vec)
     if not capture:
         return rounds, z_partial

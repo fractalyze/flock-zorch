@@ -32,13 +32,12 @@ def default_fri_queries(log_inv_rate: int) -> int:
     return {1: DEFAULT_FRI_QUERIES, 2: 148}[log_inv_rate]
 
 
-def row_batch_fold_all(codeword, challenges, mul=None):
+def row_batch_fold_all(codeword, challenges):
     """Collapse each codeword position's `2^len(challenges)` lanes to one F128 via
     nested folds `buf[j] = u + r·(u+v)` (flock `row_batch_fold_all`).
 
     codeword: uint64 [n_pos·num_ntts, 2] (SoA, position-major); challenges:
     uint64 [log_batch_size, 2]. Returns uint64 [n_pos, 2]."""
-    del mul
     ch = field.to_ghash(challenges)                        # [lbs]
     lbs = int(ch.shape[0])
     num_ntts = 1 << lbs

@@ -49,7 +49,7 @@ class _Reader:
         return a
 
 
-def run(path: Path | None = None, mul=field.mul):
+def run(path: Path | None = None):
     path = path or (_artifacts_dir() / "gf8_urm_golden.bin")
     raw = path.read_bytes()
     assert raw[:8] == _MAGIC, f"bad magic {raw[:8]!r}"
@@ -74,7 +74,7 @@ def run(path: Path | None = None, mul=field.mul):
         r = rd.f128(m)
         ab_golden = rd.f128(1 << k_skip)
         c_golden = rd.f128(1 << k_skip)
-        p_ab, p_c = gf8.round1_naive(a, b, c, m, k_skip, r, mul=mul)
+        p_ab, p_c = gf8.round1_naive(a, b, c, m, k_skip, r)
         if not np.array_equal(p_ab, ab_golden):
             i = int(np.flatnonzero(np.any(p_ab != ab_golden, axis=1))[0])
             raise AssertionError(

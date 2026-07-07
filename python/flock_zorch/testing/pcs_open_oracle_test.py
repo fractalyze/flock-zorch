@@ -34,7 +34,7 @@ class R:
     def raw(s, n): v = s.b[s.o:s.o + n]; s.o += n; return v
 
 
-def _check(mul, name):
+def _check(name):
     rd = R((ART / "pcs_open_golden.bin").read_bytes())
     assert rd.raw(8) == b"FLKOPN01"
     m, lir, lbs = rd.u(), rd.u(), rd.u()
@@ -55,7 +55,7 @@ def _check(mul, name):
     init_tree = merkle.merkle_tree(codeword.reshape(1 << k_code, num_ntts * 2).view(np.uint8),
                                    use_host_sha=_HOST)
     ch = Challenger(b"flock-pcs-open-test")
-    out = pcs_open.open(z_packed, codeword, init_tree, x_outer, k_code, lir, lbs, ch, mul=mul,
+    out = pcs_open.open(z_packed, codeword, init_tree, x_outer, k_code, lir, lbs, ch,
                         use_host_sha=_HOST)
     p = out["basefold"]
 
@@ -81,7 +81,7 @@ def _check(mul, name):
 
 def main() -> int:
     print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()}")
-    ok = _check(field.mul, "software")
+    ok = _check("software")
     return 0 if ok else 1
 
 

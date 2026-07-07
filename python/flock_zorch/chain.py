@@ -27,7 +27,7 @@ from flock_zorch.lincheck import _round_eval, _bind_top
 LOG_PACKING = field.LOG_PACKING  # 128 = 2^7 bits per packed F128 element
 
 
-def prove_chain_shift(in_vals, out_vals, ch, mul=field.mul):
+def prove_chain_shift(in_vals, out_vals, ch):
     """flock `chain::prove_chain_shift`. in_vals/out_vals: (2^n, 2) F128 (already
     region-folded per instance). Threads τ, α, and the sumcheck challenges through
     the shared challenger `ch`. Returns (rounds [(e1,einf)], g_at_point, claims)
@@ -41,7 +41,7 @@ def prove_chain_shift(in_vals, out_vals, ch, mul=field.mul):
     # τ ∈ Fⁿ then α — both before the sumcheck (mirrored by the verifier).
     tau = np.asarray(ch.sample_f128_vec(n)).reshape(n, 2)
     alpha = np.asarray(ch.sample_f128()).reshape(2)
-    eqtau = np.asarray(build_eq(jnp.asarray(tau), mul=mul)).reshape(n_total, 2)  # eqtau[y]=eq(τ,y)
+    eqtau = np.asarray(build_eq(jnp.asarray(tau))).reshape(n_total, 2)  # eqtau[y]=eq(τ,y)
 
     # Weight table over (y, s₀), s₀ the HIGH bit (index y + s₀·N):
     #   W(y,0) = shift(τ,y) + α·eq(y,0ⁿ) = eqtau[y-1] (y≥1) + α·[y==0]
@@ -56,13 +56,13 @@ def prove_chain_shift(in_vals, out_vals, ch, mul=field.mul):
     wt = jnp.asarray(wt); g = jnp.asarray(g)
     rounds, r_pts = [], []
     for _ in range(n + 1):
-        e1, einf = _round_eval(wt, g, mul)
+        e1, einf = _round_eval(wt, g)
         ch.observe_f128(np.asarray(e1)); ch.observe_f128(np.asarray(einf))
         r = jnp.asarray(ch.sample_f128())
         rounds.append((np.asarray(e1), np.asarray(einf)))
         r_pts.append(np.asarray(r).reshape(2))
-        wt = _bind_top(wt, r, mul)
-        g = _bind_top(g, r, mul)
+        wt = _bind_top(wt, r)
+        g = _bind_top(g, r)
 
     # After n+1 folds g[0] = g(τ',s₀*). Build the point: full[d-1-k]=r_pts[k]
     # (bit d-1 = s₀, the HIGH bit); τ' = full[:n], s₀* = full[n].
@@ -91,7 +91,7 @@ def assemble_chain_claim(tau_pos, claims, k_log, region_log):
     return {"point": point, "value": np.asarray(claims["value"], np.uint64).reshape(2)}
 
 
-def fold_in_out(packed, k_log, tau_pos, input_byte_off, output_byte_off, mul=field.mul):
+def fold_in_out(packed, k_log, tau_pos, input_byte_off, output_byte_off):
     """flock `chain_common::fold_in_out`. Collapse each instance's input/output
     slot to one F128: in_vals[i] = Σ_pos eq(τ_pos, pos)·ẑ_packed[(i, in_slot, pos)],
     likewise out_vals. `packed` is ẑ (length 2^(m-7)); `tau_pos` length =
@@ -104,7 +104,7 @@ def fold_in_out(packed, k_log, tau_pos, input_byte_off, output_byte_off, mul=fie
     out_base = (output_byte_off * 8) >> LOG_PACKING
     assert packed.shape[0] % block_packed == 0
     n_inst = packed.shape[0] // block_packed
-    eq_tau = field.to_ghash(build_eq(jnp.asarray(tau_pos), mul=mul))  # (n_packed,)
+    eq_tau = field.to_ghash(build_eq(jnp.asarray(tau_pos)))  # (n_packed,)
 
     pk = field.to_ghash(jnp.asarray(packed).reshape(n_inst, block_packed, 2))  # (n_inst, block_packed)
     in_reg = pk[:, in_base:in_base + n_packed]                   # (n_inst, n_packed)

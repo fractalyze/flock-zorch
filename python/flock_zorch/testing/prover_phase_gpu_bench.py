@@ -42,7 +42,7 @@ def bench_zerocheck(m):
     b = rng.integers(0, 2, size=1 << m, dtype=np.uint8)
     c = rng.integers(0, 2, size=1 << m, dtype=np.uint8)
     # prove_packed is a host loop (jit'd kernels inside); time the whole call.
-    return best(lambda: zerocheck.prove_packed(a, b, c, m, b"flock-bench-v0", mul=field.mul), n=3)
+    return best(lambda: zerocheck.prove_packed(a, b, c, m, b"flock-bench-v0"), n=3)
 
 
 def main():

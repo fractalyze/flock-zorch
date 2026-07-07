@@ -62,7 +62,7 @@ def bench(m):
     a = rng.integers(0, 2, size=1 << m, dtype=np.uint8)
     b = rng.integers(0, 2, size=1 << m, dtype=np.uint8)
     c = rng.integers(0, 2, size=1 << m, dtype=np.uint8)
-    t_zc = best(lambda: zerocheck.prove_packed(a, b, c, m, b"e2e", mul=field.mul), n=3)
+    t_zc = best(lambda: zerocheck.prove_packed(a, b, c, m, b"e2e"), n=3)
 
     # --- lincheck (k_log/k_skip like flock; sparse A0/B0) ---
     k_log, k_skip = 7, 6
@@ -74,13 +74,13 @@ def bench(m):
     x_ab = {"z_skip": rng.integers(0, 2**64, size=2, dtype=np.uint64),
             "x_inner_rest": rng.integers(0, 2**64, size=(k_log - k_skip, 2), dtype=np.uint64),
             "x_outer": rng.integers(0, 2**64, size=(n_log, 2), dtype=np.uint64)}
-    t_lc = best(lambda: lincheck.prove(zp_lin, A, B, x_ab, m, k_log, k_skip, mul=field.mul), n=3)
+    t_lc = best(lambda: lincheck.prove(zp_lin, A, B, x_ab, m, k_log, k_skip), n=3)
 
     # --- pcs.open ---
     x_outer = jnp.asarray(rng.integers(0, 2**64, size=(m - 6, 2), dtype=np.uint64))
     def open_fn():
         ch = Challenger(b"e2e")
-        return pcs_open.open(z_packed, codeword, init_tree, x_outer, k_code, LIR, LBS, ch, mul=field.mul,
+        return pcs_open.open(z_packed, codeword, init_tree, x_outer, k_code, LIR, LBS, ch,
                              use_host_sha=HOST_SHA)
     t_open = best(open_fn, n=2)
 

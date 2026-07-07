@@ -13,7 +13,7 @@ Plugs into `lincheck.prove(circuit=KeccakLincheckCircuit())` exactly like the sh
 `CscCircuit`: a host XOR-scatter (`np.bitwise_xor.at`) over the fixed θ∘ρ∘π
 preimage map, with the single `const_pin` (= Z_CONST) +β column applied by the
 caller. The A-side (α-scaled) and B-side (plain) contributions are accumulated into
-two unscaled F128 buffers and combined with ONE `field.mul` at the end — byte-
+two unscaled F128 buffers and combined with ONE field multiply at the end — byte-
 identical to flock's interleaved `comb[c] += α·x` because GF(2¹²⁸) multiplication
 distributes over field addition (XOR).
 """
@@ -195,7 +195,7 @@ def accumulate_subkeccak(eq, comb_a, comb_b, col_state0, col_state24, rows_t, z_
     comb_b[col_state0] ^= k_b
 
 
-def _combine_alpha_sides(comb_a, comb_b, alpha, mul=field.mul):
+def _combine_alpha_sides(comb_a, comb_b, alpha):
     """comb = α·comb_a ⊕ comb_b — ONE field mul. GF(2¹²⁸) multiplication distributes
     over XOR, so the A-side accumulates unscaled and is α-scaled once at the end.
     Shared by the single-keccak and keccak3 walkers."""
@@ -211,7 +211,7 @@ class KeccakLincheckCircuit:
     n_cols = K
     const_pin = Z_CONST  # const-wire pin column (lincheck.prove applies +β here)
 
-    def fold_alpha_batched(self, alpha, eq_inner, mul=field.mul):
+    def fold_alpha_batched(self, alpha, eq_inner):
         """comb[c] = α·(A_0ᵀ·eq)[c] ⊕ (B_0ᵀ·eq)[c], the keccak.rs walker."""
         eq = np.asarray(eq_inner, np.uint64).reshape(K, 2)
         comb_a = np.zeros((K, 2), np.uint64)  # α-scaled (A-side), accumulated unscaled
@@ -225,4 +225,4 @@ class KeccakLincheckCircuit:
         comb_a[Z_CONST] ^= e0
         comb_b[Z_CONST] ^= e0
 
-        return _combine_alpha_sides(comb_a, comb_b, alpha, mul)
+        return _combine_alpha_sides(comb_a, comb_b, alpha)

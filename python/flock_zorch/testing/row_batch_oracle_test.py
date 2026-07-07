@@ -34,14 +34,11 @@ def _row_batch() -> bool:
     cw = np.frombuffer(raw, np.uint64, n_pos * num_ntts * 2, off).reshape(n_pos * num_ntts, 2)
     off += n_pos * num_ntts * 16
     folded = np.frombuffer(raw, np.uint64, n_pos * 2, off).reshape(n_pos, 2)
-    ok = True
-    for name, mul in (("software", field.mul),):
-        got = np.asarray(jax.jit(lambda c, ch: fri.row_batch_fold_all(c, ch, mul=mul))(
-            jnp.asarray(cw), jnp.asarray(chal)))
-        good = np.array_equal(got, folded)
-        print(f"row_batch_fold byte-match vs flock ({name}, n_pos={n_pos} lbs={lbs}): "
-              f"{'PASS' if good else 'FAIL'}")
-        ok = ok and good
+    got = np.asarray(jax.jit(lambda c, ch: fri.row_batch_fold_all(c, ch))(
+        jnp.asarray(cw), jnp.asarray(chal)))
+    ok = np.array_equal(got, folded)
+    print(f"row_batch_fold byte-match vs flock (n_pos={n_pos} lbs={lbs}): "
+          f"{'PASS' if ok else 'FAIL'}")
     return ok
 
 

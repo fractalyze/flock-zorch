@@ -38,11 +38,10 @@ def _hf_mul(a, b):
     return field._to_lohi(hf.mul(field._to_int(a), field._to_int(b)))
 
 
-def _round_message(a, b, mul):
+def _round_message(a, b):
     """Round message (u_0, u_2) = (Σ a_e·b_e, Σ (a_e+a_o)·(b_e+b_o)) over the
     even/odd split (flock's round-0 prime / fused next-round message). Returns
     jnp (device) — the caller converts to np for the transcript/proof."""
-    del mul
     ag, bg = field.to_ghash(a), field.to_ghash(b)
     ae, ao = ag[0::2], ag[1::2]
     be, bo = bg[0::2], bg[1::2]
@@ -51,22 +50,21 @@ def _round_message(a, b, mul):
     return field.from_ghash(u0), field.from_ghash(u2)
 
 
-# Per-round field ops jitted (cache per mul) so each round is ONE fused kernel,
+# Per-round field ops jitted (memoized) so each round is ONE fused kernel,
 # not eager op-by-op dispatch. The codeword fold lives on `code.fold` (below),
-# on the ghash dtype, so it is not part of this mul-keyed bundle.
-_BF_CACHE: dict = {}
+# on the ghash dtype, so it is not part of this bundle.
+_BF_OPS = None
 
 
-def _bf_ops(mul):
-    o = _BF_CACHE.get(mul)
-    if o is None:
-        o = (
-            jax.jit(lambda a, b: _round_message(a, b, mul)),
-            jax.jit(lambda a, r: sumcheck.fold_single(a, r, mul)),
-            jax.jit(lambda cw, ch: fri.row_batch_fold_all(cw, ch, mul)),
+def _bf_ops():
+    global _BF_OPS
+    if _BF_OPS is None:
+        _BF_OPS = (
+            jax.jit(lambda a, b: _round_message(a, b)),
+            jax.jit(lambda a, r: sumcheck.fold_single(a, r)),
+            jax.jit(lambda cw, ch: fri.row_batch_fold_all(cw, ch)),
         )
-        _BF_CACHE[mul] = o
-    return o
+    return _BF_OPS
 
 
 def _to_ghash(soa):
@@ -92,7 +90,7 @@ def _root_f128(root):
 
 
 def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_size,
-          n_queries, ch, mul=field.mul, use_host_sha: bool = False) -> dict:
+          n_queries, ch, use_host_sha: bool = False) -> dict:
     """Run BaseFold open on the SHARED challenger `ch` (so it composes in
     pcs::open after ring-switch). z_packed=a_init uint64 [2^log_msg,2]; b same;
     codeword uint64 [2^k_code · num_ntts, 2]; initial_tree uint8 [2·n_leaves-1, 32]
@@ -113,7 +111,7 @@ def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_s
     fold_fn = jax.jit(code.fold) if code is not None else None
 
     ch.observe_label(LABEL)
-    round_message, fold_single, row_batch = _bf_ops(mul)
+    round_message, fold_single, row_batch = _bf_ops()
 
     a = jnp.asarray(z_packed)
     bb = jnp.asarray(b)
@@ -256,7 +254,7 @@ def _fold_coset(code, buf_g, betas, input_layer, coset_idx, k_code):
 
 
 def verify(target, proof, initial_codeword_root, k_code, log_inv_rate,
-           log_batch_size, ch, mul=field.mul) -> tuple[bool, dict]:
+           log_batch_size, ch) -> tuple[bool, dict]:
     """flock's BaseFold verifier (`pcs::basefold::verify`), authored in jax. Replays
     the sumcheck + multi-arity FRI consistency on the shared challenger `ch`, then
     batch-verifies the three Merkle categories through zorch's
@@ -350,7 +348,7 @@ def verify(target, proof, initial_codeword_root, k_code, log_inv_rate,
     if log_batch_size > 0:
         rb_ch = jnp.stack([jnp.asarray(challenges[i]) for i in range(log_batch_size)])
         prbv = np.asarray(fri.row_batch_fold_all(
-            jnp.asarray(init_leaves.reshape(n_q * num_ntts, 2)), rb_ch, mul))  # [Q, 2]
+            jnp.asarray(init_leaves.reshape(n_q * num_ntts, 2)), rb_ch))  # [Q, 2]
     else:
         prbv = init_leaves.reshape(n_q, 2)
 

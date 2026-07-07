@@ -92,21 +92,21 @@ def _check(name: str, got: np.ndarray, golden: np.ndarray) -> None:
         )
 
 
-def run(path: Path | None = None, mul=field.mul) -> dict:
+def run(path: Path | None = None) -> dict:
     path = path or (_artifacts_dir() / "sumcheck_golden.bin")
     eq_cases, rp_cases, fs_cases = load(path)
 
-    build_eq = jax.jit(lambda r: sumcheck.build_eq(r, mul=mul))
+    build_eq = jax.jit(lambda r: sumcheck.build_eq(r))
     for n, r, eq in eq_cases:
         _check(f"build_eq(n={n})", build_eq(jnp.asarray(r)), eq)
 
     for log_n, a, b, r, msg_one, msg_inf in rp_cases:
-        fn = jax.jit(lambda aa, bb, rr, ln=log_n: sumcheck.round_pair(aa, bb, rr, mul=mul))
+        fn = jax.jit(lambda aa, bb, rr, ln=log_n: sumcheck.round_pair(aa, bb, rr))
         g_one, g_inf = fn(jnp.asarray(a), jnp.asarray(b), jnp.asarray(r))
         _check(f"round_pair msg_one(log_n={log_n})", g_one, msg_one)
         _check(f"round_pair msg_inf(log_n={log_n})", g_inf, msg_inf)
 
-    fold = jax.jit(lambda a, z: sumcheck.fold_single(a, z, mul=mul))
+    fold = jax.jit(lambda a, z: sumcheck.fold_single(a, z))
     for log_n, a, z, folded in fs_cases:
         _check(f"fold_single(log_n={log_n})", fold(jnp.asarray(a), jnp.asarray(z)), folded)
 
@@ -122,7 +122,7 @@ def test_sumcheck_oracle():
 
 
 if __name__ == "__main__":
-    sizes = run(mul=field.mul)
+    sizes = run()
     print(f"sumcheck byte-match (software mul): PASS on {jax.default_backend()} | "
           f"build_eq n={sizes['eq']} round_pair log_n={sizes['round_pair']} "
           f"fold log_n={sizes['fold']}")
