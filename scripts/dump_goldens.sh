@@ -28,6 +28,13 @@ mkdir -p artifacts
 dump() { echo "  dump_$1"; "./target/release/examples/dump_$1"; }
 
 for d in "${CORE[@]}"; do dump "$d"; done
+
+# BaseFold verifier multi-epoch byte-anchor: the default basefold dump above is
+# 1 FRI epoch (arities [5]); basefold_verify_oracle_test also accepts flock's own
+# 3-epoch proof (m=22 -> arities [6,6,1]) to exercise the cross-epoch coset refold.
+echo "  dump_basefold (3-epoch)"
+./target/release/examples/dump_basefold 22 1 2 artifacts/basefold_3epoch_golden.bin
+
 if [ "${1:-core}" = all ]; then
   echo "-- heavy real hash-circuit goldens (slow) --"
   for d in "${HEAVY[@]}"; do dump "$d"; done
