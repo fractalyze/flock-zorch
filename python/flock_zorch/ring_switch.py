@@ -87,8 +87,8 @@ def prove_batched(packed_witness, x_outers, ch: Challenger, mul=field.mul):
 
     s_hat_vs, rs_eq_inds, sumcheck_claims = [], [], []
     for (s_hat_v_lanes, suffix_tensor, eq_r_dprime, claim), g in zip(works, gammas):
-        scaled = mul(jnp.asarray(g), jnp.asarray(eq_r_dprime))    # gamma baked into eq (flock mul)
-        rs_eq_inds.append(_from_ghash(zrs.rs_eq_ind(suffix_tensor, _to_ghash(scaled))))
+        scaled = _to_ghash(jnp.asarray(g)) * _to_ghash(jnp.asarray(eq_r_dprime))  # gamma baked into eq
+        rs_eq_inds.append(_from_ghash(zrs.rs_eq_ind(suffix_tensor, scaled)))
         s_hat_vs.append(s_hat_v_lanes)
         sumcheck_claims.append(claim)
     return s_hat_vs, rs_eq_inds, sumcheck_claims, gammas
