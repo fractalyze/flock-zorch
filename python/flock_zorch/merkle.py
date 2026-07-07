@@ -10,8 +10,7 @@ extra hashes, cheaper trace; Merkle is <1% of PCS commit). The flat tree layout
 (`tree[0..n]` leaf hashes, then each level up, root at `tree[2n-2]`) is the
 concatenation of zorch's `digest_layers`.
 
-The octopus multi-proof and the SHA-NI host path (`use_host_sha`) stay flock-side:
-the proof layout is flock's assembly, and the host tree is one native call.
+The octopus multi-proof stays flock-side: the proof layout is flock's assembly.
 """
 from __future__ import annotations
 
@@ -22,9 +21,6 @@ import numpy as np
 from zorch.commit.merkle import MerkleTree
 
 from flock_zorch import sha256
-from flock_zorch._merkle_host_ffi import (  # the SHA-NI off-GPU path (use_host_sha)
-    host_sha_available, _merkle_tree_host, _merkle_root_host,
-)
 
 
 def _digest(msgs, length: int):
@@ -132,12 +128,9 @@ def _tree_dev(leaves):
     return jnp.concatenate(layers, axis=0)  # [2*n_leaves - 1, 32], flock's layout
 
 
-def merkle_root(leaves, use_host_sha: bool = False) -> np.ndarray:
+def merkle_root(leaves) -> np.ndarray:
     """32-byte Merkle root of `n_leaves` equal-sized leaves. uint8 [n_leaves, leaf_size]
-    -> uint8 [32], byte-identical to flock. One jit (commit fold is a single scan),
-    or built on the host with flock's SHA-NI Merkle when `use_host_sha`."""
-    if use_host_sha:
-        return _merkle_root_host(leaves)
+    -> uint8 [32], byte-identical to flock. One jit (commit fold is a single scan)."""
     return np.asarray(_root_dev(jnp.asarray(leaves, dtype=jnp.uint8)))
 
 
@@ -147,15 +140,12 @@ def merkle_root_from_flat(data, n_leaves: int) -> np.ndarray:
     return merkle_root(data)
 
 
-def merkle_tree(leaves, use_host_sha: bool = False) -> np.ndarray:
+def merkle_tree(leaves) -> np.ndarray:
     """Full flat Merkle tree, byte-identical to flock's `merkle_tree` layout:
     `tree[0..n]` = leaf hashes (level k), then level k-1, …, root at `tree[2n-2]`.
 
     leaves: uint8 [n, leaf_size] (n a power of two). Returns uint8 [2n-1, 32].
-    One jit (zorch digest_layers, concatenated), or built on the host with
-    flock's SHA-NI Merkle when `use_host_sha`."""
-    if use_host_sha:
-        return _merkle_tree_host(leaves)
+    One jit (zorch digest_layers, concatenated)."""
     return np.asarray(_tree_dev(jnp.asarray(leaves, dtype=jnp.uint8)))
 
 

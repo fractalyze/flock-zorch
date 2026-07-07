@@ -39,7 +39,7 @@ If you cloned without `--recursive`, `scripts/setup.sh` runs `git submodule upda
 
 `scripts/setup.sh` does, in order: preflight → submodules → Python venv (`.venv`,
 from `requirements.in` + the fractalyze PyPI index) → `cargo build --release`
-(cdylib + dumpers + CPU benches) → optional clmad → regenerate the core goldens →
+(dumpers + CPU benches) → optional clmad → regenerate the core goldens →
 two **smoke gates** (`field`, `e2e`) that prove byte-identity end-to-end.
 
 ## Running the gates

@@ -14,10 +14,10 @@ numpy
 # wheels lack the interior-padding lowering lincheck's `_seg_xor_fold`
 # (jax.lax.associative_scan) needs — the sha2/blake3 GPU gates raise
 # NotImplementedError on them. Bump these together with the submodule pin.
-jax==0.10.0.dev20260707014333
-jaxlib==0.10.0.dev20260707014333
-jax-cuda12-plugin==0.10.0.dev20260707014333
-jax-cuda12-pjrt==0.10.0.dev20260707014333
+jax==0.10.0.dev20260707115835
+jaxlib==0.10.0.dev20260707115835
+jax-cuda12-plugin==0.10.0.dev20260707115835
+jax-cuda12-pjrt==0.10.0.dev20260707115835
 # zk_dtypes ships the native field dtypes jax lowers; arrives transitively via
 # jax but the resolver lags, so pin it so the lock tracks the jax wheel.
 # 0.0.8 adds the flat-GHASH binary_field_ghash dtype (zk_dtypes#146).

@@ -45,7 +45,7 @@ def main():
     z = g["z"]; stmt = g["stmt"]
 
     def prove_once():
-        root, codeword, tree = pcs_commit.commit(z, m, lir, lbs, use_host_sha=True)
+        root, codeword, tree = pcs_commit.commit(z, m, lir, lbs)
         ch = Challenger(b"flock-blake3-v0")
         prover.bind_statement(ch, stmt, root)
         zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch)
@@ -54,7 +54,7 @@ def main():
         _r, _zp, lc_claim, _zv = lincheck.prove(g["zlc"], None, None, x_ab, m, k_log, k_skip, ch=ch, capture=True, circuit=csc)
         ab_full = np.concatenate([lc_claim["r_inner_rest"], x_ab["x_outer"]], axis=0)
         c_full = np.concatenate([zc["r_rest"][:ir], zc["r_rest"][ir:]], axis=0)
-        return prover.open_batch(z, codeword, tree, [ab_full, c_full], k_code, lir, lbs, ch, use_host_sha=True)
+        return prover.open_batch(z, codeword, tree, [ab_full, c_full], k_code, lir, lbs, ch)
 
     t = best(prove_once, n=3)
     sp = f"{cpu/t:.1f}x vs same-instance flock BaseFold CPU {cpu:.0f}ms" if cpu else "(pass CPU ms as argv[1])"

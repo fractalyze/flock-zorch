@@ -72,20 +72,18 @@ def _encode_codeword(z_packed, m: int, log_inv_rate: int, log_batch_size: int):
     return codeword, n_pos_code, num_ntts
 
 
-def commit(z_packed, m: int, log_inv_rate: int, log_batch_size: int,
-           use_host_sha: bool = False):
+def commit(z_packed, m: int, log_inv_rate: int, log_batch_size: int):
     """Full PCS commit: returns (root uint8[32], codeword uint64[.,2], tree uint8[2n-1,32]).
     The codeword + tree are the prover_data the PCS open consumes. Byte-identical
     to flock `pcs::commit` (root) + its ProverData (codeword, merkle_tree)."""
     codeword, n_pos_code, num_ntts = _encode_codeword(z_packed, m, log_inv_rate, log_batch_size)
     cw_np = np.asarray(codeword)
     leaves = cw_np.reshape(n_pos_code, num_ntts * 2).view(np.uint8)
-    tree = merkle.merkle_tree(leaves, use_host_sha=use_host_sha)
+    tree = merkle.merkle_tree(leaves)
     return tree[-1], cw_np, tree
 
 
-def commit_root(z_packed, m: int, log_inv_rate: int, log_batch_size: int,
-                use_host_sha: bool = False) -> np.ndarray:
+def commit_root(z_packed, m: int, log_inv_rate: int, log_batch_size: int) -> np.ndarray:
     """32-byte Merkle root of the PCS commitment to `z_packed`.
 
     z_packed: uint64 [2^(m-7), 2]. Returns uint8 [32], byte-identical to
@@ -95,4 +93,4 @@ def commit_root(z_packed, m: int, log_inv_rate: int, log_batch_size: int,
     # Each leaf = one position's num_ntts F128 = num_ntts*16 LE bytes (F128 is
     # lo||hi little-endian, same as a uint64 array viewed as bytes on x86).
     leaves = np.asarray(codeword).reshape(n_pos_code, num_ntts * 2).view(np.uint8)
-    return merkle.merkle_root(leaves, use_host_sha=use_host_sha)
+    return merkle.merkle_root(leaves)

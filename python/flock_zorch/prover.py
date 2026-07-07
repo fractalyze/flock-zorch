@@ -72,7 +72,7 @@ def _combine_claims(rs_eq_inds, gammas, sumcheck_claims, packed_direct=(), gamma
 
 
 def open_batch(z_packed, codeword, init_tree, x_outers, k_code, log_inv_rate,
-               log_batch_size, ch, use_host_sha: bool = False) -> dict:
+               log_batch_size, ch) -> dict:
     """Batched dual-claim PCS open — byte-identical to flock
     `pcs::open_batch_padded_with_precomputed_s_hat_v` (BatchOpeningProof =
     {ring_switches, basefold}). Each x_outers[i] = quirky_x_outer_full(claim.point)
@@ -86,23 +86,21 @@ def open_batch(z_packed, codeword, init_tree, x_outers, k_code, log_inv_rate,
     b_combined = np.asarray(b_combined)
     n_queries = fri.default_fri_queries(log_inv_rate)
     bf = basefold.prove(z_packed, b_combined, codeword, init_tree, k_code,
-                        log_inv_rate, log_batch_size, n_queries, ch,
-                        use_host_sha=use_host_sha)
+                        log_inv_rate, log_batch_size, n_queries, ch)
     return {"ring_switches": s_hat_vs, "basefold": bf}
 
 
-def open_batch_ligerito(config, z_packed, codeword, init_tree, x_outers, ch,
-                        use_host_sha=False) -> dict:
+def open_batch_ligerito(config, z_packed, codeword, init_tree, x_outers, ch) -> dict:
     """Batched dual-claim PCS open with the LIGERITO backend — the headline path.
     The no-packed-direct case of `open_batch_mixed_ligerito`: N ring-switched
     claims (x_outers, e.g. ab+c), zero direct ẑ-evaluation claims. Returns
     {ring_switches, ligerito: LigeritoProof}."""
     return open_batch_mixed_ligerito(config, z_packed, codeword, init_tree, x_outers,
-                                     (), ch, use_host_sha=use_host_sha)
+                                     (), ch)
 
 
 def open_batch_mixed_ligerito(config, z_packed, codeword, init_tree, x_outers, packed_direct,
-                              ch, use_host_sha=False) -> dict:
+                              ch) -> dict:
     """Mixed batched open (flock `open_batch_mixed_ligerito_with_precomputed_s_hat_v`)
     — the HASH-CHAIN open, and the general Ligerito open. Combines N ring-switched
     claims (x_outers, e.g. ab+c) with M packed-direct claims (the chain claim: a
@@ -123,9 +121,9 @@ def open_batch_mixed_ligerito(config, z_packed, codeword, init_tree, x_outers, p
     b_combined, target = _combine_claims(rs_eq_inds, gammas, sumcheck_claims,
                                          packed_direct=packed_direct, gammas_pd=gammas_pd)
     # The Ligerito recursion runs in zorch (`zorch.pcs.ligerito`) via the flock
-    # FS seam; the driver re-commits L0 internally, so `codeword`/`init_tree`/
-    # `use_host_sha` are unused here (reusing the external commit is a perf
-    # follow-up). The ghash algebra rides the dtype, so `mul` is not threaded.
+    # FS seam; the driver re-commits L0 internally, so `codeword`/`init_tree`
+    # are unused here (reusing the external commit is a perf follow-up). The
+    # ghash algebra rides the dtype, so `mul` is not threaded.
     lig = zorch_ligerito.prove_flock_ligerito(config, z_packed, b_combined, target, ch)
     return {"ring_switches": s_hat_vs, "ligerito": lig}
 
@@ -223,14 +221,13 @@ class _PcsOpenRound(Round):
         pcs = self._pcs
         pcs_open_proof = open_batch(
             carry.z_packed, carry.codeword, carry.tree, [ab_full, c_full], pcs.k_code,
-            pcs.log_inv_rate, pcs.log_batch_size, transcript,
-            use_host_sha=pcs.use_host_sha)
+            pcs.log_inv_rate, pcs.log_batch_size, transcript)
         return carry, transcript, pcs_open_proof
 
 
 def prove_fast(z_packed, m, k_log, k_skip, useful_bits, a0, b0, z_lincheck, statement_digest,
                log_inv_rate=1, log_batch_size=5, domain=b"flock-test-v0",
-               use_host_sha=False, byte_hash=None) -> dict:
+               byte_hash=None) -> dict:
     """Fused single-call R1CS prover (identity-C path: c = z), byte-identical to
     flock `prover::prove`. A zorch `ProveChain` of stage `Round`s threading one
     shared challenger + a `_ProveCarry` (no per-phase host re-transfer):
@@ -244,7 +241,7 @@ def prove_fast(z_packed, m, k_log, k_skip, useful_bits, a0, b0, z_lincheck, stat
     byte-identical to the host hashlib
     (`byte_transcript_test.test_device_substrate_matches_host`), so flock keeps no
     device gate of its own; per #7 the marker regresses the host-driven prover."""
-    pcs = FlockPcsProver(m, log_inv_rate, log_batch_size, use_host_sha)
+    pcs = FlockPcsProver(m, log_inv_rate, log_batch_size)
 
     ch = Challenger(domain, byte_hash=byte_hash)
     carry = _ProveCarry(z_packed=z_packed, statement_digest=statement_digest,

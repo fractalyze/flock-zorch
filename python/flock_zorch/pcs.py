@@ -39,7 +39,6 @@ class FlockPcsProver:
     m: int
     log_inv_rate: int
     log_batch_size: int
-    use_host_sha: bool = False
 
     @property
     def k_code(self) -> int:
@@ -55,8 +54,7 @@ class FlockPcsProver:
             raise ValueError(
                 f"packed witness has {len(z_packed)} positions, m={self.m} expects {expect}")
         root, codeword, tree = pcs_commit.commit(
-            z_packed, self.m, self.log_inv_rate, self.log_batch_size,
-            self.use_host_sha)
+            z_packed, self.m, self.log_inv_rate, self.log_batch_size)
         return root, FlockPcsProverData(z_packed=z_packed, codeword=codeword, tree=tree)
 
     def open(
@@ -71,5 +69,5 @@ class FlockPcsProver:
         proof = pcs_open.open(
             prover_data.z_packed, prover_data.codeword, prover_data.tree,
             points[0], self.k_code, self.log_inv_rate, self.log_batch_size,
-            transcript, use_host_sha=self.use_host_sha)
+            transcript)
         return proof["ring_switch"], proof, transcript

@@ -4,12 +4,6 @@ version = "0.1.0"
 edition = "2021"
 description = "GPU port of succinctlabs/flock (R1CS-over-GF(2) PIOP) via the zorch/zkx compiler stack"
 
-# Build a C-ABI shared object too, so the host SHA-NI Merkle FFI
-# (`optim/merkle_ffi/merkle_ffi.rs`, re-exported as `merkle_ffi` below) is callable
-# from the jax prover via ctypes. `rlib` keeps the examples/oracles building normally.
-[lib]
-crate-type = ["rlib", "cdylib"]
-
 [dependencies]
 # The byte-compare baseline: unmodified upstream flock, pinned as the git submodule
 # third_party/flock (see .gitmodules) and path-depped so its types and reference
