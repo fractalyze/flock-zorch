@@ -21,10 +21,9 @@ import jax.numpy as jnp  # noqa: E402
 
 from flock_zorch import field, pcs_commit, zerocheck  # noqa: E402
 
-from flock_zorch.testing._util import best, select_mul  # noqa: E402
+from flock_zorch.testing._util import best  # noqa: E402
 
-MUL = select_mul()
-MULNAME = "clmad" if MUL is not field.mul else "software"
+MULNAME = "software"
 
 LOG_INV_RATE = 1
 LOG_BATCH = 5
@@ -43,7 +42,7 @@ def bench_zerocheck(m):
     b = rng.integers(0, 2, size=1 << m, dtype=np.uint8)
     c = rng.integers(0, 2, size=1 << m, dtype=np.uint8)
     # prove_packed is a host loop (jit'd kernels inside); time the whole call.
-    return best(lambda: zerocheck.prove_packed(a, b, c, m, b"flock-bench-v0", mul=MUL), n=3)
+    return best(lambda: zerocheck.prove_packed(a, b, c, m, b"flock-bench-v0", mul=field.mul), n=3)
 
 
 def main():

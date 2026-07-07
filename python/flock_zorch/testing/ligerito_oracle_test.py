@@ -24,8 +24,6 @@ from flock_zorch.challenger import Challenger  # noqa: E402
 
 ART = Path(__file__).resolve().parents[3] / "artifacts"
 
-MUL = field.mul
-
 
 class R:
     def __init__(self, buf): self.b = buf; self.o = 0
@@ -105,8 +103,8 @@ def run(mul):
 
 
 def main() -> int:
-    print(f"device {jax.devices()[0]} | mul {'clmad' if MUL is not field.mul else 'software'}")
-    g, results = run(MUL)
+    print(f"device {jax.devices()[0]} | mul software")
+    g, results = run(field.mul)
     allok = True
     for nm, ok in results:
         print(f"  {'PASS' if ok else 'FAIL'}  {nm}"); allok = allok and ok

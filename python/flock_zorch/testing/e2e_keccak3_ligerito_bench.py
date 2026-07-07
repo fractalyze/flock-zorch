@@ -10,9 +10,7 @@ from flock_zorch import field, pcs_commit, zerocheck, lincheck, prover  # noqa: 
 from flock_zorch.challenger import Challenger  # noqa: E402
 from flock_zorch.keccak3_lincheck import Keccak3LincheckCircuit  # noqa: E402
 from flock_zorch.testing.keccak3_ligerito_oracle_test import load, _unpack  # noqa: E402
-from flock_zorch.testing._util import best, select_mul  # noqa: E402
-
-MUL = select_mul()
+from flock_zorch.testing._util import best  # noqa: E402
 
 
 def main():
@@ -23,18 +21,18 @@ def main():
     circ = Keccak3LincheckCircuit()
     a_bits, b_bits, c_bits = _unpack(g["a"], m), _unpack(g["b"], m), _unpack(g["z"], m)
     z, stmt = g["z"], g["stmt"]
-    print(f"device {jax.devices()[0]} | mul {'clmad' if MUL is not field.mul else 'software'} | keccak3-ligerito m={m}")
+    print(f"device {jax.devices()[0]} | mul software | keccak3-ligerito m={m}")
 
     def prove_once():
-        root, codeword, tree = pcs_commit.commit(z, m, lir, lbs, mul=MUL, use_host_sha=True)
+        root, codeword, tree = pcs_commit.commit(z, m, lir, lbs, mul=field.mul, use_host_sha=True)
         ch = Challenger(b"flock-keccak3-lig-v0"); prover.bind_statement(ch, stmt, root)
-        zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, mul=MUL, ch=ch)
+        zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, mul=field.mul, ch=ch)
         x_ab = {"z_skip": zc["z"], "x_inner_rest": zc["mlv_challenges"][:ir], "x_outer": zc["mlv_challenges"][ir:]}
         _r, _zp, lcc, _zv = lincheck.prove(g["zlc"], None, None, x_ab, m, k_log, k_skip,
-                                           mul=MUL, ch=ch, capture=True, circuit=circ)
+                                           mul=field.mul, ch=ch, capture=True, circuit=circ)
         ab = np.concatenate([lcc["r_inner_rest"], x_ab["x_outer"]], axis=0)
         cc = np.concatenate([zc["r_rest"][:ir], zc["r_rest"][ir:]], axis=0)
-        return prover.open_batch_ligerito(cfg, z, codeword, tree, [ab, cc], ch, mul=MUL, use_host_sha=True)
+        return prover.open_batch_ligerito(cfg, z, codeword, tree, [ab, cc], ch, mul=field.mul, use_host_sha=True)
 
     t = best(prove_once, n=3)
     sp = f"{cpu / t:.1f}x vs same-instance flock keccak3 Ligerito CPU {cpu:.0f}ms" if cpu else ""

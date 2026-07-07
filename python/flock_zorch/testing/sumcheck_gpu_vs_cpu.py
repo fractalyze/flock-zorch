@@ -74,14 +74,13 @@ def _gpu_eq_ms(fn, r) -> float:
 
 
 def main() -> int:
-    mul = field.mul
     print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()} | "
           "mul: software loop")
     print("CPU baseline: unmodified flock build_eq (x86 scalar; flock's NEON is "
           "aarch64-gated — see flock-baseline-needs-macbook)\n")
 
     # 1. byte-identity gate (reuse the oracle on the dumped fixture).
-    oracle.run(mul=mul)
+    oracle.run(mul=field.mul)
     print("byte-identity vs flock (build_eq / round_pair / fold_single): PASS")
 
     # 2. speed.
@@ -89,7 +88,7 @@ def main() -> int:
     worst = float("inf")
     for n in SIZES:
         r = jnp.asarray(np.random.default_rng(7).integers(0, 2**64, size=(n, 2), dtype=np.uint64))
-        fn = jax.jit(lambda rr: sumcheck.build_eq(rr, mul=mul))
+        fn = jax.jit(lambda rr: sumcheck.build_eq(rr, mul=field.mul))
         gpu = _gpu_eq_ms(fn, r)
         cpu = _cpu_eq_ms(n)
         spd = cpu / gpu
