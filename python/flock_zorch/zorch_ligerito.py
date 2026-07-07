@@ -268,8 +268,7 @@ def flock_octopus(path_layers: list[Array], positions: Array) -> np.ndarray:
     tests' `merkle_proof` fields)."""
     positions = [int(p) for p in np.asarray(positions).reshape(-1)]
     layers = [np.asarray(pl) for pl in path_layers]
-    num_leaves = 1 << len(layers)
-    if not positions or num_leaves == 1:
+    if not positions or not layers:
         return np.zeros((0, 32), np.uint8)
     proof: list[np.ndarray] = []
     nodes = list(positions)  # each query's node index at the current level
@@ -310,14 +309,12 @@ def _flock_proof_dict(
             "merkle_proof": flock_octopus(opening.path, p.component_positions[j]),
         }
 
-    sumcheck_transcript = []
-    for m in p.sumcheck_messages:
-        u0, u2 = _lohi(m)  # each round message is the (u0, u2) F128 pair
-        sumcheck_transcript.append((u0, u2))
+    # each round message is the (u0, u2) F128 pair
+    sumcheck_transcript = [tuple(_lohi(m)) for m in p.sumcheck_messages]
 
     # pow_witnesses ride in schedule order (fold grinds then the query grind, per
     # level); flock splits them into fold_grinding_nonces + grinding_nonces.
-    witness = iter(int(w) for w in p.pow_witnesses)
+    witness = iter(int(w) for w in np.asarray(p.pow_witnesses))
     fold_nonces, query_nonces = [], []
     for j in range(num_levels):
         for i in range(config.fold_ks[j]):
@@ -325,15 +322,18 @@ def _flock_proof_dict(
                 fold_nonces.append(next(witness))
         if chor.query_grind_bits(j) is not None:
             query_nonces.append(next(witness))
+    if next(witness, None) is not None:
+        raise ValueError(
+            f"proof carries more pow_witnesses ({len(p.pow_witnesses)}) than the "
+            "choreography schedules — config/proof mismatch"
+        )
 
-    final = level(num_levels - 1)
-    final["yr"] = _lohi(_bitrev(p.final_residual))
     return {
         "initial_root": initial_root,
         "initial_proof": level(0),
         "recursive_roots": [np.asarray(r) for r in p.recursive_roots],
         "recursive_proofs": [level(j) for j in range(1, num_levels - 1)],
-        "final_proof": final,
+        "final_proof": {**level(num_levels - 1), "yr": _lohi(_bitrev(p.final_residual))},
         "sumcheck_transcript": sumcheck_transcript,
         "grinding_nonces": query_nonces,
         "ood_values": [_lohi(y).reshape(2) for y in p.ood_values],
