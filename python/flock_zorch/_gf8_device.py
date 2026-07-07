@@ -86,10 +86,11 @@ def _round1_core(mul):
             a_l = _fft_dev(_ifft_dev(a, tw_s, k_skip), tw_l, k_skip)
             b_l = _fft_dev(_ifft_dev(b, tw_s, k_skip), tw_l, k_skip)
             c_l = _fft_dev(_ifft_dev(c, tw_s, k_skip), tw_l, k_skip)
-            phi_ab = _PHI_DEV[_gf8_mul_dev(a_l, b_l).astype(jnp.int32)]
-            phi_c = _PHI_DEV[c_l.astype(jnp.int32)]
-            return (field.sum(mul(eqx, phi_ab), axis=0),
-                    field.sum(mul(eqx, phi_c), axis=0))
+            phi_ab = field.to_ghash(_PHI_DEV[_gf8_mul_dev(a_l, b_l).astype(jnp.int32)])
+            phi_c = field.to_ghash(_PHI_DEV[c_l.astype(jnp.int32)])
+            eqx_g = field.to_ghash(eqx)                        # [n_chunks, 1]
+            return (field.from_ghash(jnp.sum(eqx_g * phi_ab, axis=0)),
+                    field.from_ghash(jnp.sum(eqx_g * phi_c, axis=0)))
         fn = core
         _R1_CACHE[mul] = fn
     return fn

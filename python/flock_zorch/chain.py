@@ -104,11 +104,11 @@ def fold_in_out(packed, k_log, tau_pos, input_byte_off, output_byte_off, mul=fie
     out_base = (output_byte_off * 8) >> LOG_PACKING
     assert packed.shape[0] % block_packed == 0
     n_inst = packed.shape[0] // block_packed
-    eq_tau = build_eq(jnp.asarray(tau_pos), mul=mul)             # (n_packed, 2)
+    eq_tau = field.to_ghash(build_eq(jnp.asarray(tau_pos), mul=mul))  # (n_packed,)
 
-    pk = jnp.asarray(packed).reshape(n_inst, block_packed, 2)
-    in_reg = pk[:, in_base:in_base + n_packed, :]                # (n_inst, n_packed, 2)
-    out_reg = pk[:, out_base:out_base + n_packed, :]
-    in_vals = field.sum(mul(in_reg, eq_tau[None]), axis=1)     # (n_inst, 2)
-    out_vals = field.sum(mul(out_reg, eq_tau[None]), axis=1)
-    return np.asarray(in_vals), np.asarray(out_vals)
+    pk = field.to_ghash(jnp.asarray(packed).reshape(n_inst, block_packed, 2))  # (n_inst, block_packed)
+    in_reg = pk[:, in_base:in_base + n_packed]                   # (n_inst, n_packed)
+    out_reg = pk[:, out_base:out_base + n_packed]
+    in_vals = jnp.sum(in_reg * eq_tau[None], axis=1)            # (n_inst,)
+    out_vals = jnp.sum(out_reg * eq_tau[None], axis=1)
+    return np.asarray(field.from_ghash(in_vals)), np.asarray(field.from_ghash(out_vals))

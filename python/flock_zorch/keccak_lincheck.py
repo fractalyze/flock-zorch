@@ -199,7 +199,10 @@ def _combine_alpha_sides(comb_a, comb_b, alpha, mul=field.mul):
     """comb = α·comb_a ⊕ comb_b — ONE field mul. GF(2¹²⁸) multiplication distributes
     over XOR, so the A-side accumulates unscaled and is α-scaled once at the end.
     Shared by the single-keccak and keccak3 walkers."""
-    return np.asarray(field.add(mul(jnp.asarray(alpha), jnp.asarray(comb_a)), jnp.asarray(comb_b)))
+    a_g = field.to_ghash(jnp.asarray(alpha))
+    ca_g = field.to_ghash(jnp.asarray(comb_a))
+    cb_g = field.to_ghash(jnp.asarray(comb_b))
+    return np.asarray(field.from_ghash(a_g * ca_g + cb_g))
 
 
 class KeccakLincheckCircuit:
