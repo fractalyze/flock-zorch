@@ -16,7 +16,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from flock_zorch import field, ring_switch, basefold, fri, zerocheck, lincheck, ligerito
+from flock_zorch import field, ring_switch, basefold, fri, zerocheck, lincheck, zorch_ligerito
 from flock_zorch.sumcheck import build_eq
 from flock_zorch.challenger import Challenger  # noqa: F401  (re-exported for callers)
 from flock_zorch.pcs import FlockPcsProver
@@ -122,9 +122,11 @@ def open_batch_mixed_ligerito(config, z_packed, codeword, init_tree, x_outers, p
 
     b_combined, target = _combine_claims(rs_eq_inds, gammas, sumcheck_claims, mul,
                                          packed_direct=packed_direct, gammas_pd=gammas_pd)
-    lig = ligerito.recursive_prover_with_basis(
-        config, np.asarray(z_packed), np.asarray(b_combined), np.asarray(target),
-        codeword, init_tree, ch, mul=mul, use_host_sha=use_host_sha)
+    # The Ligerito recursion runs in zorch (`zorch.pcs.ligerito`) via the flock
+    # FS seam; the driver re-commits L0 internally, so `codeword`/`init_tree`/
+    # `use_host_sha` are unused here (reusing the external commit is a perf
+    # follow-up). The ghash algebra rides the dtype, so `mul` is not threaded.
+    lig = zorch_ligerito.prove_flock_ligerito(config, z_packed, b_combined, target, ch)
     return {"ring_switches": s_hat_vs, "ligerito": lig}
 
 
