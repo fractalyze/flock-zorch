@@ -37,15 +37,14 @@ class _R:
     def raw(s, n): v = s.b[s.o:s.o + n]; s.o += n; return v
 
 
-def _check_golden():
+def _check_golden(path):
     """Byte-anchor: `basefold.verify` must ACCEPT a proof produced by UNMODIFIED
-    flock (`artifacts/basefold_golden.bin`), replaying the same challenger domain
-    the fixture was dumped with. Stronger than the python round-trip — the proof
-    bytes are flock's own."""
-    path = ART / "basefold_golden.bin"
-    if not path.exists():
-        print("golden accept: SKIP (no basefold_golden.bin; run scripts/dump_goldens.sh core)")
-        return True
+    flock, replaying the same challenger domain the fixture was dumped with.
+    Stronger than the python round-trip — the proof bytes are flock's own. The
+    config (m/lir/lbs) is read from the fixture header, so one reader drives
+    whatever epoch schedule the golden was dumped at. Missing golden is a hard
+    error (matches `basefold_oracle_test`); the gate never degrades to a vacuous
+    self-consistent round-trip."""
     rd = _R(path.read_bytes())
     assert rd.raw(8) == b"FLKBSF01"
     m, lir, lbs, n_q = rd.u(), rd.u(), rd.u(), rd.u()
@@ -74,7 +73,9 @@ def _check_golden():
     target = np.asarray(field.sum(field.mul(jnp.asarray(z_packed), jnp.asarray(b))))
     ch = Challenger(DOMAIN)
     ok, info = basefold.verify(target, proof, root, k_code, lir, lbs, ch)
-    print(f"golden accept (flock's own proof, m={m} lir={lir} lbs={lbs}): "
+    arities = fri.compute_fri_arities(k_code - lir)
+    print(f"golden accept (flock's own proof, m={m} lir={lir} lbs={lbs}, "
+          f"{len(arities)} epoch, arities={arities}): "
           f"{'PASS' if ok else 'FAIL ' + info['reason']}")
     return ok
 
@@ -125,8 +126,9 @@ def main() -> int:
     print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()}")
     ok = True
 
-    # Byte-anchor: accept unmodified flock's own proof.
-    ok = _check_golden() and ok
+    # Byte-anchor: accept unmodified flock's own proof, 1-epoch and multi-epoch.
+    ok = _check_golden(ART / "basefold_golden.bin") and ok         # 1 epoch  [5]
+    ok = _check_golden(ART / "basefold_3epoch_golden.bin") and ok  # 3 epochs [6,6,1]
 
     # Python round-trip across the FRI-epoch schedule.
     a1, _ = _check_accept(14, 1, 2, 0); ok = a1 and ok       # 1 epoch  [5]
