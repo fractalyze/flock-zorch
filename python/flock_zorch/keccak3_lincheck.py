@@ -4,12 +4,12 @@ r1cs_hashes/keccak3.rs:449-484`). Task #14, M3b — the headline keccak backend.
 
 keccak3 packs THREE independent keccak permutations per block at K_LOG=17 (useful
 ≈ 97.3% vs single-keccak's 65%). The walker is exactly three disjoint copies of
-the single-keccak transpose recurrence — `accumulate_subkeccak(i)` for i∈0..3,
-each over sub-keccak i's column region, merged by XOR into a shared `comb` plus
-one shared const row. All the per-sub-keccak phase logic, the θ∘ρ∘π preimage maps
-and φ/φᵀ helpers are reused verbatim from `keccak_lincheck` (flock reuses
-`super::keccak` likewise). Plugs into `lincheck.prove(circuit=)` like the single
-walker; const_pin = the shared Z_CONST.
+the single-keccak transpose recurrence — one `_accumulate_subkeccak_dev` per
+sub-keccak over its column region, merged by XOR into a shared `comb` plus one
+shared const row. The device fold, the θ∘ρ∘π preimage maps and the gather helpers
+are reused verbatim from `keccak_lincheck` (flock reuses `super::keccak` likewise)
+via the shared `_fold_walker`. Plugs into `lincheck.prove(circuit=)` like the
+single walker; const_pin = the shared Z_CONST.
 """
 
 import numpy as np
