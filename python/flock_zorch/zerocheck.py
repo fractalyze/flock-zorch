@@ -70,8 +70,8 @@ def medium_challenges() -> list[int]:
     (flock `medium_challenges_ghash`)."""
     out = []
     for e in (1, 2, 4, 8):
-        ge = _int_to_ghash(1 << e)
-        out.append(_ghash_to_int(ge * _int_to_ghash(1 ^ (1 << e)) ** -1))
+        ge = 1 << e
+        out.append(_ghash_to_int(_int_to_ghash(ge) * _int_to_ghash(1 ^ ge) ** -1))
     return out
 
 

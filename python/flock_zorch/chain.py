@@ -111,4 +111,4 @@ def fold_in_out(packed, k_log, tau_pos, input_byte_off, output_byte_off):
     out_reg = pk[:, out_base:out_base + n_packed]
     in_vals = jnp.sum(in_reg * eq_tau[None], axis=1)            # (n_inst,)
     out_vals = jnp.sum(out_reg * eq_tau[None], axis=1)
-    return np.asarray(field.from_ghash(in_vals)), np.asarray(field.from_ghash(out_vals))
+    return field.from_ghash_host(in_vals), field.from_ghash_host(out_vals)

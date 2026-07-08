@@ -253,8 +253,8 @@ class _ClaimRound(Round):
         r_inner_skip = transcript.sample_f128()               # 7. fresh z_skip AFTER
         lam = _lagrange_weights(k_skip, _to_int(r_inner_skip), 0)  # 8. φ8 S-domain weights
         lam_arr = jnp.asarray(np.stack([_to_lohi(x) for x in lam]))
-        w = np.asarray(field.from_ghash(jnp.sum(                   # inner_product
-            field.to_ghash(lam_arr) * field.to_ghash(jnp.asarray(z_partial)), axis=0)))
+        w = field.from_ghash_host(jnp.sum(                         # inner_product
+            field.to_ghash(lam_arr) * field.to_ghash(jnp.asarray(z_partial)), axis=0))
         r_inner_rest = [np.asarray(r) for r in reversed(carry.r_rounds)]  # 9. LSB-first
         claim = {"r_inner_skip": np.asarray(r_inner_skip),
                  "r_inner_rest": np.stack(r_inner_rest) if r_inner_rest else np.zeros((0, 2), np.uint64),

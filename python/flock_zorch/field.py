@@ -48,6 +48,12 @@ def from_ghash(g):
     return jax.lax.bitcast_convert_type(u32.reshape(*u32.shape[:-1], 2, 2), U64)
 
 
+def from_ghash_host(g) -> np.ndarray:
+    """`from_ghash` materialized to host numpy — for the host-consumed uint64 lanes
+    (verify replay, transcript serde, the chain / lincheck reductions)."""
+    return np.asarray(from_ghash(g))
+
+
 # ---- host int <-> uint64-lane serialization (bit i = coefficient of x^i) ----
 _MASK64 = (1 << 64) - 1
 
@@ -73,7 +79,7 @@ _GHASH_HOST = np.dtype(_GHASH)
 
 def _ints_to_ghash(vals) -> np.ndarray:
     """`list[int]` F128 (bit i = coeff x^i) -> host `binary_field_ghash [n]`."""
-    lohi = np.array([[v & _MASK64, (v >> 64) & _MASK64] for v in vals], np.uint64)
+    lohi = np.array([_to_lohi(v) for v in vals], np.uint64)
     return lohi.reshape(-1).view(_GHASH_HOST)
 
 
@@ -84,5 +90,4 @@ def _int_to_ghash(v: int):
 
 def _ghash_to_int(g) -> int:
     """Host `binary_field_ghash` scalar -> Python int (bit i = coeff x^i)."""
-    u = np.asarray(g).reshape(1).view(np.uint64)
-    return int(u[0]) | (int(u[1]) << 64)
+    return _to_int(np.asarray(g).reshape(1).view(np.uint64))

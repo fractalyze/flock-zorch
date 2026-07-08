@@ -68,12 +68,7 @@ def _bf_ops():
 
 
 _to_ghash = field.to_ghash
-
-
-def _from_ghash(g):
-    """`field.from_ghash` materialized to host numpy [n, 2] — the fold/verify
-    codeword is consumed on the host."""
-    return np.asarray(field.from_ghash(g))
+_from_ghash = field.from_ghash_host
 
 
 def _leaf_bytes(codeword_np, n_leaves, leaf_f128):

@@ -30,12 +30,7 @@ LABEL = b"flock-ring-switch-v0"
 
 
 _to_ghash = field.to_ghash
-
-
-def _from_ghash(arr):
-    """`field.from_ghash` materialized to host numpy — ring-switch consumes the
-    uint64 lanes on the host."""
-    return np.asarray(field.from_ghash(arr))
+_from_ghash = field.from_ghash_host
 
 
 def _reduce_one(packed, x_outer, ch: Challenger):
