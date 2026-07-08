@@ -9,7 +9,7 @@ Two checks against flock-core (`examples/dump_gf8_urm.rs`):
 
 Run (needs jax_enable_x64; host F8 + device F128):
     PYTHONPATH=python:../zorch <venv>/bin/python \
-        python/flock_zorch/testing/gf8_urm_oracle_test.py
+        python/flock_zorch/field/testing/gf8_urm_oracle_test.py
 """
 import os
 from pathlib import Path
