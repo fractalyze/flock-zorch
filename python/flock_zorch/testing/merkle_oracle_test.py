@@ -37,9 +37,9 @@ def _hooks_on_commit_path() -> bool:
     hooks. They are underscore-private upstream, so a pin bump that renames or
     bypasses them would fall back to the byte-identical vmap-of-single path —
     every byte gate stays green while the batch-native `zorch.sha256` marker
-    (the reason `_Sha256MerkleTree` exists) silently evaporates."""
+    (the reason `_Sha256Merkle` exists) silently evaporates."""
     calls = set()
-    cls = merkle._Sha256MerkleTree
+    cls = merkle._Sha256Merkle
     orig_h, orig_c = cls._hash_leaves, cls._compress_groups
     cls._hash_leaves = lambda self, m: calls.add("leaves") or orig_h(self, m)
     cls._compress_groups = lambda self, g: calls.add("compress") or orig_c(self, g)
