@@ -11,8 +11,9 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from flock_zorch import field, gf8
-from flock_zorch import _hostfield as hf
+from flock_zorch import field
+from flock_zorch.field import gf8
+from flock_zorch.field import _hostfield as hf
 from flock_zorch.field import _to_int, _to_lohi
 
 _ONE = np.array([1, 0], dtype=np.uint64)

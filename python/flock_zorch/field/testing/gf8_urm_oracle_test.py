@@ -1,4 +1,4 @@
-"""Byte-match gate for the F8 layer + zerocheck round-1 URM (`flock_zorch.gf8`).
+"""Byte-match gate for the F8 layer + zerocheck round-1 URM (`flock_zorch.field.gf8`).
 
 Two checks against flock-core (`examples/dump_gf8_urm.rs`):
   1. φ₈ — the F2-linear table built from 8 basis rows equals flock's PHI_8_TABLE
@@ -19,14 +19,15 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
-from flock_zorch import field, gf8  # noqa: E402
+from flock_zorch import field  # noqa: E402
+from flock_zorch.field import gf8  # noqa: E402
 
 _MAGIC = b"FLKURM01"
 
 
 def _artifacts_dir() -> Path:
     env = os.environ.get("FLOCK_ZORCH_ARTIFACTS")
-    return Path(env) if env else Path(__file__).resolve().parents[3] / "artifacts"
+    return Path(env) if env else Path(__file__).resolve().parents[4] / "artifacts"
 
 
 class _Reader:

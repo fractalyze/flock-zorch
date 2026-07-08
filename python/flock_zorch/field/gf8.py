@@ -196,7 +196,7 @@ class AdditiveNttGf8:
 # Device (GPU) F8 kernels for the round-1 URM live in _gf8_device. Module import
 # (after the host PHI_8_TABLE above): the gf8 <-> _gf8_device cycle is broken by
 # importing the MODULE and reaching its kernels at call time (no import-time lookup).
-from flock_zorch import _gf8_device
+from flock_zorch.field import _gf8_device
 
 
 # ---------------------------------------------------------------------------

@@ -19,7 +19,7 @@ import jax.numpy as jnp
 jax.config.update("jax_enable_x64", True)
 
 from flock_zorch import field, basefold, merkle, pcs_commit, fri  # noqa: E402
-from flock_zorch import _hostfield as hf  # noqa: E402
+from flock_zorch.field import _hostfield as hf  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 
 DOMAIN = b"flock-basefold-test"

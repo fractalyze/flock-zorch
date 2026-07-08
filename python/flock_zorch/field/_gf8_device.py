@@ -16,7 +16,8 @@ import functools
 import jax
 import jax.numpy as jnp
 
-from flock_zorch import field, gf8
+from flock_zorch import field
+from flock_zorch.field import gf8
 
 _PHI_DEV = jnp.asarray(gf8.PHI_8_TABLE)     # [256, 2] uint64
 
