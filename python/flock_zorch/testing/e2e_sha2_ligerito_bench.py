@@ -16,7 +16,7 @@ def main():
     csc = lincheck.CscCircuit(g["a0_rows"], g["b0_rows"], 1 << k_log, const_pin=meta["const_pin"])
     a_bits, b_bits, c_bits = _unpack(g["a"], m), _unpack(g["b"], m), _unpack(g["z"], m)
     z, stmt = g["z"], g["stmt"]
-    print(f"device {jax.devices()[0]} | mul software | sha2-ligerito m={m}")
+    print(f"device {jax.devices()[0]} | sha2-ligerito m={m}")
     def prove_once():
         root, codeword, tree = pcs_commit.commit(z, m, lir, lbs)
         ch = Challenger(b"flock-sha2-lig-v0"); prover.bind_statement(ch, stmt, root)

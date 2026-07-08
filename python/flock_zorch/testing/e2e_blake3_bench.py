@@ -37,7 +37,7 @@ def main():
     meta = g["meta"]; m = meta["m"]; lir = meta["lir"]; lbs = meta["lbs"]
     k_log = meta["k_log"]; k_skip = meta["k_skip"]; ir = k_log - k_skip
     k_code = (m - 7 - lbs) + lir
-    print(f"device {jax.devices()[0]} | mul software | blake3 m={m}")
+    print(f"device {jax.devices()[0]} | blake3 m={m}")
 
     # setup (host witness-prep / circuit build — not the GPU prover, not timed)
     csc = lincheck.CscCircuit(g["a0_rows"], g["b0_rows"], 1 << k_log, const_pin=meta["const_pin"])

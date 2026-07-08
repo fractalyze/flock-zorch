@@ -142,7 +142,7 @@ def run():
 
 
 def main() -> int:
-    print(f"device {jax.devices()[0]} | mul software")
+    print(f"device {jax.devices()[0]}")
     m, results = run()
     allok = True
     for nm, ok in results:

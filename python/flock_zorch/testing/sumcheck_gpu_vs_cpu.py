@@ -74,8 +74,7 @@ def _gpu_eq_ms(fn, r) -> float:
 
 
 def main() -> int:
-    print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()} | "
-          "mul: software loop")
+    print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()}")
     print("CPU baseline: unmodified flock build_eq (x86 scalar; flock's NEON is "
           "aarch64-gated — see flock-baseline-needs-macbook)\n")
 

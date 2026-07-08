@@ -90,7 +90,7 @@ def bench(m):
 
 def main():
     ms = [int(x) for x in sys.argv[1:]] or [22, 26]
-    print(f"device: {jax.devices()[0]} | mul: software | Merkle: GPU SHA-256")
+    print(f"device: {jax.devices()[0]} | Merkle: GPU SHA-256")
     for m in ms:
         bench(m)
 

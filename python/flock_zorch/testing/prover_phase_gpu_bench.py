@@ -19,11 +19,9 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp  # noqa: E402
 
-from flock_zorch import field, pcs_commit, zerocheck  # noqa: E402
+from flock_zorch import pcs_commit, zerocheck  # noqa: E402
 
 from flock_zorch.testing._util import best  # noqa: E402
-
-MULNAME = "software"
 
 LOG_INV_RATE = 1
 LOG_BATCH = 5
@@ -47,7 +45,7 @@ def bench_zerocheck(m):
 
 def main():
     ms = [int(x) for x in sys.argv[1:]] or [20, 22, 24]
-    print(f"device: {jax.devices()[0]} | mul: {MULNAME} | params: rate=1/2^{LOG_INV_RATE} batch=2^{LOG_BATCH}")
+    print(f"device: {jax.devices()[0]} | params: rate=1/2^{LOG_INV_RATE} batch=2^{LOG_BATCH}")
     print(f"{'m':>3}  {'commit(GPU)':>12}  {'zerocheck(GPU)':>15}")
     for m in ms:
         c = bench_commit(m)
