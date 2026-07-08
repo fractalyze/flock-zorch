@@ -67,9 +67,10 @@ def bench(m):
     B = (rng.integers(0, 2, size=(k, k)) & (rng.integers(0, 4, size=(k, k)) == 0)).astype(np.uint64)
     n_log = m - k_log
     zp_lin = rng.integers(0, 256, size=((1 << n_log) // 8) * k, dtype=np.uint8).tobytes()
-    x_ab = {"z_skip": rng.integers(0, 2**64, size=2, dtype=np.uint64),
-            "x_inner_rest": rng.integers(0, 2**64, size=(k_log - k_skip, 2), dtype=np.uint64),
-            "x_outer": rng.integers(0, 2**64, size=(n_log, 2), dtype=np.uint64)}
+    x_ab = lincheck.AbClaimPoint(
+        z_skip=rng.integers(0, 2**64, size=2, dtype=np.uint64),
+        x_inner_rest=rng.integers(0, 2**64, size=(k_log - k_skip, 2), dtype=np.uint64),
+        x_outer=rng.integers(0, 2**64, size=(n_log, 2), dtype=np.uint64))
     t_lc = best(lambda: lincheck.prove(zp_lin, A, B, x_ab, m, k_log, k_skip), n=3)
 
     # --- pcs.open ---

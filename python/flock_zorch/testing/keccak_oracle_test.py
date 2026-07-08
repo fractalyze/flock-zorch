@@ -95,8 +95,7 @@ def run():
     # Stage C: walker lincheck — KeccakLincheckCircuit threaded through lincheck.prove
     ir = meta["k_log"] - meta["k_skip"]                     # inner_rest = 16 - 6 = 10
     circ = KeccakLincheckCircuit()
-    x_ab = {"z_skip": zc.z, "x_inner_rest": zc.mlv_challenges[:ir],
-            "x_outer": zc.mlv_challenges[ir:]}
+    x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, ir)
     lc_rounds, lc_zp, lc_claim, _zvp = lincheck.prove(
         g["zlc"], None, None, x_ab, m, meta["k_log"], meta["k_skip"], ch=ch, capture=True, circuit=circ)
     got_lcr = np.array([np.concatenate([a, b]) for a, b in lc_rounds]) if lc_rounds else np.zeros((0, 4), np.uint64)
@@ -107,7 +106,7 @@ def run():
 
     # Stage D: batched dual-claim open (ab from lincheck, c from zerocheck)
     k_code = (m - 7 - lbs) + lir
-    ab_full = np.concatenate([lc_claim["r_inner_rest"], x_ab["x_outer"]], axis=0)
+    ab_full = np.concatenate([lc_claim.r_inner_rest, x_ab.x_outer], axis=0)
     c_full = np.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
     out = prover.open_batch(g["z"], codeword, tree, [ab_full, c_full], k_code, lir, lbs, ch)
     for i in range(len(g["rs"])):

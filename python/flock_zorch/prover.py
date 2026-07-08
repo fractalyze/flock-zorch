@@ -188,13 +188,11 @@ class _LincheckRound(Round):
                              "sequence a _ZerocheckRound before this Round")
         inner_rest = self._k_log - self._k_skip
         zc = carry.zc
-        x_ab = {"z_skip": zc.z,
-                "x_inner_rest": zc.mlv_challenges[:inner_rest],
-                "x_outer": zc.mlv_challenges[inner_rest:]}
-        lc_rounds, lc_zp, lc_claim, _z_vec_pre = lincheck.prove(
+        x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, inner_rest)
+        lp = lincheck.prove(
             carry.z_lincheck, carry.a0, carry.b0, x_ab, self._m,
             self._k_log, self._k_skip, ch=transcript, capture=True)
-        return replace(carry, lc_claim=lc_claim), transcript, (lc_rounds, lc_zp)
+        return replace(carry, lc_claim=lp.claim), transcript, (lp.rounds, lp.z_partial)
 
 
 class _PcsOpenRound(Round):
@@ -214,7 +212,7 @@ class _PcsOpenRound(Round):
         inner_rest = self._k_log - self._k_skip
         zc, lc_claim = carry.zc, carry.lc_claim
         x_outer = zc.mlv_challenges[inner_rest:]
-        ab_full = np.concatenate([lc_claim["r_inner_rest"], x_outer], axis=0)
+        ab_full = np.concatenate([lc_claim.r_inner_rest, x_outer], axis=0)
         # c_full split-then-rejoined (not just zc.r_rest) to mirror Rust's
         # QuirkyPoint / quirky_x_outer_full.
         c_full = np.concatenate([zc.r_rest[:inner_rest], zc.r_rest[inner_rest:]], axis=0)
@@ -255,4 +253,4 @@ def prove_fast(z_packed, m, k_log, k_skip, useful_bits, a0, b0, z_lincheck, stat
     _root, zc, (lc_rounds, lc_zp), pcs_open_proof = msgs
 
     return {"zerocheck": zc, "lincheck": (lc_rounds, lc_zp), "pcs_open": pcs_open_proof,
-            "claim_ab_value": carry.lc_claim["w"], "claim_c_value": zc.final_c_eval}
+            "claim_ab_value": carry.lc_claim.w, "claim_c_value": zc.final_c_eval}

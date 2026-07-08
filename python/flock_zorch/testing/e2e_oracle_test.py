@@ -110,22 +110,20 @@ def run(byte_hash=None):
     a0 = np.eye(k, dtype=np.uint64)
     b0 = np.eye(k, dtype=np.uint64)
     inner_rest = k_log - k_skip
-    x_ab = {"z_skip": zc.z,
-            "x_inner_rest": zc.mlv_challenges[:inner_rest],
-            "x_outer": zc.mlv_challenges[inner_rest:]}
+    x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, inner_rest)
     lc_rounds, lc_zp, lc_claim, z_vec_pre = lincheck.prove(
         zlc, a0, b0, x_ab, m, k_log, k_skip, ch=ch, capture=True)
     got_lcr = np.array([np.concatenate([a, b]) for a, b in lc_rounds]) if lc_rounds else np.zeros((0, 4), np.uint64)
     want_lcr = np.array([np.concatenate([a, b]) for a, b in g_lc["rounds"]]) if g_lc["rounds"] else np.zeros((0, 4), np.uint64)
     _eq("lc rounds", got_lcr, want_lcr, results)
     _eq("lc z_partial", lc_zp, g_lc["zp"], results)
-    _eq("lc claim r_inner_skip", lc_claim["r_inner_skip"], g_lcl["ris"], results)
-    _eq("lc claim r_inner_rest", lc_claim["r_inner_rest"], g_lcl["rir"], results)
-    _eq("lc claim w", lc_claim["w"], g_lcl["w"], results)
+    _eq("lc claim r_inner_skip", lc_claim.r_inner_skip, g_lcl["ris"], results)
+    _eq("lc claim r_inner_rest", lc_claim.r_inner_rest, g_lcl["rir"], results)
+    _eq("lc claim w", lc_claim.w, g_lcl["w"], results)
     _eq("lc z_vec_pre", z_vec_pre, g_zvp, results)
 
     # ---- Stage D: ab / c z-claims ----
-    ab_pt = dict(zs=lc_claim["r_inner_skip"], xir=lc_claim["r_inner_rest"], xo=x_ab["x_outer"], v=lc_claim["w"])
+    ab_pt = dict(zs=lc_claim.r_inner_skip, xir=lc_claim.r_inner_rest, xo=x_ab.x_outer, v=lc_claim.w)
     c_pt = dict(zs=zc.z, xir=zc.r_rest[:inner_rest], xo=zc.r_rest[inner_rest:], v=zc.final_c_eval)
     _eq("ab.z_skip", ab_pt["zs"], g_ab["zs"], results)
     _eq("ab.x_outer", ab_pt["xo"], g_ab["xo"], results)

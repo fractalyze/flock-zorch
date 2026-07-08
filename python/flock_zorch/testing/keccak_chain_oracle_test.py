@@ -96,7 +96,7 @@ def run():
     results.append(("zerocheck final_c", np.array_equal(zc.final_c_eval, g["zc"]["fc"])))
 
     circ = KeccakLincheckCircuit()
-    x_ab = {"z_skip": zc.z, "x_inner_rest": zc.mlv_challenges[:ir], "x_outer": zc.mlv_challenges[ir:]}
+    x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, ir)
     _lr, lc_zp, lc_claim, _zv = lincheck.prove(g["zlc"], None, None, x_ab, m, k_log, k_skip, ch=ch, capture=True, circuit=circ)
     results.append(("lincheck z_partial", np.array_equal(lc_zp, g["lc"]["zp"])))
 
@@ -112,7 +112,7 @@ def run():
     chain_claim = chain.assemble_chain_claim(tau_pos, sh_claims, k_log, region_log)
 
     # ---- mixed open: [ab, c] ring-switched + [chain] packed-direct
-    ab_full = np.concatenate([lc_claim["r_inner_rest"], x_ab["x_outer"]], axis=0)
+    ab_full = np.concatenate([lc_claim.r_inner_rest, x_ab.x_outer], axis=0)
     c_full = np.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
     out = prover.open_batch_mixed_ligerito(cfg, g["z"], pdata,
                                            [ab_full, c_full], [chain_claim], ch)

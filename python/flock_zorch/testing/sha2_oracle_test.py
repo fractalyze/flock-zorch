@@ -103,7 +103,7 @@ def run():
     k = 1 << g["meta"]["k_log"]
     csc = lincheck.CscCircuit(g["a0_rows"], g["b0_rows"], k, const_pin=g["meta"]["const_pin"])
     ir = g["meta"]["k_log"] - g["meta"]["k_skip"]
-    x_ab = {"z_skip": zc.z, "x_inner_rest": zc.mlv_challenges[:ir], "x_outer": zc.mlv_challenges[ir:]}
+    x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, ir)
     lc_rounds, lc_zp, lc_claim, _zvp = lincheck.prove(
         g["zlc"], None, None, x_ab, m, g["meta"]["k_log"], g["meta"]["k_skip"], ch=ch, capture=True, circuit=csc)
     got_lcr = np.array([np.concatenate([a, b]) for a, b in lc_rounds]) if lc_rounds else np.zeros((0, 4), np.uint64)
@@ -112,7 +112,7 @@ def run():
     _eq("lc z_partial", lc_zp, g["lc"]["zp"], results)
 
     # Stage D: batched dual-claim open (ab from lincheck, c from zerocheck)
-    ab_full = np.concatenate([lc_claim["r_inner_rest"], x_ab["x_outer"]], axis=0)
+    ab_full = np.concatenate([lc_claim.r_inner_rest, x_ab.x_outer], axis=0)
     c_full = np.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
     out = prover.open_batch(g["z"], codeword, tree, [ab_full, c_full], (m - 7 - lbs) + lir,
                             lir, lbs, ch)

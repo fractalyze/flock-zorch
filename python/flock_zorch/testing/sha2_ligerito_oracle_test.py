@@ -92,11 +92,11 @@ def run():
     results.append(("zerocheck final_c", np.array_equal(zc.final_c_eval, g["zc"]["fc"])))
 
     csc = lincheck.CscCircuit(g["a0_rows"], g["b0_rows"], 1 << k_log, const_pin=meta["const_pin"])
-    x_ab = {"z_skip": zc.z, "x_inner_rest": zc.mlv_challenges[:ir], "x_outer": zc.mlv_challenges[ir:]}
+    x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, ir)
     _lr, lc_zp, lc_claim, _zv = lincheck.prove(g["zlc"], None, None, x_ab, m, k_log, k_skip, ch=ch, capture=True, circuit=csc)
     results.append(("lincheck z_partial", np.array_equal(lc_zp, g["lc"]["zp"])))
 
-    ab_full = np.concatenate([lc_claim["r_inner_rest"], x_ab["x_outer"]], axis=0)
+    ab_full = np.concatenate([lc_claim.r_inner_rest, x_ab.x_outer], axis=0)
     c_full = np.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
     out = prover.open_batch_ligerito(cfg, g["z"], pdata, [ab_full, c_full], ch)
 
