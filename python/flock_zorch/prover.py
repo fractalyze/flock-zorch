@@ -16,7 +16,8 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from flock_zorch import field, ring_switch, basefold, fri, zerocheck, lincheck, zorch_ligerito
+from flock_zorch import field, zerocheck, lincheck
+from flock_zorch.pcs import ring_switch, basefold, fri, ligerito as zorch_ligerito
 from flock_zorch.sumcheck import build_eq
 from flock_zorch.challenger import Challenger  # noqa: F401  (re-exported for callers)
 from flock_zorch.pcs import FlockPcsProver

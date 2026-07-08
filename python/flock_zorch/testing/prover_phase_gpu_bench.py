@@ -19,7 +19,8 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp  # noqa: E402
 
-from flock_zorch import pcs_commit, zerocheck  # noqa: E402
+from flock_zorch import zerocheck  # noqa: E402
+from flock_zorch.pcs import commit as pcs_commit  # noqa: E402
 
 from flock_zorch.testing._util import best  # noqa: E402
 

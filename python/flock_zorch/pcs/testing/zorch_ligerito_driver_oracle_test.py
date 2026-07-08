@@ -17,7 +17,7 @@ included) produced by `zorch_ligerito.prove_flock_ligerito` over the same golden
 
 Run:
   JAX_PLATFORMS=cpu PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" \
-      .venv/bin/python python/flock_zorch/testing/zorch_ligerito_driver_oracle_test.py
+      .venv/bin/python python/flock_zorch/pcs/testing/zorch_ligerito_driver_oracle_test.py
 """
 import sys
 from pathlib import Path
@@ -35,12 +35,12 @@ from zorch.pcs.ligerito.prover import LigeritoProver  # noqa: E402
 from zorch.pcs.ligerito.verifier import LigeritoVerifier  # noqa: E402
 
 from flock_zorch.hash import merkle  # noqa: E402
-from flock_zorch.zorch_ligerito import (  # noqa: E402
+from flock_zorch.pcs.ligerito import (  # noqa: E402
     flock_ligerito_config,
     flock_transcript,
 )
 
-ART = Path(__file__).resolve().parents[3] / "artifacts"
+ART = Path(__file__).resolve().parents[4] / "artifacts"
 DOMAIN = b"flock-ligerito-test"
 
 

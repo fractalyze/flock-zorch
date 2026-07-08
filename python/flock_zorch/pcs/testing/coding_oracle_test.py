@@ -27,7 +27,7 @@ from zorch.coding.additive_reed_solomon import (  # noqa: E402
     additive_ntt_twiddles,
 )
 
-ART = Path(__file__).resolve().parents[3] / "artifacts"
+ART = Path(__file__).resolve().parents[4] / "artifacts"
 
 
 def _load_ntt():

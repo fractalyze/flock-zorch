@@ -7,10 +7,11 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
-from flock_zorch import field, ring_switch  # noqa: E402
+from flock_zorch import field  # noqa: E402
+from flock_zorch.pcs import ring_switch  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 
-ART = Path(__file__).resolve().parents[3] / "artifacts"
+ART = Path(__file__).resolve().parents[4] / "artifacts"
 
 
 def _fv(raw, o):

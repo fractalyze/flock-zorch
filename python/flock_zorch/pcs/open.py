@@ -8,7 +8,7 @@ import down from. The per-round codeword fold is zorch's
 """
 from __future__ import annotations
 
-from flock_zorch.fri import default_fri_queries
+from flock_zorch.pcs.fri import default_fri_queries
 
 
 def open(z_packed, codeword, initial_tree, x_outer, k_code, log_inv_rate, log_batch_size,
@@ -18,7 +18,7 @@ def open(z_packed, codeword, initial_tree, x_outer, k_code, log_inv_rate, log_ba
 
     Returns {ring_switch: s_hat_v, basefold: <BaseFoldProof fields>}. `ch` is the
     shared challenger (already carrying commit/zerocheck/lincheck state in e2e)."""
-    from flock_zorch import ring_switch, basefold  # local import: avoid import cycle
+    from flock_zorch.pcs import ring_switch, basefold  # local import: avoid import cycle
     ch.observe_label(b"flock-pcs-open-v0")
     s_hat_v, rs_eq_ind, _target = ring_switch.prove(z_packed, x_outer, ch)  # target unused: not in the proof bytes
     n_queries = default_fri_queries(log_inv_rate)

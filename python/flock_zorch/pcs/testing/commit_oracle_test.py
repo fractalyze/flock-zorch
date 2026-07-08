@@ -13,7 +13,7 @@ Run:
   cargo build --release --example dump_commit --example bench_commit_cpu
   ./target/release/examples/dump_commit 20 1 5 artifacts/commit_golden.bin
   export PATH="$HOME/.local/cuda13/bin:$PATH"
-  JAX_PLATFORMS=cuda PYTHONPATH=python <venv> python/flock_zorch/testing/commit_oracle_test.py
+  JAX_PLATFORMS=cuda PYTHONPATH=python <venv> python/flock_zorch/pcs/testing/commit_oracle_test.py
 """
 import subprocess
 import sys
@@ -28,9 +28,9 @@ import jax.numpy as jnp  # noqa: E402
 from jax import lax  # noqa: E402
 from zorch.coding.additive_reed_solomon import AdditiveReedSolomon  # noqa: E402
 
-from flock_zorch import pcs_commit  # noqa: E402
+from flock_zorch.pcs import commit as pcs_commit  # noqa: E402
 
-REPO = Path(__file__).resolve().parents[3]
+REPO = Path(__file__).resolve().parents[4]
 ART = REPO / "artifacts"
 GPU_ITERS = 50
 TARGET = 10.0

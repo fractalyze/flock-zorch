@@ -10,7 +10,7 @@ are also gated at the driver level by `zorch_ligerito_driver_oracle_test`.
 
 Run (regen golden: cargo run --release --example dump_ligerito -- 15 artifacts/ligerito_golden.bin):
   JAX_PLATFORMS=cuda PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
-      python/flock_zorch/testing/ligerito_oracle_test.py
+      python/flock_zorch/pcs/testing/ligerito_oracle_test.py
 """
 import sys
 from pathlib import Path
@@ -20,10 +20,10 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
-from flock_zorch import zorch_ligerito  # noqa: E402
+from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 
-ART = Path(__file__).resolve().parents[3] / "artifacts"
+ART = Path(__file__).resolve().parents[4] / "artifacts"
 
 
 class R:

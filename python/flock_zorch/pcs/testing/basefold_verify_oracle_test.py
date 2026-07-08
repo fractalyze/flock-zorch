@@ -18,13 +18,14 @@ import jax.numpy as jnp
 
 jax.config.update("jax_enable_x64", True)
 
-from flock_zorch import field, basefold, pcs_commit, fri  # noqa: E402
+from flock_zorch import field  # noqa: E402
+from flock_zorch.pcs import basefold, commit as pcs_commit, fri  # noqa: E402
 from flock_zorch.hash import merkle  # noqa: E402
 from flock_zorch.field import _hostfield as hf  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 
 DOMAIN = b"flock-basefold-test"
-ART = Path(__file__).resolve().parents[3] / "artifacts"
+ART = Path(__file__).resolve().parents[4] / "artifacts"
 
 
 def _target(x, b):

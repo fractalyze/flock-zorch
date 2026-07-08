@@ -17,7 +17,8 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from flock_zorch import field, pcs_commit, pcs_open
+from flock_zorch import field
+from flock_zorch.pcs import commit as pcs_commit, open as pcs_open
 from flock_zorch.challenger import Challenger
 
 

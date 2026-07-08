@@ -32,7 +32,7 @@ for cfg in "${CONFIGS[@]}"; do
   read -r m lir lbs <<< "$cfg"
   ./target/release/examples/dump_commit "$m" "$lir" "$lbs" artifacts/commit_golden.bin >/dev/null
   out=$(JAX_PLATFORMS=cuda PYTHONPATH=python "$VENV" \
-        python/flock_zorch/testing/commit_oracle_test.py 2>&1 || true)
+        python/flock_zorch/pcs/testing/commit_oracle_test.py 2>&1 || true)
   line=$(echo "$out" | grep -E "byte-identity|encode|GATE" || echo "NO OUTPUT")
   echo "=== m=$m rate=1/2^$lir batch=2^$lbs ===" | tee -a "$LOG"
   echo "$line" | tee -a "$LOG"

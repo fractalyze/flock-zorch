@@ -15,11 +15,11 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
-from flock_zorch import pcs_commit, pcs_open  # noqa: E402
+from flock_zorch.pcs import commit as pcs_commit, open as pcs_open  # noqa: E402
 from flock_zorch.pcs import FlockPcsProver  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 
-ART = Path(__file__).resolve().parents[3] / "artifacts"
+ART = Path(__file__).resolve().parents[4] / "artifacts"
 DOMAIN = b"flock-pcs-seam-test"
 
 
