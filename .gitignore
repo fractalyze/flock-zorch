@@ -9,3 +9,5 @@ __pycache__/
 # Local, machine-specific Bazel overrides (the local zorch override).
 .bazelrc.user
 bazel-*
+# XLA per-fusion autotune cache — machine/GPU-specific, regenerated on GPU runs.
+/xla_gpu_per_fusion_autotune_cache_dir/
