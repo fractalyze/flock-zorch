@@ -19,7 +19,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from flock_zorch.hash import sha256
+from zorch.hash import sha256
 
 REPO = Path(__file__).resolve().parents[4]
 ART = REPO / "artifacts"

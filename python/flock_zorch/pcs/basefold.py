@@ -410,7 +410,7 @@ def verify(target, proof, initial_codeword_root, k_code, log_inv_rate,
                              leaves_i, proof["round_commitments"][i]))
             cum += next_arity
 
-    if not merkle.verify_openings_flock(legs):
+    if not merkle.verify_openings(legs):
         return reject("MerkleFailed", challenges)
 
     return True, info

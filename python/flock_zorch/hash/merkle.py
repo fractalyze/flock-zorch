@@ -20,7 +20,7 @@ import numpy as np
 
 from zorch.commit.merkle import MerkleTree
 
-from flock_zorch.hash.sha256 import _digest_words_marked, U32
+from zorch.hash.sha256 import _digest_words_marked, U32
 
 
 def _pad_device(msg, length: int):
@@ -114,14 +114,14 @@ _TREE = _Sha256MerkleTree(_Sha256LeafHasher(), _Sha256Compressor())
 GHASH_TREE = _Sha256MerkleTree(_GhashSha256LeafHasher(), _Sha256Compressor())
 
 
-def verify_openings_flock(legs) -> bool:
+def verify_openings(legs) -> bool:
     """`zorch.pcs.fold.verify_openings` over flock's SHA-256 Merkle tree: AND of
     "every opened leaf rebuilds its committed root" across `legs`
     (`(root, indices, Opening)`). The BaseFold verifier assembles legs by
     expanding flock's octopus proof (`multi_proof_to_paths`) into per-query
     `Opening`s. Returns a python bool."""
-    from zorch.pcs.fold import verify_openings
-    return bool(verify_openings(_TREE, legs))
+    from zorch.pcs.fold import verify_openings as _verify_openings
+    return bool(_verify_openings(_TREE, legs))
 
 
 @jax.jit
