@@ -12,7 +12,6 @@ import jax
 import jax.numpy as jnp
 
 from flock_zorch import field, gf8
-from flock_zorch import _hostfield as hf
 from flock_zorch.field import _to_int, _to_lohi
 
 _ONE = np.array([1, 0], dtype=np.uint64)
@@ -86,10 +85,8 @@ def _lagrange_weights(k_skip: int, z: int, offset: int) -> list[int]:
 def _interpolate_at_z_on_lambda(values_int: list[int], k_skip: int, z: int) -> int:
     """Σ_i L_i^Λ(z)·values[i] (flock `interpolate_at_z_on_lambda`)."""
     w = _lagrange_weights(k_skip, z, 1 << k_skip)
-    acc = 0
-    for i in range(1 << k_skip):
-        acc ^= hf.mul(w[i], values_int[i])
-    return acc
+    prod = field._ints_to_ghash(w) * field._ints_to_ghash(values_int)
+    return field._ghash_to_int(np.sum(prod))  # XOR-sum inner product
 
 
 @jax.jit
