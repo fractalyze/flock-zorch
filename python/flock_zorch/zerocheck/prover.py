@@ -28,7 +28,7 @@ from flock_zorch.field import gf8
 from flock_zorch.field import _to_int, _to_lohi
 from flock_zorch.field import _hostfield as hf
 from flock_zorch.challenger import Challenger
-from flock_zorch._zerocheck_fold import (
+from flock_zorch.zerocheck._fold import (
     _lagrange_weights, _interpolate_at_z_on_lambda, _fold_at_z_rows, _phi_int, _ONE,
 )
 from zorch.round import ProveChain, Round

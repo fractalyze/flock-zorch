@@ -9,7 +9,7 @@ constants, the eq-tail, or the host SHA-256 round loop).
 
 Run (jax_enable_x64; zorch on PYTHONPATH):
     PYTHONPATH=python:../zorch <venv>/bin/python \
-        python/flock_zorch/testing/zerocheck_oracle_test.py
+        python/flock_zorch/zerocheck/testing/zerocheck_oracle_test.py
 """
 import os
 from pathlib import Path
@@ -28,7 +28,7 @@ DOMAIN = b"flock-zc-oracle"
 
 def _artifacts_dir() -> Path:
     env = os.environ.get("FLOCK_ZORCH_ARTIFACTS")
-    return Path(env) if env else Path(__file__).resolve().parents[3] / "artifacts"
+    return Path(env) if env else Path(__file__).resolve().parents[4] / "artifacts"
 
 
 class _Reader:
