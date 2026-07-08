@@ -91,18 +91,18 @@ def run(path: Path | None = None):
         out = zerocheck.prove_packed(a, b, c, m, DOMAIN)
 
         # Localization cross-checks (claim) first.
-        _eq(f"r_rest(m={m})", out["r_rest"], r_rest)
-        _eq(f"z(m={m})", out["z"], z)
-        _eq(f"mlv_challenges(m={m})", out["mlv_challenges"], mlv_ch)
+        _eq(f"r_rest(m={m})", out.r_rest, r_rest)
+        _eq(f"z(m={m})", out.z, z)
+        _eq(f"mlv_challenges(m={m})", out.mlv_challenges, mlv_ch)
 
         # The proof — the actual gate.
-        _eq(f"round1_ab(m={m})", out["round1_ab"], round1_ab)
-        _eq(f"round1_c(m={m})", out["round1_c"], round1_c)
-        got_rounds = np.stack([v for pair in out["multilinear_rounds"] for v in pair])
+        _eq(f"round1_ab(m={m})", out.round1_ab, round1_ab)
+        _eq(f"round1_c(m={m})", out.round1_c, round1_c)
+        got_rounds = np.stack([v for pair in out.multilinear_rounds for v in pair])
         _eq(f"multilinear_rounds(m={m})", got_rounds, rounds)
-        _eq(f"final_a_eval(m={m})", out["final_a_eval"], final_a)
-        _eq(f"final_b_eval(m={m})", out["final_b_eval"], final_b)
-        _eq(f"final_c_eval(m={m})", out["final_c_eval"], final_c)
+        _eq(f"final_a_eval(m={m})", out.final_a_eval, final_a)
+        _eq(f"final_b_eval(m={m})", out.final_b_eval, final_b)
+        _eq(f"final_c_eval(m={m})", out.final_c_eval, final_c)
         configs.append(m)
     return configs
 

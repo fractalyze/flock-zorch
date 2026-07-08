@@ -25,8 +25,7 @@ import jax.numpy as jnp
 
 from flock_zorch import sumcheck
 from flock_zorch.field import gf8
-from flock_zorch.field import _to_int, _to_lohi
-from flock_zorch.field import _hostfield as hf
+from flock_zorch.field import _to_int, _to_lohi, _int_to_ghash, _ghash_to_int
 from flock_zorch.challenger import Challenger
 from flock_zorch.zerocheck._fold import (
     _lagrange_weights, _interpolate_at_z_on_lambda, _fold_at_z_rows, _phi_int, _ONE,
@@ -36,6 +35,24 @@ from zorch.round import ProveChain, Round
 K_SKIP = 6
 N_INNER = 7  # 3 small + 4 medium fixed-constant inner dims
 LABEL = b"flock-zerocheck-v0"
+
+
+@dataclass(frozen=True)
+class ZerocheckProof:
+    """flock's ZerocheckProof — the round-1 URM messages, the multilinear-round
+    (G(1), G(∞)) pairs, and the final a/b/c evaluations. `z`, `mlv_challenges`,
+    and `r_rest` are the claim cross-checks the oracle localizes against, not wire
+    fields."""
+
+    round1_ab: Any
+    round1_c: Any
+    multilinear_rounds: Any
+    final_a_eval: Any
+    final_b_eval: Any
+    final_c_eval: Any
+    z: Any                # claim cross-check
+    mlv_challenges: Any   # claim cross-check
+    r_rest: Any           # claim cross-check
 
 
 @dataclass(frozen=True)
@@ -73,7 +90,7 @@ def medium_challenges() -> list[int]:
     out = []
     for e in (1, 2, 4, 8):
         ge = 1 << e
-        out.append(hf.mul(ge, hf.inv(1 ^ ge)))
+        out.append(_ghash_to_int(_int_to_ghash(ge) * _int_to_ghash(1 ^ ge) ** -1))
     return out
 
 
@@ -202,9 +219,10 @@ def zerocheck_chain(m: int, k_skip: int) -> ProveChain:
                        _MultilinearRound(m, k_skip)])
 
 
-def prove_packed(a_bits, b_bits, c_bits, m: int, domain: bytes = None, ch=None) -> dict:
-    """Returns the ZerocheckProof fields + the claim's z / mlv_challenges / r_rest
-    (the latter for the oracle's localization cross-checks).
+def prove_packed(a_bits, b_bits, c_bits, m: int, domain: bytes | None = None,
+                 ch: Challenger | None = None) -> ZerocheckProof:
+    """Returns a `ZerocheckProof` (proof fields + the claim's z / mlv_challenges /
+    r_rest, the latter for the oracle's localization cross-checks).
 
     A `zerocheck_chain` of stage `Round`s (setup → URM → multilinear) threading one
     `Challenger`; pass a shared `ch` (the e2e challenger carrying commit/bind state)
@@ -216,15 +234,14 @@ def prove_packed(a_bits, b_bits, c_bits, m: int, domain: bytes = None, ch=None) 
         ch = Challenger(domain)
     carry, _ch, _msgs = zerocheck_chain(m, k_skip)(
         _ZerocheckCarry(a_bits, b_bits, c_bits), ch)
-    return {
-        "round1_ab": carry.round1_ab,
-        "round1_c": carry.round1_c,
-        "multilinear_rounds": carry.multilinear_rounds,
-        "final_a_eval": carry.final_a_eval,
-        "final_b_eval": carry.final_b_eval,
-        "final_c_eval": carry.final_c_eval,
-        # claim cross-checks:
-        "z": carry.z,
-        "mlv_challenges": carry.mlv_challenges,
-        "r_rest": carry.r[k_skip:],
-    }
+    return ZerocheckProof(
+        round1_ab=carry.round1_ab,
+        round1_c=carry.round1_c,
+        multilinear_rounds=carry.multilinear_rounds,
+        final_a_eval=carry.final_a_eval,
+        final_b_eval=carry.final_b_eval,
+        final_c_eval=carry.final_c_eval,
+        z=carry.z,
+        mlv_challenges=carry.mlv_challenges,
+        r_rest=carry.r[k_skip:],
+    )

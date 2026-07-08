@@ -20,33 +20,67 @@ import numpy as np
 
 from zorch.commit.merkle import MerkleTree
 
-from flock_zorch.hash import sha256
+from flock_zorch.hash.sha256 import _digest_words_marked, U32
+
+
+def _pad_device(msg, length: int):
+    """Device SHA-256 pad: uint8 [B, length] -> uint32 [B, nblocks, 16] BE, all-jnp
+    (no host round-trip) so Merkle nodes stay device-resident across levels. flock-
+    local; `length` is static and the compression itself is zorch's `_digest_words`."""
+    b = msg.shape[0]
+    bitlen = length * 8
+    nblocks = (length + 8) // 64 + 1
+    total = nblocks * 64
+    padded = jnp.zeros((b, total), dtype=jnp.uint8)
+    padded = padded.at[:, :length].set(msg)
+    padded = padded.at[:, length].set(jnp.uint8(0x80))
+    for i in range(8):  # 8-byte big-endian bit length at the tail (static bytes)
+        padded = padded.at[:, total - 8 + i].set(jnp.uint8((bitlen >> (8 * (7 - i))) & 0xFF))
+    words = padded.reshape(b, nblocks, 16, 4).astype(jnp.uint32)
+    return (words[..., 0] << U32(24)) | (words[..., 1] << U32(16)) | (words[..., 2] << U32(8)) | words[..., 3]
 
 
 def _digest(msgs, length: int):
     """Marked batched SHA-256: uint8 [B, length] -> uint8 [B, 32] (`zorch.sha256`)."""
-    return sha256._digest_words_marked(sha256._pad_device(msgs, length))
+    return _digest_words_marked(_pad_device(msgs, length))
 
 
-class _Sha256Leaf:
-    """Leaf hasher seam value: `SHA256(leaf_bytes)`. Batched hashing goes through
-    `_Sha256MerkleTree._hash_leaves`; this single-row form completes the seam
-    contract for the inherited open/reconstruct paths (unexercised here yet)."""
+class _Sha256LeafHasher:
+    """`leaf_hasher` seam: `SHA256(leaf_bytes)`. `as_bytes` maps a batch of stored
+    leaf rows to their uint8 SHA-256 preimage — identity here, an element-byte
+    reinterpret in the GHASH subclass — so it is the one hook that varies with the
+    leaf dtype and a single `_Sha256MerkleTree` serves both. Batched hashing runs
+    through `_Sha256MerkleTree._hash_leaves`; `hash` is the single-row form the
+    inherited reconstruct/verify path calls."""
     out = 32
 
+    def as_bytes(self, matrix):
+        return matrix
+
     def hash(self, row):
-        return _digest(row[None], row.shape[0])[0]
+        b = self.as_bytes(row[None])
+        return _digest(b, b.shape[1])[0]
 
     # Value equality for static jit-zone keys (zorch #214): param-free -> by type.
     def __eq__(self, other):
-        return isinstance(other, _Sha256Leaf)
+        return type(self) is type(other)
 
     def __hash__(self):
-        return hash(_Sha256Leaf)
+        return hash(type(self))
 
 
-class _Sha256Compress:
-    """2-to-1 `SHA256(left ‖ right)` (64-byte preimage) over 32-byte digests."""
+class _GhashSha256LeafHasher(_Sha256LeafHasher):
+    """Leaves are `binary_field_ghash` rows; the preimage is the raw lo‖hi LE
+    element bytes (flock's leaf preimage). The uint8 bitcast is the one working
+    device ghash→integer direction (ghash→uint64 returns zeros, zorch#399)."""
+
+    def as_bytes(self, matrix):
+        return jax.lax.bitcast_convert_type(matrix, jnp.uint8).reshape(matrix.shape[0], -1)
+
+
+class _Sha256Compressor:
+    """`compressor` seam: 2-to-1 `SHA256(left ‖ right)` (64-byte preimage) over
+    32-byte digests."""
     arity = 2
     chunk = 32
 
@@ -54,57 +88,30 @@ class _Sha256Compress:
         return _digest(group.reshape(1, 64), 64)[0]
 
     def __eq__(self, other):
-        return isinstance(other, _Sha256Compress)
+        return type(self) is type(other)
 
     def __hash__(self):
-        return hash(_Sha256Compress)
+        return hash(type(self))
 
 
 class _Sha256MerkleTree(MerkleTree):
     """`MerkleTree` with whole levels hashed batch-native: SHA-256's block schedule
-    reads the batch axis from the shape, so `vmap(single-hash)` would retrace the
-    marker decomposition at the wrong rank — override the two batching hooks with
-    the [B, L] contract `zorch.hash.sha256` is written for."""
-
-    def __init__(self, leaf_hasher, compressor):
-        # Row-major only: both hooks hash rows, ignoring the base column_major.
-        super().__init__(leaf_hasher, compressor)
+    reads the batch axis from the shape, so the base `vmap(single-hash)` would
+    retrace the marker decomposition at the wrong rank — override the two batching
+    hooks with the [B, L] contract `zorch.hash.sha256` is written for. Row-major
+    only (both hooks hash rows); the leaf hasher's `as_bytes` picks the uint8
+    preimage, so one class serves both the uint8 and GHASH codeword trees."""
 
     def _hash_leaves(self, matrix):
-        return _digest(matrix, matrix.shape[1])
+        rows = self._leaf_hasher.as_bytes(matrix)
+        return _digest(rows, rows.shape[1])
 
     def _compress_groups(self, groups):
         return _digest(groups.reshape(groups.shape[0], 64), 64)
 
 
-class _GhashSha256Leaf(_Sha256Leaf):
-    """`_Sha256Leaf` over a `binary_field_ghash` row: hash the raw lo‖hi LE
-    element bytes, flock's leaf preimage. The uint8 bitcast is the one working
-    device ghash→integer direction (ghash→uint64 returns zeros, zorch#399)."""
-
-    def hash(self, row):
-        return super().hash(jax.lax.bitcast_convert_type(row, jnp.uint8).reshape(-1))
-
-    def __eq__(self, other):
-        return isinstance(other, _GhashSha256Leaf)
-
-    def __hash__(self):
-        return hash(_GhashSha256Leaf)
-
-
-class _GhashSha256MerkleTree(_Sha256MerkleTree):
-    """`_Sha256MerkleTree` whose leaves are `binary_field_ghash` rows instead of
-    uint8 — the tree zorch's `commit_matrix` builds for a GHASH codeword (its
-    `to_base_field` passes the 128-bit dtype through). Byte-identical to flock:
-    each leaf hashes to `SHA256(row bytes)`, exactly `merkle_tree`'s preimage."""
-
-    def _hash_leaves(self, matrix):
-        u8 = jax.lax.bitcast_convert_type(matrix, jnp.uint8)
-        return super()._hash_leaves(u8.reshape(matrix.shape[0], -1))
-
-
-_TREE = _Sha256MerkleTree(_Sha256Leaf(), _Sha256Compress())
-GHASH_TREE = _GhashSha256MerkleTree(_GhashSha256Leaf(), _Sha256Compress())
+_TREE = _Sha256MerkleTree(_Sha256LeafHasher(), _Sha256Compressor())
+GHASH_TREE = _Sha256MerkleTree(_GhashSha256LeafHasher(), _Sha256Compressor())
 
 
 def verify_openings_flock(legs) -> bool:
@@ -132,12 +139,6 @@ def merkle_root(leaves) -> np.ndarray:
     """32-byte Merkle root of `n_leaves` equal-sized leaves. uint8 [n_leaves, leaf_size]
     -> uint8 [32], byte-identical to flock. One jit (commit fold is a single scan)."""
     return np.asarray(_root_dev(jnp.asarray(leaves, dtype=jnp.uint8)))
-
-
-def merkle_root_from_flat(data, n_leaves: int) -> np.ndarray:
-    """Convenience: split a flat uint8 buffer into `n_leaves` equal leaves, hash."""
-    data = np.asarray(data, dtype=np.uint8).reshape(n_leaves, -1)
-    return merkle_root(data)
 
 
 def merkle_tree(leaves) -> np.ndarray:

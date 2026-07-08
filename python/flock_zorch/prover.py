@@ -24,6 +24,29 @@ from flock_zorch.pcs import FlockPcsProver
 from zorch.round import ProveChain, Round
 
 
+@dataclass(frozen=True)
+class BatchOpenProof:
+    """Batched dual-claim PCS open (flock BatchOpeningProof): the per-claim
+    ring-switch reductions plus the combined low-degree open — `basefold` for the
+    BaseFold backend or `ligerito` for the Ligerito backend (exactly one set)."""
+
+    ring_switches: Any
+    basefold: Any = None
+    ligerito: Any = None
+
+
+@dataclass(frozen=True)
+class ProveFastResult:
+    """flock's R1CS proof (`prover::prove`): the zerocheck and lincheck sub-proofs,
+    the batched PCS open, and the final ab/c claim values."""
+
+    zerocheck: Any
+    lincheck: Any
+    pcs_open: Any
+    claim_ab_value: Any
+    claim_c_value: Any
+
+
 @jax.jit
 def _unpack_bits_dev(z_packed):
     """Packed F128 witness [2^(m-7),2] -> device bit witness [2^m] uint8 (LSB-first
@@ -65,15 +88,15 @@ def _combine_claims(rs_eq_inds, gammas, sumcheck_claims, packed_direct=(), gamma
     for g, sc in zip(gammas, sumcheck_claims):
         target = target + field.to_ghash(jnp.asarray(g)) * field.to_ghash(jnp.asarray(sc))
     for pd, g in zip(packed_direct, gammas_pd):
-        eq_pd = field.to_ghash(build_eq(jnp.asarray(pd["point"])))   # length L = 2^(m-7)
+        eq_pd = field.to_ghash(build_eq(jnp.asarray(pd.point)))   # length L = 2^(m-7)
         gj = field.to_ghash(jnp.asarray(g))
         b_combined = b_combined + gj * eq_pd
-        target = target + gj * field.to_ghash(jnp.asarray(pd["value"]))
+        target = target + gj * field.to_ghash(jnp.asarray(pd.value))
     return field.from_ghash(b_combined), field.from_ghash(target)
 
 
 def open_batch(z_packed, codeword, init_tree, x_outers, k_code, log_inv_rate,
-               log_batch_size, ch) -> dict:
+               log_batch_size, ch) -> BatchOpenProof:
     """Batched dual-claim PCS open — byte-identical to flock
     `pcs::open_batch_padded_with_precomputed_s_hat_v` (BatchOpeningProof =
     {ring_switches, basefold}). Each x_outers[i] = quirky_x_outer_full(claim.point)
@@ -88,10 +111,10 @@ def open_batch(z_packed, codeword, init_tree, x_outers, k_code, log_inv_rate,
     n_queries = fri.default_fri_queries(log_inv_rate)
     bf = basefold.prove(z_packed, b_combined, codeword, init_tree, k_code,
                         log_inv_rate, log_batch_size, n_queries, ch)
-    return {"ring_switches": s_hat_vs, "basefold": bf}
+    return BatchOpenProof(ring_switches=s_hat_vs, basefold=bf)
 
 
-def open_batch_ligerito(config, z_packed, pdata, x_outers, ch) -> dict:
+def open_batch_ligerito(config, z_packed, pdata, x_outers, ch) -> BatchOpenProof:
     """Batched dual-claim PCS open with the LIGERITO backend — the headline path.
     The no-packed-direct case of `open_batch_mixed_ligerito`: N ring-switched
     claims (x_outers, e.g. ab+c), zero direct ẑ-evaluation claims. `pdata` is the
@@ -101,7 +124,7 @@ def open_batch_ligerito(config, z_packed, pdata, x_outers, ch) -> dict:
 
 
 def open_batch_mixed_ligerito(config, z_packed, pdata, x_outers, packed_direct,
-                              ch) -> dict:
+                              ch) -> BatchOpenProof:
     """Mixed batched open (flock `open_batch_mixed_ligerito_with_precomputed_s_hat_v`)
     — the HASH-CHAIN open, and the general Ligerito open. Combines N ring-switched
     claims (x_outers, e.g. ab+c) with M packed-direct claims (the chain claim: a
@@ -117,7 +140,7 @@ def open_batch_mixed_ligerito(config, z_packed, pdata, x_outers, packed_direct,
     # Packed-direct: observe each claim's value, THEN sample the γ_pd (flock order).
     for pd in packed_direct:
         ch.observe_label(b"flock-pcs-packed-direct-v0")
-        ch.observe_f128(pd["value"])
+        ch.observe_f128(pd.value)
     gammas_pd = [ch.sample_f128() for _ in packed_direct]
 
     b_combined, target = _combine_claims(rs_eq_inds, gammas, sumcheck_claims,
@@ -126,7 +149,7 @@ def open_batch_mixed_ligerito(config, z_packed, pdata, x_outers, packed_direct,
     # FS seam, reusing the commit-phase `pdata` directly. The ghash algebra rides
     # the dtype, so `mul` is not threaded.
     lig = zorch_ligerito.prove_flock_ligerito(config, pdata, b_combined, target, ch)
-    return {"ring_switches": s_hat_vs, "ligerito": lig}
+    return BatchOpenProof(ring_switches=s_hat_vs, ligerito=lig)
 
 
 @dataclass(frozen=True)
@@ -189,13 +212,11 @@ class _LincheckRound(Round):
                              "sequence a _ZerocheckRound before this Round")
         inner_rest = self._k_log - self._k_skip
         zc = carry.zc
-        x_ab = {"z_skip": zc["z"],
-                "x_inner_rest": zc["mlv_challenges"][:inner_rest],
-                "x_outer": zc["mlv_challenges"][inner_rest:]}
-        lc_rounds, lc_zp, lc_claim, _z_vec_pre = lincheck.prove(
+        x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, inner_rest)
+        lp = lincheck.prove(
             carry.z_lincheck, carry.a0, carry.b0, x_ab, self._m,
             self._k_log, self._k_skip, ch=transcript, capture=True)
-        return replace(carry, lc_claim=lc_claim), transcript, (lc_rounds, lc_zp)
+        return replace(carry, lc_claim=lp.claim), transcript, (lp.rounds, lp.z_partial)
 
 
 class _PcsOpenRound(Round):
@@ -214,11 +235,11 @@ class _PcsOpenRound(Round):
                              "the commit, zerocheck, and lincheck Rounds before it")
         inner_rest = self._k_log - self._k_skip
         zc, lc_claim = carry.zc, carry.lc_claim
-        x_outer = zc["mlv_challenges"][inner_rest:]
-        ab_full = np.concatenate([lc_claim["r_inner_rest"], x_outer], axis=0)
-        # c_full split-then-rejoined (not just zc["r_rest"]) to mirror Rust's
+        x_outer = zc.mlv_challenges[inner_rest:]
+        ab_full = np.concatenate([lc_claim.r_inner_rest, x_outer], axis=0)
+        # c_full split-then-rejoined (not just zc.r_rest) to mirror Rust's
         # QuirkyPoint / quirky_x_outer_full.
-        c_full = np.concatenate([zc["r_rest"][:inner_rest], zc["r_rest"][inner_rest:]], axis=0)
+        c_full = np.concatenate([zc.r_rest[:inner_rest], zc.r_rest[inner_rest:]], axis=0)
         pcs = self._pcs
         pcs_open_proof = open_batch(
             carry.z_packed, carry.codeword, carry.tree, [ab_full, c_full], pcs.k_code,
@@ -228,7 +249,7 @@ class _PcsOpenRound(Round):
 
 def prove_fast(z_packed, m, k_log, k_skip, useful_bits, a0, b0, z_lincheck, statement_digest,
                log_inv_rate=1, log_batch_size=5, domain=b"flock-test-v0",
-               byte_hash=None) -> dict:
+               byte_hash=None) -> ProveFastResult:
     """Fused single-call R1CS prover (identity-C path: c = z), byte-identical to
     flock `prover::prove`. A zorch `ProveChain` of stage `Round`s threading one
     shared challenger + a `_ProveCarry` (no per-phase host re-transfer):
@@ -255,5 +276,5 @@ def prove_fast(z_packed, m, k_log, k_skip, useful_bits, a0, b0, z_lincheck, stat
     ])(carry, ch)
     _root, zc, (lc_rounds, lc_zp), pcs_open_proof = msgs
 
-    return {"zerocheck": zc, "lincheck": (lc_rounds, lc_zp), "pcs_open": pcs_open_proof,
-            "claim_ab_value": carry.lc_claim["w"], "claim_c_value": zc["final_c_eval"]}
+    return ProveFastResult(zerocheck=zc, lincheck=(lc_rounds, lc_zp), pcs_open=pcs_open_proof,
+                           claim_ab_value=carry.lc_claim.w, claim_c_value=zc.final_c_eval)

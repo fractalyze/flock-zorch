@@ -90,21 +90,21 @@ def run():
     prover.bind_statement(ch, g["stmt"], root)
     a_bits, b_bits, c_bits = _unpack(g["a"], m), _unpack(g["b"], m), _unpack(g["z"], m)
     zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch)
-    results.append(("zerocheck round1_ab", np.array_equal(zc["round1_ab"], g["zc"]["r1ab"])))
-    results.append(("zerocheck final_c", np.array_equal(zc["final_c_eval"], g["zc"]["fc"])))
+    results.append(("zerocheck round1_ab", np.array_equal(zc.round1_ab, g["zc"]["r1ab"])))
+    results.append(("zerocheck final_c", np.array_equal(zc.final_c_eval, g["zc"]["fc"])))
 
     circ = KeccakLincheckCircuit()
-    x_ab = {"z_skip": zc["z"], "x_inner_rest": zc["mlv_challenges"][:ir], "x_outer": zc["mlv_challenges"][ir:]}
+    x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, ir)
     _lr, lc_zp, lc_claim, _zv = lincheck.prove(g["zlc"], None, None, x_ab, m, k_log, k_skip, ch=ch, capture=True, circuit=circ)
     results.append(("lincheck z_partial", np.array_equal(lc_zp, g["lc"]["zp"])))
 
-    ab_full = np.concatenate([lc_claim["r_inner_rest"], x_ab["x_outer"]], axis=0)
-    c_full = np.concatenate([zc["r_rest"][:ir], zc["r_rest"][ir:]], axis=0)
+    ab_full = np.concatenate([lc_claim.r_inner_rest, x_ab.x_outer], axis=0)
+    c_full = np.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
     out = prover.open_batch_ligerito(cfg, g["z"], pdata, [ab_full, c_full], ch)
 
     for i in range(len(g["rs"])):
-        results.append((f"open ring_switch[{i}]", np.array_equal(out["ring_switches"][i], g["rs"][i])))
-    p, gl = out["ligerito"], g["lig"]
+        results.append((f"open ring_switch[{i}]", np.array_equal(out.ring_switches[i], g["rs"][i])))
+    p, gl = out.ligerito, g["lig"]
 
     def pairs(t): return np.array([np.concatenate([a, b]) for a, b in t]) if t else np.zeros((0, 4), np.uint64)
     def rows_eq(a, b): return len(a) == len(b) and all(np.array_equal(np.asarray(x), np.asarray(y)) for x, y in zip(a, b))

@@ -19,24 +19,40 @@ import jax.numpy as jnp
 jax.config.update("jax_enable_x64", True)
 
 from flock_zorch import field  # noqa: E402
-from flock_zorch.pcs import basefold, commit as pcs_commit, fri  # noqa: E402
+from flock_zorch.pcs import basefold, fri  # noqa: E402
 from flock_zorch.hash import merkle  # noqa: E402
-from flock_zorch.field import _hostfield as hf  # noqa: E402
+from flock_zorch.pcs import commit as pcs_commit  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 
 DOMAIN = b"flock-basefold-test"
 ART = Path(__file__).resolve().parents[4] / "artifacts"
 
 
+def _gf128_mul(a: int, b: int) -> int:
+    """Independent big-int GF(2^128) multiply (GHASH basis x^128+x^7+x^2+x+1),
+    deliberately NOT routed through zk_dtypes' `binary_field_ghash`, so `_target`
+    cross-checks the device path under test against a separate implementation."""
+    p = 0
+    while b:
+        if b & 1:
+            p ^= a
+        a <<= 1
+        b >>= 1
+    for i in range(p.bit_length() - 1, 127, -1):
+        if (p >> i) & 1:
+            p ^= (1 << i) ^ (0x87 << (i - 128))
+    return p & ((1 << 128) - 1)
+
+
 def _target(x, b):
-    """Σ_e x[e]·b[e] in GF(2^128), computed host-side in big-int (`_hostfield`) —
+    """Σ_e x[e]·b[e] in GF(2^128), computed host-side in big-int (`_gf128_mul`) —
     an independent software reference for the claimed sum fed to `basefold.verify`,
     not routed through the device `binary_field_ghash` path under test."""
     xi = np.asarray(x, np.uint64).reshape(-1, 2)
     bi = np.asarray(b, np.uint64).reshape(-1, 2)
     acc = 0
     for xe, be in zip(xi, bi):
-        acc ^= hf.mul(field._to_int(xe), field._to_int(be))
+        acc ^= _gf128_mul(field._to_int(xe), field._to_int(be))
     return field._to_lohi(acc)
 
 

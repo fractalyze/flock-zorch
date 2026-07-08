@@ -7,6 +7,7 @@ Run:
   cargo run --release --example dump_pcs_open -- 20 1 2 artifacts/pcs_open_golden.bin
   bazel test //python:pcs_seam_oracle_test
 """
+import dataclasses
 import sys
 from pathlib import Path
 
@@ -38,6 +39,9 @@ def _read_golden_inputs():
 
 
 def _deep_eq(a, b) -> bool:
+    if dataclasses.is_dataclass(a) and not isinstance(a, type):
+        return (type(a) is type(b) and all(
+            _deep_eq(getattr(a, f.name), getattr(b, f.name)) for f in dataclasses.fields(a)))
     if isinstance(a, dict):
         return isinstance(b, dict) and set(a) == set(b) and all(_deep_eq(a[k], b[k]) for k in a)
     if isinstance(a, (list, tuple)):
@@ -67,7 +71,7 @@ def main() -> int:
         "commit.root": np.array_equal(root_s, root_r),
         "commit.codeword_vs_golden": np.array_equal(data.codeword, g_codeword),
         "commit.tree": np.array_equal(data.tree, tree_r),
-        "open.values_is_s_hat_v": np.array_equal(values, out_r["ring_switch"]),
+        "open.values_is_s_hat_v": np.array_equal(values, out_r.ring_switch),
         "open.proof": _deep_eq(proof, out_r),
         # Same object back + identical post-open FS state as the raw path.
         "open.transcript_threaded": ch_out is ch_s

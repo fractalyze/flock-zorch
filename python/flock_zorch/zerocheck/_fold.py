@@ -1,5 +1,5 @@
 """Device precompute for zerocheck's round-1 c-claim and round-2 binding — the
-Lagrange-weight / batched-inverse / fold-at-z cluster, kept out of zerocheck/prover.py so
+Lagrange-weight / batched-inverse / fold-at-z cluster, kept out of zerocheck.py so
 prove_packed reads as the PIOP. Byte-identical to flock's zerocheck/{univariate_skip,
 multilinear}. The deeply-sequential Lagrange/Fermat work runs on the native binary_field_ghash multiply.
 
@@ -13,7 +13,6 @@ import jax.numpy as jnp
 
 from flock_zorch import field
 from flock_zorch.field import gf8
-from flock_zorch.field import _hostfield as hf
 from flock_zorch.field import _to_int, _to_lohi
 
 _ONE = np.array([1, 0], dtype=np.uint64)
@@ -87,10 +86,8 @@ def _lagrange_weights(k_skip: int, z: int, offset: int) -> list[int]:
 def _interpolate_at_z_on_lambda(values_int: list[int], k_skip: int, z: int) -> int:
     """Σ_i L_i^Λ(z)·values[i] (flock `interpolate_at_z_on_lambda`)."""
     w = _lagrange_weights(k_skip, z, 1 << k_skip)
-    acc = 0
-    for i in range(1 << k_skip):
-        acc ^= hf.mul(w[i], values_int[i])
-    return acc
+    prod = field._ints_to_ghash(w) * field._ints_to_ghash(values_int)
+    return field._ghash_to_int(np.sum(prod))  # XOR-sum inner product
 
 
 @jax.jit

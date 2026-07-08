@@ -91,20 +91,20 @@ def run():
     prover.bind_statement(ch, g["stmt"], root)
     a_bits, b_bits, c_bits = g["a"], g["b"], g["z"]  # packed F128 — witness_to_rows unpacks on device
     zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch)
-    _eq("zc round1_ab", zc["round1_ab"], g["zc"]["r1ab"], results)
-    _eq("zc round1_c", zc["round1_c"], g["zc"]["r1c"], results)
-    got_mlv = np.array([np.concatenate([a, b]) for a, b in zc["multilinear_rounds"]])
+    _eq("zc round1_ab", zc.round1_ab, g["zc"]["r1ab"], results)
+    _eq("zc round1_c", zc.round1_c, g["zc"]["r1c"], results)
+    got_mlv = np.array([np.concatenate([a, b]) for a, b in zc.multilinear_rounds])
     want_mlv = np.array([np.concatenate([a, b]) for a, b in g["zc"]["mlv"]])
     _eq("zc multilinear_rounds", got_mlv, want_mlv, results)
-    _eq("zc final_a", zc["final_a_eval"], g["zc"]["fa"], results)
-    _eq("zc final_b", zc["final_b_eval"], g["zc"]["fb"], results)
-    _eq("zc final_c", zc["final_c_eval"], g["zc"]["fc"], results)
+    _eq("zc final_a", zc.final_a_eval, g["zc"]["fa"], results)
+    _eq("zc final_b", zc.final_b_eval, g["zc"]["fb"], results)
+    _eq("zc final_c", zc.final_c_eval, g["zc"]["fc"], results)
 
     # Stage C: CSC sparse lincheck (k=32768, const_pin=31400, inner_rest=9) — shared challenger
     k = 1 << g["meta"]["k_log"]
     csc = lincheck.CscCircuit(g["a0_rows"], g["b0_rows"], k, const_pin=g["meta"]["const_pin"])
     ir = g["meta"]["k_log"] - g["meta"]["k_skip"]
-    x_ab = {"z_skip": zc["z"], "x_inner_rest": zc["mlv_challenges"][:ir], "x_outer": zc["mlv_challenges"][ir:]}
+    x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, ir)
     lc_rounds, lc_zp, lc_claim, _zvp = lincheck.prove(
         g["zlc"], None, None, x_ab, m, g["meta"]["k_log"], g["meta"]["k_skip"], ch=ch, capture=True, circuit=csc)
     got_lcr = np.array([np.concatenate([a, b]) for a, b in lc_rounds]) if lc_rounds else np.zeros((0, 4), np.uint64)
@@ -113,13 +113,13 @@ def run():
     _eq("lc z_partial", lc_zp, g["lc"]["zp"], results)
 
     # Stage D: batched dual-claim open (ab from lincheck, c from zerocheck)
-    ab_full = np.concatenate([lc_claim["r_inner_rest"], x_ab["x_outer"]], axis=0)
-    c_full = np.concatenate([zc["r_rest"][:ir], zc["r_rest"][ir:]], axis=0)
+    ab_full = np.concatenate([lc_claim.r_inner_rest, x_ab.x_outer], axis=0)
+    c_full = np.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
     out = prover.open_batch(g["z"], codeword, tree, [ab_full, c_full], (m - 7 - lbs) + lir,
                             lir, lbs, ch)
     for i in range(2):
-        _eq(f"open ring_switch[{i}]", out["ring_switches"][i], g["rs"][i], results)
-    bf = out["basefold"]; gbf = g["bf"]
+        _eq(f"open ring_switch[{i}]", out.ring_switches[i], g["rs"][i], results)
+    bf = out.basefold; gbf = g["bf"]
     got_rm = np.array([np.concatenate([a, b]) for a, b in bf["round_messages"]])
     want_rm = np.array([np.concatenate([a, b]) for a, b in gbf["rm"]])
     _eq("open bf round_messages", got_rm, want_rm, results)
