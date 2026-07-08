@@ -55,8 +55,8 @@ def sanity_m13():
     # compare zc.round1_ab + bf.final_a to golden (full check is e2e_oracle_test)
     rd = raw
     # zc round1_ab is deep in the file; cheap check: re-run e2e_oracle_test for full gate.
-    ok = out["pcs_open"]["basefold"]["final_a"] is not None and len(out["pcs_open"]["ring_switches"]) == 2
-    print(f"  prove_fast(m=13) ran, ring_switches={len(out['pcs_open']['ring_switches'])} "
+    ok = out.pcs_open.basefold["final_a"] is not None and len(out.pcs_open.ring_switches) == 2
+    print(f"  prove_fast(m=13) ran, ring_switches={len(out.pcs_open.ring_switches)} "
           f"(full byte gate: e2e_oracle_test)")
 
 

@@ -139,8 +139,8 @@ def run(byte_hash=None):
                             LIR, LBS, ch)
     # ring_switches (s_hat_v per claim)
     for i in range(2):
-        _eq(f"open ring_switch[{i}].s_hat_v", out["ring_switches"][i], g_rs[i], results)
-    bf = out["basefold"]
+        _eq(f"open ring_switch[{i}].s_hat_v", out.ring_switches[i], g_rs[i], results)
+    bf = out.basefold
     got_rm = np.array([np.concatenate([a, b]) for a, b in bf["round_messages"]])
     want_rm = np.array([np.concatenate([a, b]) for a, b in g_bf["rm"]])
     _eq("open bf round_messages", got_rm, want_rm, results)
@@ -166,11 +166,11 @@ def run(byte_hash=None):
     a0 = np.eye(1 << k_log, dtype=np.uint64)
     pf = prover.prove_fast(z_packed, m, k_log, k_skip, ub, a0, a0, zlc, stmt,
                            LIR, LBS, byte_hash=byte_hash)
-    _eq("prove_fast zc round1_ab", pf["zerocheck"].round1_ab, g_zc["r1ab"], results)
-    _eq("prove_fast lc z_partial", pf["lincheck"][1], g_lc["zp"], results)
-    _eq("prove_fast open ring_switch[1]", pf["pcs_open"]["ring_switches"][1], g_rs[1], results)
-    _eq("prove_fast open bf final_a", pf["pcs_open"]["basefold"]["final_a"], g_bf["fa"], results)
-    _eq("prove_fast claim_ab_value", pf["claim_ab_value"], g_ab["v"], results)
+    _eq("prove_fast zc round1_ab", pf.zerocheck.round1_ab, g_zc["r1ab"], results)
+    _eq("prove_fast lc z_partial", pf.lincheck[1], g_lc["zp"], results)
+    _eq("prove_fast open ring_switch[1]", pf.pcs_open.ring_switches[1], g_rs[1], results)
+    _eq("prove_fast open bf final_a", pf.pcs_open.basefold["final_a"], g_bf["fa"], results)
+    _eq("prove_fast claim_ab_value", pf.claim_ab_value, g_ab["v"], results)
 
     return m, results
 

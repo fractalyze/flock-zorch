@@ -110,8 +110,8 @@ def run():
     c_full = np.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
     out = prover.open_batch(g["z"], codeword, tree, [ab_full, c_full], k_code, lir, lbs, ch)
     for i in range(len(g["rs"])):
-        _eq(f"open ring_switch[{i}]", out["ring_switches"][i], g["rs"][i], results)
-    bf = out["basefold"]; gbf = g["bf"]
+        _eq(f"open ring_switch[{i}]", out.ring_switches[i], g["rs"][i], results)
+    bf = out.basefold; gbf = g["bf"]
     got_rm = np.array([np.concatenate([a, b]) for a, b in bf["round_messages"]])
     want_rm = np.array([np.concatenate([a, b]) for a, b in gbf["rm"]])
     _eq("open bf round_messages", got_rm, want_rm, results)
