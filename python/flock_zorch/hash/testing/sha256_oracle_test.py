@@ -8,7 +8,7 @@
 
 Run:
   cargo run --release --example dump_sha256 -- 65536 64 artifacts/sha256_golden.bin
-  JAX_PLATFORMS=cuda PYTHONPATH=python <venv> python/flock_zorch/testing/sha256_oracle_test.py
+  JAX_PLATFORMS=cuda PYTHONPATH=python <venv> python/flock_zorch/hash/testing/sha256_oracle_test.py
 """
 import subprocess
 import sys
@@ -19,9 +19,9 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from flock_zorch import sha256
+from flock_zorch.hash import sha256
 
-REPO = Path(__file__).resolve().parents[3]
+REPO = Path(__file__).resolve().parents[4]
 ART = REPO / "artifacts"
 GPU_ITERS = 50
 

@@ -31,7 +31,7 @@ from zorch.pcs.ligerito.prover import LigeritoProver  # noqa: E402
 from zorch.pcs.ligerito.verifier import LigeritoVerifier  # noqa: E402
 from zorch.poly.multilinear import eval_mle  # noqa: E402
 
-from flock_zorch import merkle  # noqa: E402
+from flock_zorch.hash import merkle  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 from flock_zorch.zorch_ligerito import (  # noqa: E402
     FlockChoreography,

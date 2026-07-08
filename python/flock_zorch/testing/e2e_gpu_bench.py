@@ -24,7 +24,8 @@ from jax import lax  # noqa: E402
 from zorch.coding.additive_reed_solomon import AdditiveReedSolomon  # noqa: E402
 
 from flock_zorch import (field, pcs_commit, zerocheck,  # noqa: E402
-                         lincheck, pcs_open, merkle)
+                         lincheck, pcs_open)
+from flock_zorch.hash import merkle  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 from flock_zorch.testing._util import best  # noqa: E402
 

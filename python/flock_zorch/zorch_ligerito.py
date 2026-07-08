@@ -41,7 +41,8 @@ from zorch.pcs.ligerito.choreography import LigeritoChoreography
 from zorch.pcs.ligerito.config import LigeritoConfig
 from zorch.pcs.ligerito.prover import LigeritoProver, LigeritoProverData
 
-from flock_zorch import field, merkle
+from flock_zorch import field
+from flock_zorch.hash import merkle
 
 FLOCK_LIGERITO_LABEL = b"flock-ligerito-basis-v0"
 

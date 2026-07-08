@@ -20,7 +20,7 @@ import numpy as np
 
 from zorch.commit.merkle import MerkleTree
 
-from flock_zorch import sha256
+from flock_zorch.hash import sha256
 
 
 def _digest(msgs, length: int):

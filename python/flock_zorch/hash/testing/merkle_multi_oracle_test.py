@@ -7,7 +7,7 @@ multi-proof byte-for-byte — the query-opening primitive of the PCS open.
 Run:
   cargo run --release --example dump_merkle_multi -- 4096 64 30 artifacts/merkle_multi_golden.bin
   JAX_PLATFORMS=cuda PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
-      python/flock_zorch/testing/merkle_multi_oracle_test.py
+      python/flock_zorch/hash/testing/merkle_multi_oracle_test.py
 """
 import sys
 from pathlib import Path
@@ -15,9 +15,9 @@ from pathlib import Path
 import numpy as np
 import jax
 
-from flock_zorch import merkle
+from flock_zorch.hash import merkle
 
-ART = Path(__file__).resolve().parents[3] / "artifacts"
+ART = Path(__file__).resolve().parents[4] / "artifacts"
 
 
 def main() -> int:

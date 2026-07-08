@@ -27,7 +27,8 @@ from jax import lax
 
 from zorch.coding.additive_reed_solomon import AdditiveReedSolomon
 
-from flock_zorch import field, merkle
+from flock_zorch import field
+from flock_zorch.hash import merkle
 
 LOG_PACKING = field.LOG_PACKING
 

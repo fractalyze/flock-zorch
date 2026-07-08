@@ -34,7 +34,7 @@ from zorch.coding.reed_solomon import ReedSolomon  # noqa: E402
 from zorch.pcs.ligerito.prover import LigeritoProver  # noqa: E402
 from zorch.pcs.ligerito.verifier import LigeritoVerifier  # noqa: E402
 
-from flock_zorch import merkle  # noqa: E402
+from flock_zorch.hash import merkle  # noqa: E402
 from flock_zorch.zorch_ligerito import (  # noqa: E402
     flock_ligerito_config,
     flock_transcript,

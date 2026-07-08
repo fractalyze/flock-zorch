@@ -16,7 +16,7 @@ import sys
 
 import numpy as np
 
-from flock_zorch import merkle
+from flock_zorch.hash import merkle
 
 
 def _ref_tree(leaves: np.ndarray) -> np.ndarray:

@@ -16,7 +16,8 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
-from flock_zorch import field, pcs_open, merkle  # noqa: E402
+from flock_zorch import field, pcs_open  # noqa: E402
+from flock_zorch.hash import merkle  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 
 ART = Path(__file__).resolve().parents[3] / "artifacts"

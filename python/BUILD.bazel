@@ -78,7 +78,7 @@ _HEAVY = [
 py_test(
     name = "merkle_openings_test",
     size = "small",
-    srcs = ["flock_zorch/testing/merkle_openings_test.py"],
+    srcs = ["flock_zorch/hash/testing/merkle_openings_test.py"],
     deps = [
         ":flock_zorch",
         ":test_support",

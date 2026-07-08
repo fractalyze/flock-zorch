@@ -26,7 +26,8 @@ from jax import lax
 
 from zorch.coding.additive_reed_solomon import AdditiveReedSolomon
 
-from flock_zorch import field, sumcheck, merkle, fri
+from flock_zorch import field, sumcheck, fri
+from flock_zorch.hash import merkle
 from flock_zorch.field import _hostfield as hf
 
 LABEL = b"flock-basefold-v0"
