@@ -15,7 +15,7 @@ walker; const_pin = the shared Z_CONST.
 import numpy as np
 
 from flock_zorch.keccak_lincheck import (
-    accumulate_subkeccak, _combine_alpha_sides, _WLC, LANE_BITS, STATE_BITS, N_T,
+    _fold_walker, _device_sub_cols, _WLC, LANE_BITS, STATE_BITS, N_T,
 )
 
 # --- keccak3 layout constants (keccak3.rs) --------------------------------
@@ -50,20 +50,10 @@ class Keccak3LincheckCircuit:
 
     n_cols = K
     const_pin = Z_CONST  # shared const-wire pin column (lincheck.prove applies +β here)
+    _sub_cols = [(_COL0[i], _COL24[i], _ROWS_T[i]) for i in range(N_SUB)]  # host (test ref)
+    _sub_cols_dev = _device_sub_cols(_sub_cols)          # device, built once
 
     def fold_alpha_batched(self, alpha, eq_inner):
         """comb[c] = α·(A_0ᵀ·eq)[c] ⊕ (B_0ᵀ·eq)[c] — three disjoint sub-keccak walks
-        XOR-merged into the shared comb (incl. the shared Z_CONST column)."""
-        eq = np.asarray(eq_inner, np.uint64).reshape(K, 2)
-        comb_a = np.zeros((K, 2), np.uint64)  # α-scaled (A-side), accumulated unscaled
-        comb_b = np.zeros((K, 2), np.uint64)  # plain (B-side)
-
-        for i in range(N_SUB):
-            accumulate_subkeccak(eq, comb_a, comb_b, _COL0[i], _COL24[i], _ROWS_T[i], Z_CONST)
-
-        # ---- Row 0 (const, shared): A = [Z_CONST], B = [Z_CONST] — added once.
-        e0 = eq[Z_CONST]
-        comb_a[Z_CONST] ^= e0
-        comb_b[Z_CONST] ^= e0
-
-        return _combine_alpha_sides(comb_a, comb_b, alpha)
+        XOR-merged into the shared comb (incl. the shared Z_CONST column), on device."""
+        return _fold_walker(eq_inner, alpha, self._sub_cols_dev, Z_CONST)
