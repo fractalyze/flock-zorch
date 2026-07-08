@@ -4,7 +4,10 @@ load("@rules_python//python:defs.bzl", "py_library", "py_test")
 # the field_clmad native FFI loads lazily, so CPU import needs no cubin.
 py_library(
     name = "flock_zorch",
-    srcs = glob(["flock_zorch/*.py"]),
+    srcs = glob(
+        ["flock_zorch/**/*.py"],
+        exclude = ["flock_zorch/**/testing/**"],
+    ),
     imports = ["."],
     visibility = ["//visibility:public"],
     deps = [
@@ -55,7 +58,7 @@ _HEAVY = [
 
 [
     py_test(
-        name = _f[len("flock_zorch/testing/"):-len(".py")],
+        name = _f.rpartition("/")[2][:-len(".py")],
         size = "medium",  # slowest gate ~64s (ligerito)
         srcs = [_f],
         data = ["//artifacts:goldens"],
@@ -65,8 +68,8 @@ _HEAVY = [
         ],
     )
     for _f in glob(
-        ["flock_zorch/testing/*_oracle_test.py"],
-        exclude = ["flock_zorch/testing/%s_oracle_test.py" % _h for _h in _HEAVY],
+        ["flock_zorch/**/testing/*_oracle_test.py"],
+        exclude = ["flock_zorch/**/testing/%s_oracle_test.py" % _h for _h in _HEAVY],
     )
 ]
 
@@ -75,7 +78,7 @@ _HEAVY = [
 py_test(
     name = "merkle_openings_test",
     size = "small",
-    srcs = ["flock_zorch/testing/merkle_openings_test.py"],
+    srcs = ["flock_zorch/hash/testing/merkle_openings_test.py"],
     deps = [
         ":flock_zorch",
         ":test_support",
@@ -87,7 +90,7 @@ py_test(
 py_test(
     name = "lincheck_circuit_protocol_test",
     size = "small",
-    srcs = ["flock_zorch/testing/lincheck_circuit_protocol_test.py"],
+    srcs = ["flock_zorch/lincheck/testing/lincheck_circuit_protocol_test.py"],
     deps = [
         ":flock_zorch",
         ":test_support",

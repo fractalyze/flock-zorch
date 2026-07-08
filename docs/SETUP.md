@@ -84,7 +84,7 @@ scripts/dump_goldens.sh all      # + the real hash circuits (keccak/sha2/blake3;
 ```
 
 Two gates sweep configs with their own runners instead of a single default golden:
-- **PCS commit** — `python/flock_zorch/testing/run_commit_gates.sh` (6 `(m,rate,batch)` configs)
+- **PCS commit** — `python/flock_zorch/testing/run_commit_gates.sh` (6 `(m,rate,batch)` configs; drives `flock_zorch/pcs/testing/commit_oracle_test.py`)
 - **lincheck** — the multi-`(m,k_log,k_skip)` gate regenerates its per-config goldens.
 
 ## Optional: clmad GPU acceleration

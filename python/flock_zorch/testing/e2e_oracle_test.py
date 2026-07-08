@@ -18,7 +18,8 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
-from flock_zorch import field, pcs_commit, zerocheck, lincheck, prover, ring_switch  # noqa: E402
+from flock_zorch import field, zerocheck, lincheck, prover  # noqa: E402
+from flock_zorch.pcs import commit as pcs_commit, ring_switch  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 
 ART = Path(__file__).resolve().parents[3] / "artifacts"
