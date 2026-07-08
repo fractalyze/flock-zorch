@@ -19,7 +19,7 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
-from flock_zorch import field, pcs_commit, zerocheck, lincheck, prover  # noqa: E402
+from flock_zorch import field, zorch_ligerito, zerocheck, lincheck, prover  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 
 ART = Path(__file__).resolve().parents[3] / "artifacts"
@@ -77,11 +77,11 @@ def load():
 
 def run():
     g = load(); meta = g["meta"]; cfg = g["cfg"]
-    m, lir, lbs = meta["m"], meta["lir"], meta["lbs"]
+    m = meta["m"]
     k_log, k_skip = meta["k_log"], meta["k_skip"]; ir = k_log - k_skip
     results = []
 
-    root, codeword, tree = pcs_commit.commit(g["z"], m, lir, lbs)
+    root, pdata = zorch_ligerito.commit_flock_ligerito(cfg, g["z"])
     results.append(("commit root", np.array_equal(root, g["root"])))
 
     ch = Challenger(b"flock-sha2-lig-v0")
@@ -98,7 +98,7 @@ def run():
 
     ab_full = np.concatenate([lc_claim["r_inner_rest"], x_ab["x_outer"]], axis=0)
     c_full = np.concatenate([zc["r_rest"][:ir], zc["r_rest"][ir:]], axis=0)
-    out = prover.open_batch_ligerito(cfg, g["z"], codeword, tree, [ab_full, c_full], ch)
+    out = prover.open_batch_ligerito(cfg, g["z"], pdata, [ab_full, c_full], ch)
 
     for i in range(len(g["rs"])):
         results.append((f"open ring_switch[{i}]", np.array_equal(out["ring_switches"][i], g["rs"][i])))
