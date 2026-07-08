@@ -17,7 +17,7 @@ project memory `flock-baseline-needs-macbook`.
 
 Run:
   cargo build --release --example bench_sumcheck_cpu        # once
-  export PATH="$HOME/.local/cuda13/bin:$PATH"               # clmad cubin assembler
+  export PATH="$HOME/.local/cuda13/bin:$PATH"               # CUDA 13.3 ptxas → compiler emits clmad
   JAX_PLATFORMS=cuda PYTHONPATH=python <venv> \
       python/flock_zorch/sumcheck/testing/sumcheck_gpu_vs_cpu.py
 """

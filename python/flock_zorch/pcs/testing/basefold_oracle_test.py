@@ -3,7 +3,7 @@
 Loads the golden (a_init/b/codeword + the full BaseFoldProof), rebuilds the initial
 Merkle tree from the codeword, reruns the jax BaseFold, and byte-compares EVERY
 proof field (round messages, commitments, final values, query openings, multi-proofs)
-under software and clmad mul.
+under software and `clmad` mul.
 
 Run:
   cargo run --release --example dump_basefold -- 14 1 2 artifacts/basefold_golden.bin

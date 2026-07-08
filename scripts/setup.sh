@@ -44,13 +44,13 @@ log "3. build Rust against third_party/flock — golden dumpers + CPU benches"
 cargo build --release             # lib (rlib)
 cargo build --release --examples  # dump_* (goldens) + bench_*_cpu (apple-to-apple CPU baselines)
 
-log "4. clmad GPU FFI (OPTIONAL — needs CUDA 13.x ptxas + sm_120; gates fall back to the software binary_field_ghash multiply)"
+log "4. clmad GPU fast path (compiler-emitted by the jax wheel; needs a CUDA 13.3 ptxas on PATH at runtime — nothing to build)"
 if [ -x "${PTXAS:-$HOME/.local/cuda13/bin/ptxas}" ]; then
-  echo "  ptxas found — building the clmad cubin + handler (best-effort)"
-  VENV="$VENV_DIR/bin/python" bash optim/clmad/build_ffi.sh || echo "  WARN: clmad build failed; gates/benches use the software binary_field_ghash multiply (slower, byte-identical)"
+  echo "  CUDA-13.x ptxas found — put ~/.local/cuda13/bin on PATH and the pinned jax"
+  echo "  wheel emits hardware clmad for the GF(2^128) multiply."
 else
-  echo "  skip: no CUDA-13.x ptxas. clmad is the GPU fast path; without it everything still runs"
-  echo "        (software binary_field_ghash multiply, byte-identical). See optim/clmad/README.md + docs/SETUP.md."
+  echo "  no CUDA-13.x ptxas — gates/benches use the software binary_field_ghash multiply"
+  echo "  (byte-identical, slower). See docs/SETUP.md 'clmad GPU acceleration'."
 fi
 
 log "5. regenerate the core golden fixtures from the pinned flock"

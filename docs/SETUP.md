@@ -22,9 +22,11 @@ flock-zorch is the GPU port; it depends on two pinned sibling repos:
 - **Rust** via rustup (`flock-core` is edition 2024).
 - **Python 3.11**.
 - **SSH access to `fractalyze/zorch`** (bazel's `git_override` clones it).
-- Optional, for the GPU fast path: a **CUDA 13.x `ptxas`** at `~/.local/cuda13/bin`
-  (assembles the `clmad` cubin). Without it everything still runs on the software
-  `binary_field_ghash` multiply — byte-identical, just slower. See `optim/clmad/README.md`.
+- Optional, for the GPU fast path: a **CUDA 13.3 `ptxas`** at `~/.local/cuda13/bin`.
+  With it on `PATH` the pinned jax wheel's compiler emits the hardware `clmad`
+  GF(2¹²⁸) multiply; without it everything still runs on the software
+  `binary_field_ghash` multiply — byte-identical, just slower. See "clmad GPU
+  acceleration" below.
 
 ## Quick start
 
@@ -39,7 +41,7 @@ If you cloned without `--recursive`, `scripts/setup.sh` runs `git submodule upda
 
 `scripts/setup.sh` does, in order: preflight → submodules → Python venv (`.venv`,
 from `requirements.in` + the fractalyze PyPI index) → `cargo build --release`
-(dumpers + CPU benches) → optional clmad → regenerate the core goldens →
+(dumpers + CPU benches) → clmad fast-path check → regenerate the core goldens →
 two **smoke gates** (`field`, `e2e`) that prove byte-identity end-to-end.
 
 ## Running the gates
@@ -55,8 +57,8 @@ bazel test //python:e2e_oracle_test    # a single gate
 ```
 
 The **heavy hash-circuit gates** (keccak/sha2/blake3 — hundreds-of-MB goldens) and
-the `commit` GPU perf gate are **not** bazel targets (the CUDA wheels + clmad cubin
-aren't hermetic). Run those on the venv, resolving the same git_override'd zorch via
+the `commit` GPU perf gate are **not** bazel targets (the CUDA wheels aren't
+hermetic). Run those on the venv, resolving the same git_override'd zorch via
 `scripts/zorch_pythonpath.sh` (`jax_enable_x64` is set by the tests themselves):
 
 ```bash
@@ -89,17 +91,19 @@ Two gates sweep configs with their own runners instead of a single default golde
 
 ## Optional: clmad GPU acceleration
 
-The carryless `binary_field_ghash` multiply's fast path is the PTX `clmad` cubin,
-emitted by the zkx compiler when the cubin is present. Build it (needs CUDA
-13.x ptxas + sm_120):
+The carryless GF(2¹²⁸) `binary_field_ghash` multiply's fast path is the hardware
+PTX `clmad` (carryless multiply-add) instruction, which the pinned jax wheel's
+compiler emits directly — nothing to build. Emission is gated on the runtime
+`ptxas` being ≥ 13.3 (sm_120 requires it), so just put a CUDA 13.3 toolkit's
+`ptxas` on `PATH`:
 
 ```bash
-VENV=.venv/bin/python bash optim/clmad/build_ffi.sh
+export PATH="$HOME/.local/cuda13/bin:$PATH"
 ```
 
-Gates/benches pick it up automatically; otherwise they use the software
-`binary_field_ghash` multiply, which is byte-identical. Details in
-`optim/clmad/README.md`.
+With that, gates/benches use hardware `clmad` automatically; without it the wheel
+keeps the software xor/shift `binary_field_ghash` path, which is byte-identical,
+just slower.
 
 ## Benchmarks
 

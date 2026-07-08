@@ -4,8 +4,8 @@ bzlmod module (bazel 9 dropped WORKSPACE). Mirrors the sp1-zorch / whir-zorch
 shape: a thin consumer repo that depends on fractalyze/zorch for the
 scheme-agnostic SNARK spine (SHA-256 Fiat-Shamir duplex, byte-SHA-256, Merkle
 commitment, sumcheck fold primitives, poly/eq, pcs fold/basefold skeleton) and
-adds ONLY the flock-specific pieces: the GHASH-basis GF(2^128) field (+ clmad
-FFI), the additive NTT over the φ8 basis, the F8 round-1 univariate skip, and
+adds ONLY the flock-specific pieces: the GHASH-basis GF(2^128) field, the
+additive NTT over the φ8 basis, the F8 round-1 univariate skip, and
 the prove_packed / lincheck / open / proof assembly. Nothing flock-specific
 belongs in zorch — it lives here.
 
@@ -13,7 +13,7 @@ Byte-identity to unmodified succinct flock is the non-negotiable gate; the
 golden fixtures are dumped from flock-core by the Rust `examples/dump_*.rs`.
 
 Note: GPU byte-match gates run under the zorch venv via `PYTHONPATH`, NOT under
-hermetic Bazel (the jax/zkx CUDA wheels + the clmad cubin are not hermetic — the
+hermetic Bazel (the jax/zkx CUDA wheels are not hermetic — the
 same reason sp1-zorch's GPU checks are `verify_*` py_binary runnables, not
 hermetic `py_test`s). See README "Run the gates".
 """

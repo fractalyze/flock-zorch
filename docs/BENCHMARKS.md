@@ -12,12 +12,12 @@ synthetic circuits.
 |-----------|--------|
 | GPU | NVIDIA GeForce RTX 5090 (sm_120, 32607 MiB) |
 | CPU | AMD Ryzen 9 9950X3D 16-Core |
-| CUDA | driver 13.x; JAX runtime = CUDA 12 (jax-cuda12 stack); ptxas ≥ 13.x for the clmad cubin (sm_120) |
+| CUDA | driver 13.x; JAX runtime = CUDA 12 (jax-cuda12 stack); ptxas ≥ 13.3 for compiler-emitted clmad (sm_120) |
 | Rust | flock built thin-LTO, `codegen-units=1`, `target-cpu=native` (its honest x86 best) |
 | Python / JAX | 3.11 / jax_fork jax-cuda12 stack |
 | Date | 2026-06-30 UTC |
 
-- **clmad**: YES (sm_120 cubin + XLA FFI handler) — hardware GF(2¹²⁸) multiply.
+- **clmad**: YES (compiler-emitted; ptxas 13.3 on PATH) — hardware GF(2¹²⁸) multiply.
 - **Idle**: GPU verified idle (0% util, 0 compute procs) before every GPU timing;
   CPU baselines collected on an idle machine.
 
@@ -36,7 +36,7 @@ synthetic circuits.
   by the instance count (SHA-256 `n_comp`, Keccak3 `n_keccaks`).
 - **Timing**: best-of-3 (full prover) after one warm-up (JIT compile excluded).
   CPU single-threaded (flock's parallel/NEON paths are aarch64-gated).
-- **Env**: `JAX_PLATFORMS=cuda`, `FLOCK_CLMAD_CUBIN=optim/clmad/ghash_mul.cubin`,
+- **Env**: `JAX_PLATFORMS=cuda`, `PATH` includes `~/.local/cuda13/bin` (ptxas 13.3 → clmad),
   `PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"` (zorch via the git_override).
 
 ---
@@ -110,7 +110,7 @@ witness/arithmetic (best-of-3, warm). Because only the transcript differs,
 | 22 | 5,189                | 50,921                 | 9.8×  | **~45.7 s** |
 | 24 | 11,907               | 55,406                 | 4.7×  | **~43.5 s** |
 
-Measured with **software** GF(2¹²⁸) mul (no `ptxas`/clmad cubin on this box), which
+Measured with **software** GF(2¹²⁸) mul (no CUDA-13.x `ptxas` on this box), which
 inflates the *baseline* prover ~100× but **not** the transcript (its ops are SHA
 dispatches, not field muls). So the honest, config-independent figure is the
 **~44 s of fixed FS overhead per prove**. Against the real clmad prover (59.8 ms
@@ -164,13 +164,13 @@ bulk arithmetic and the CPU winning on latency-bound small instances.
 ## Commands Used
 
 ```bash
-# build clmad cubin — ptxas from a CUDA 13.x toolkit (sm_120 requires >= 13.x)
-ptxas -arch=sm_120 -O3 optim/clmad/ghash_mul.ptx -o optim/clmad/ghash_mul.cubin
+# clmad fast path: put a CUDA 13.3 ptxas on PATH (sm_120 requires >= 13.3); the
+# pinned jax wheel's compiler then emits hardware clmad. Nothing to build.
+export PATH="$HOME/.local/cuda13/bin:$PATH"
 
 VENV=.venv/bin/python                          # built by scripts/setup.sh
 export JAX_PLATFORMS=cuda XLA_PYTHON_CLIENT_PREALLOCATE=false
 export PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"   # zorch via the git_override
-export FLOCK_CLMAD_CUBIN=$(pwd)/optim/clmad/ghash_mul.cubin
 
 # one sweep point (SHA-256, m via n_comp): dump real R1CS -> CPU anchor -> GPU
 cargo run --release --example dump_sha2 -- <n_comp> artifacts/sha2_golden.bin

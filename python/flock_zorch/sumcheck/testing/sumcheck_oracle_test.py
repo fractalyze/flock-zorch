@@ -2,8 +2,8 @@
 
 Reads reference outputs of flock-core's `build_eq`, `round_pair_naive`, and
 `fold_in_place_single` (dumped by `examples/dump_sumcheck.rs`) and asserts the
-jax port in `flock_zorch.sumcheck` reproduces each byte-for-byte. Runs with the
-software field mul AND, when available, the clmad FFI — both must match.
+jax port in `flock_zorch.sumcheck` reproduces each byte-for-byte (identical under
+software and `clmad` mul).
 
 Run directly (backend chosen by JAX_PLATFORMS):
     JAX_PLATFORMS=cuda PYTHONPATH=python <venv>/bin/python \
