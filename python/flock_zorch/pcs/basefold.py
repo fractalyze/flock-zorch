@@ -19,6 +19,8 @@ bytes of the 32-byte root. Requires `jax_enable_x64`.
 from __future__ import annotations
 
 import functools
+from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import frx
@@ -29,6 +31,24 @@ from zorch.coding.additive_reed_solomon import AdditiveReedSolomon
 from flock_zorch import field, fs, sumcheck
 from flock_zorch.hash import merkle
 from flock_zorch.pcs import fri
+
+
+@dataclass(frozen=True)
+class BasefoldProof:
+    """flock's BaseFold opening proof: the per-round sumcheck messages, the FRI
+    commitment roots (post-row-batch + per-epoch), the final folded a/b and
+    codeword, and the per-leg Merkle multi-proofs over the `queries`."""
+
+    round_messages: Any
+    post_row_batch_commit: Any
+    round_commitments: Any
+    final_a: Any
+    final_b: Any
+    final_codeword: Any
+    queries: Any
+    initial_multi_proof: Any
+    post_row_batch_multi_proof: Any
+    epoch_multi_proofs: Any
 
 LABEL = b"flock-basefold-v0"
 
@@ -106,7 +126,7 @@ def _replay_round_fs(t, msgs_g, post_rb_g, commits_g, log_batch_size, arities,
 
 
 def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_size,
-          n_queries, ch) -> dict:
+          n_queries, ch) -> BasefoldProof:
     """Run BaseFold open on the SHARED challenger `ch` (so it composes in
     pcs::open after ring-switch). z_packed=a_init uint64 [2^log_msg,2]; b same;
     codeword uint64 [2^k_code · num_ntts, 2]; initial_tree uint8 [2·n_leaves-1, 32]
@@ -221,18 +241,18 @@ def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_s
     epoch_mps = [merkle.merkle_multi_proof(epoch_trees[i], epoch_codewords[i].shape[0] // epoch_leaf_f128s[i],
                                            epoch_pos[i]) for i in range(num_fri_commits)]
 
-    return {
-        "round_messages": round_messages,
-        "post_row_batch_commit": post_rb_root,
-        "round_commitments": round_commitments,
-        "final_a": final_a,
-        "final_b": final_b,
-        "final_codeword": final_codeword,
-        "queries": queries,
-        "initial_multi_proof": init_mp,
-        "post_row_batch_multi_proof": post_rb_mp,
-        "epoch_multi_proofs": epoch_mps,
-    }
+    return BasefoldProof(
+        round_messages=round_messages,
+        post_row_batch_commit=post_rb_root,
+        round_commitments=round_commitments,
+        final_a=final_a,
+        final_b=final_b,
+        final_codeword=final_codeword,
+        queries=queries,
+        initial_multi_proof=init_mp,
+        post_row_batch_multi_proof=post_rb_mp,
+        epoch_multi_proofs=epoch_mps,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -283,7 +303,7 @@ def verify(target, proof, initial_codeword_root, k_code, log_inv_rate,
     def reject(reason, challenges=None):
         return False, {"reason": reason, "challenges": challenges}
 
-    log_msg = len(proof["round_messages"])
+    log_msg = len(proof.round_messages)
     if log_batch_size > log_msg:
         return reject("InvalidProofShape:log_batch_size")
     log_dim = log_msg - log_batch_size
@@ -296,10 +316,10 @@ def verify(target, proof, initial_codeword_root, k_code, log_inv_rate,
 
     ch.observe_label(LABEL)
 
-    if len(proof["round_commitments"]) != num_fri_commits:
+    if len(proof.round_commitments) != num_fri_commits:
         return reject("InvalidProofShape:round_commitments")
     # #queries is a soundness parameter, not a prover choice (flock SECURITY note).
-    if len(proof["queries"]) != fri.default_fri_queries(log_inv_rate):
+    if len(proof.queries) != fri.default_fri_queries(log_inv_rate):
         return reject("InvalidProofShape:n_queries")
 
     # ---- replay sumcheck + observe commitments in lockstep with the prover ----
@@ -307,12 +327,12 @@ def verify(target, proof, initial_codeword_root, k_code, log_inv_rate,
     # given the proof shape); the running-target algebra replays on host after,
     # off the materialized challenges — it reads the transcript nowhere.
     msgs = np.stack([(np.asarray(u0, np.uint64), np.asarray(u2, np.uint64))
-                     for u0, u2 in proof["round_messages"]])          # [log_msg, 2, 2]
+                     for u0, u2 in proof.round_messages])            # [log_msg, 2, 2]
     if arities:
         post_rb_g = field.to_ghash(
-            jnp.asarray(_root_f128(np.asarray(proof["post_row_batch_commit"])).copy()))
+            jnp.asarray(_root_f128(np.asarray(proof.post_row_batch_commit)).copy()))
         commits = np.stack(
-            [_root_f128(np.asarray(c)).copy() for c in proof["round_commitments"]]
+            [_root_f128(np.asarray(c)).copy() for c in proof.round_commitments]
         ) if num_fri_commits else np.zeros((0, 2), np.uint64)
     else:
         post_rb_g = field.to_ghash(jnp.zeros(2, jnp.uint64))          # unused (static)
@@ -335,11 +355,11 @@ def verify(target, proof, initial_codeword_root, k_code, log_inv_rate,
     info = {"reason": "", "challenges": challenges}
 
     # ---- final sumcheck + codeword-constancy checks ----
-    final_a = np.asarray(proof["final_a"], np.uint64)
-    final_b = np.asarray(proof["final_b"], np.uint64)
+    final_a = np.asarray(proof.final_a, np.uint64)
+    final_b = np.asarray(proof.final_b, np.uint64)
     if not np.array_equal(_hf_mul(final_a, final_b), running_target):
         return reject("SumcheckFinalMismatch", challenges)
-    final_cw = np.asarray(proof["final_codeword"], np.uint64)
+    final_cw = np.asarray(proof.final_codeword, np.uint64)
     if final_cw.shape[0] != (1 << log_inv_rate):
         return reject("FinalCodewordNotConstant:len", challenges)
     if not np.all([np.array_equal(final_cw[i], final_cw[0]) for i in range(final_cw.shape[0])]):
@@ -348,7 +368,7 @@ def verify(target, proof, initial_codeword_root, k_code, log_inv_rate,
         return reject("SumcheckFriMismatch", challenges)
 
     # ---- resample query positions (challenger state matches prover) ----
-    n_q = len(proof["queries"])
+    n_q = len(proof.queries)
     ch._t, pos_g = fs.sample_chain(ch._t, n_q)
     positions = (field.from_ghash_host(pos_g)[:, 0].astype(np.int64)
                  & ((1 << k_code) - 1))
@@ -357,10 +377,10 @@ def verify(target, proof, initial_codeword_root, k_code, log_inv_rate,
     ch_g = [field.to_ghash(r.reshape(1, 2)).reshape(()) for r in challenges]  # ghash betas
 
     # Gather per-query leaves (uint64 SoA) once.
-    q_pos = np.array([q[0] for q in proof["queries"]], dtype=np.int64)
+    q_pos = np.array([q[0] for q in proof.queries], dtype=np.int64)
     if not np.array_equal(q_pos, positions):
         return reject("FoldMismatch:position", challenges)
-    init_leaves = np.stack([np.asarray(q[1], np.uint64) for q in proof["queries"]])  # [Q, num_ntts, 2]
+    init_leaves = np.stack([np.asarray(q[1], np.uint64) for q in proof.queries])  # [Q, num_ntts, 2]
     if init_leaves.shape[1] != num_ntts:
         return reject("InitialMerkleFailed:leaf_len", challenges)
 
@@ -382,7 +402,7 @@ def verify(target, proof, initial_codeword_root, k_code, log_inv_rate,
         # ONE additive-RS instance drives every fold layer (its LCH twiddles are
         # anchored to block_len = 2^k_code), mirroring the prover.
         code = AdditiveReedSolomon(1 << log_dim, 1 << log_inv_rate, jnp.binary_field_ghash)
-        post_rb_leaves = np.stack([np.asarray(q[2], np.uint64) for q in proof["queries"]])  # [Q, 2^a0, 2]
+        post_rb_leaves = np.stack([np.asarray(q[2], np.uint64) for q in proof.queries])  # [Q, 2^a0, 2]
         inner = (positions & ((1 << arity_0) - 1))
         got = post_rb_leaves[np.arange(n_q), inner]  # [Q, 2]
         if not np.array_equal(got, prbv):
@@ -396,7 +416,7 @@ def verify(target, proof, initial_codeword_root, k_code, log_inv_rate,
         cum = arity_0
         for i in range(num_fri_commits):
             next_arity = arities[i + 1]
-            leaves_i = np.stack([np.asarray(q[3][i], np.uint64) for q in proof["queries"]])  # [Q, 2^na, 2]
+            leaves_i = np.stack([np.asarray(q[3][i], np.uint64) for q in proof.queries])  # [Q, 2^na, 2]
             if leaves_i.shape[1] != (1 << next_arity):
                 return reject("InvalidProofShape:epoch_leaf_len", challenges)
             p_at = positions >> cum
@@ -427,20 +447,20 @@ def verify(target, proof, initial_codeword_root, k_code, log_inv_rate,
                           path=[jnp.asarray(paths[:, k, :]) for k in range(depth)])
         return (jnp.asarray(np.asarray(root, np.uint8)), jnp.asarray(leaf_positions), opening)
 
-    legs.append(_leg(np.asarray(proof["initial_multi_proof"]), 1 << k_code,
+    legs.append(_leg(np.asarray(proof.initial_multi_proof), 1 << k_code,
                      positions, init_leaves, initial_codeword_root))
     if arities:
-        legs.append(_leg(np.asarray(proof["post_row_batch_multi_proof"]),
+        legs.append(_leg(np.asarray(proof.post_row_batch_multi_proof),
                          1 << (k_code - arity_0), positions >> arity_0,
-                         post_rb_leaves, proof["post_row_batch_commit"]))
+                         post_rb_leaves, proof.post_row_batch_commit))
         cum = arity_0
         for i in range(num_fri_commits):
             next_arity = arities[i + 1]
-            leaves_i = np.stack([np.asarray(q[3][i], np.uint64) for q in proof["queries"]])
+            leaves_i = np.stack([np.asarray(q[3][i], np.uint64) for q in proof.queries])
             leaf_idx = (positions >> cum) >> next_arity
-            legs.append(_leg(np.asarray(proof["epoch_multi_proofs"][i]),
+            legs.append(_leg(np.asarray(proof.epoch_multi_proofs[i]),
                              1 << (k_code - cum - next_arity), leaf_idx,
-                             leaves_i, proof["round_commitments"][i]))
+                             leaves_i, proof.round_commitments[i]))
             cum += next_arity
 
     if not merkle.verify_openings(legs):

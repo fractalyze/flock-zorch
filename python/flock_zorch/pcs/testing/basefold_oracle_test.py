@@ -62,17 +62,17 @@ def _check(name):
 
     def eq(x, y): return np.array_equal(np.asarray(x), np.asarray(y))
     checks = {
-        "round_messages": all(eq(a, c) and eq(b_, d) for (a, b_), (c, d) in zip(p["round_messages"], g_rm)) and len(p["round_messages"]) == n_rm,
-        "post_row_batch_commit": eq(p["post_row_batch_commit"], g_post_root),
-        "round_commitments": eq(np.stack(p["round_commitments"]) if p["round_commitments"] else np.zeros((0, 32), np.uint8), g_rc),
-        "final_a": eq(p["final_a"], g_fa),
-        "final_b": eq(p["final_b"], g_fb),
-        "final_codeword": eq(p["final_codeword"], g_fcw),
+        "round_messages": all(eq(a, c) and eq(b_, d) for (a, b_), (c, d) in zip(p.round_messages, g_rm)) and len(p.round_messages) == n_rm,
+        "post_row_batch_commit": eq(p.post_row_batch_commit, g_post_root),
+        "round_commitments": eq(np.stack(p.round_commitments) if p.round_commitments else np.zeros((0, 32), np.uint8), g_rc),
+        "final_a": eq(p.final_a, g_fa),
+        "final_b": eq(p.final_b, g_fb),
+        "final_codeword": eq(p.final_codeword, g_fcw),
         "queries": all(q[0] == gq[0] and eq(q[1], gq[1]) and eq(q[2], gq[2]) and all(eq(x, y) for x, y in zip(q[3], gq[3]))
-                       for q, gq in zip(p["queries"], g_q)),
-        "initial_multi_proof": eq(p["initial_multi_proof"], g_imp),
-        "post_row_batch_multi_proof": eq(p["post_row_batch_multi_proof"], g_prmp),
-        "epoch_multi_proofs": all(eq(a, b_) for a, b_ in zip(p["epoch_multi_proofs"], g_emp)),
+                       for q, gq in zip(p.queries, g_q)),
+        "initial_multi_proof": eq(p.initial_multi_proof, g_imp),
+        "post_row_batch_multi_proof": eq(p.post_row_batch_multi_proof, g_prmp),
+        "epoch_multi_proofs": all(eq(a, b_) for a, b_ in zip(p.epoch_multi_proofs, g_emp)),
     }
     ok = all(checks.values())
     bad = [k for k, v in checks.items() if not v]

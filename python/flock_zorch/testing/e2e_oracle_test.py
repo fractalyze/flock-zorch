@@ -139,25 +139,25 @@ def run():
     for i in range(2):
         _eq(f"open ring_switch[{i}].s_hat_v", out.ring_switches[i], g_rs[i], results)
     bf = out.basefold
-    got_rm = np.array([np.concatenate([a, b]) for a, b in bf["round_messages"]])
+    got_rm = np.array([np.concatenate([a, b]) for a, b in bf.round_messages])
     want_rm = np.array([np.concatenate([a, b]) for a, b in g_bf["rm"]])
     _eq("open bf round_messages", got_rm, want_rm, results)
-    _eq("open bf post_rb_commit", bf["post_row_batch_commit"], g_bf["post_rb_root"], results)
-    rc = np.stack(bf["round_commitments"]) if len(bf["round_commitments"]) else np.zeros((0, 32), np.uint8)
+    _eq("open bf post_rb_commit", bf.post_row_batch_commit, g_bf["post_rb_root"], results)
+    rc = np.stack(bf.round_commitments) if len(bf.round_commitments) else np.zeros((0, 32), np.uint8)
     results.append(("open bf round_commitments", rc.shape == g_bf["rc"].shape and np.array_equal(rc, g_bf["rc"])))
-    _eq("open bf final_a", bf["final_a"], g_bf["fa"], results)
-    _eq("open bf final_b", bf["final_b"], g_bf["fb"], results)
-    _eq("open bf final_codeword", bf["final_codeword"], g_bf["fcw"], results)
+    _eq("open bf final_a", bf.final_a, g_bf["fa"], results)
+    _eq("open bf final_b", bf.final_b, g_bf["fb"], results)
+    _eq("open bf final_codeword", bf.final_codeword, g_bf["fcw"], results)
     # queries
-    q_ok = len(bf["queries"]) == len(g_bf["queries"])
-    for (gp, gil, gprl, gel), (pos, il, prl, el) in zip(g_bf["queries"], bf["queries"]):
+    q_ok = len(bf.queries) == len(g_bf["queries"])
+    for (gp, gil, gprl, gel), (pos, il, prl, el) in zip(g_bf["queries"], bf.queries):
         q_ok = q_ok and pos == gp and np.array_equal(il, gil) and np.array_equal(prl, gprl)
         q_ok = q_ok and len(el) == len(gel) and all(np.array_equal(a, b) for a, b in zip(el, gel))
     results.append(("open bf queries", q_ok))
-    _eq("open bf initial_multi_proof", bf["initial_multi_proof"], g_bf["imp"], results)
-    _eq("open bf post_rb_multi_proof", bf["post_row_batch_multi_proof"], g_bf["prmp"], results)
-    emp_ok = len(bf["epoch_multi_proofs"]) == len(g_bf["emp"]) and \
-        all(np.array_equal(a, b) for a, b in zip(bf["epoch_multi_proofs"], g_bf["emp"]))
+    _eq("open bf initial_multi_proof", bf.initial_multi_proof, g_bf["imp"], results)
+    _eq("open bf post_rb_multi_proof", bf.post_row_batch_multi_proof, g_bf["prmp"], results)
+    emp_ok = len(bf.epoch_multi_proofs) == len(g_bf["emp"]) and \
+        all(np.array_equal(a, b) for a, b in zip(bf.epoch_multi_proofs, g_bf["emp"]))
     results.append(("open bf epoch_multi_proofs", emp_ok))
 
     # ---- Stage F: packaged prover.prove_fast reproduces the staged proof ----
@@ -167,7 +167,7 @@ def run():
     _eq("prove_fast zc round1_ab", pf.zerocheck.round1_ab, g_zc["r1ab"], results)
     _eq("prove_fast lc z_partial", pf.lincheck[1], g_lc["zp"], results)
     _eq("prove_fast open ring_switch[1]", pf.pcs_open.ring_switches[1], g_rs[1], results)
-    _eq("prove_fast open bf final_a", pf.pcs_open.basefold["final_a"], g_bf["fa"], results)
+    _eq("prove_fast open bf final_a", pf.pcs_open.basefold.final_a, g_bf["fa"], results)
     _eq("prove_fast claim_ab_value", pf.claim_ab_value, g_ab["v"], results)
 
     return m, results
