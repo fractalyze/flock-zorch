@@ -20,30 +20,22 @@ from __future__ import annotations
 
 import numpy as np
 import jax.numpy as jnp
-from jax import lax
-import zk_dtypes
 
 from flock_zorch import field, sumcheck
 from flock_zorch.challenger import Challenger
 from zorch.pcs import ring_switch as zrs
 
-U64 = jnp.uint64
-GHASH = zk_dtypes.binary_field_ghash
 LOG_PACKING = field.LOG_PACKING
 LABEL = b"flock-ring-switch-v0"
 
 
-def _to_ghash(arr):
-    """`[.., 2]` uint64 (lo, hi) F128 -> `[..]` binary_field_ghash, byte-free."""
-    arr = jnp.asarray(arr, U64)
-    lanes = lax.bitcast_convert_type(arr, jnp.uint32).reshape(*arr.shape[:-1], 4)
-    return lax.bitcast_convert_type(lanes, GHASH)
+_to_ghash = field.to_ghash
 
 
 def _from_ghash(arr):
-    """`[..]` binary_field_ghash -> `[.., 2]` uint64 (lo, hi). Inverse of _to_ghash."""
-    lanes = lax.bitcast_convert_type(arr, jnp.uint32).reshape(*arr.shape, 2, 2)
-    return np.asarray(lax.bitcast_convert_type(lanes, U64))
+    """`field.from_ghash` materialized to host numpy — ring-switch consumes the
+    uint64 lanes on the host."""
+    return np.asarray(field.from_ghash(arr))
 
 
 def _reduce_one(packed, x_outer, ch: Challenger):

@@ -26,28 +26,18 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
-from jax import lax
+
+from flock_zorch import field
 
 U64 = jnp.uint64
-_GHASH = jnp.binary_field_ghash
 ONE = jnp.asarray([1, 0], dtype=U64)  # F128::ONE = {lo: 1, hi: 0}
 
 
-def _to_ghash(u64):
-    """uint64 `[..., 2]` (lo, hi) -> `binary_field_ghash [...]`, via uint32 lanes.
-
-    The direct uint64<->ghash bitcast silently miscompiles on the CPU PJRT path;
-    the uint32 bitcast is correct on both backends (and is the dtype's lane width).
-    """
-    u64 = jnp.asarray(u64, U64)
-    u32 = lax.bitcast_convert_type(u64, jnp.uint32).reshape(*u64.shape[:-1], 4)
-    return lax.bitcast_convert_type(u32, _GHASH)
-
-
-def _from_ghash(g):
-    """`binary_field_ghash [...]` -> uint64 `[..., 2]` (lo, hi). Inverse of _to_ghash."""
-    u32 = lax.bitcast_convert_type(g, jnp.uint32)
-    return lax.bitcast_convert_type(u32.reshape(*u32.shape[:-1], 2, 2), U64)
+# The uint64-lane <-> binary_field_ghash bitcast lives in `field` (one source of
+# truth; the ghash->uint64 direction routes through uint32 lanes, so it is not a
+# plain bitcast — see field.to_ghash).
+_to_ghash = field.to_ghash
+_from_ghash = field.from_ghash
 
 
 _ONE_G = _to_ghash(ONE)  # scalar binary_field_ghash one

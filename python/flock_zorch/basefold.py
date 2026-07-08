@@ -22,12 +22,10 @@ from __future__ import annotations
 import numpy as np
 import jax
 import jax.numpy as jnp
-from jax import lax
 
 from zorch.coding.additive_reed_solomon import AdditiveReedSolomon
 
 from flock_zorch import field, sumcheck, merkle, fri
-from flock_zorch import _hostfield as hf
 
 LABEL = b"flock-basefold-v0"
 
@@ -35,7 +33,9 @@ LABEL = b"flock-basefold-v0"
 def _hf_mul(a, b):
     """Host GF(2^128) multiply on a uint64[2] (lo, hi) scalar pair — for the
     verify sumcheck replay, which runs on host numpy scalars (not device)."""
-    return field._to_lohi(hf.mul(field._to_int(a), field._to_int(b)))
+    ag = np.asarray(a, np.uint64).view(field._GHASH_HOST)
+    bg = np.asarray(b, np.uint64).view(field._GHASH_HOST)
+    return np.asarray(ag * bg).view(np.uint64)
 
 
 def _round_message(a, b):
@@ -67,16 +67,13 @@ def _bf_ops():
     return _BF_OPS
 
 
-def _to_ghash(soa):
-    """uint64 SoA (last axis size 2) -> binary_field_ghash on device."""
-    return lax.bitcast_convert_type(jnp.asarray(soa), jnp.binary_field_ghash)
+_to_ghash = field.to_ghash
 
 
 def _from_ghash(g):
-    """binary_field_ghash -> uint64 SoA [n, 2] via host bytes (the device
-    ghash->uint64 bitcast returns zeros, zorch#399)."""
-    arr = np.asarray(g)
-    return np.frombuffer(arr.tobytes(), np.uint64).reshape(arr.shape[0], 2)
+    """`field.from_ghash` materialized to host numpy [n, 2] — the fold/verify
+    codeword is consumed on the host."""
+    return np.asarray(field.from_ghash(g))
 
 
 def _leaf_bytes(codeword_np, n_leaves, leaf_f128):

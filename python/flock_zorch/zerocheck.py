@@ -24,8 +24,7 @@ import jax
 import jax.numpy as jnp
 
 from flock_zorch import gf8, sumcheck
-from flock_zorch.field import _to_int, _to_lohi
-from flock_zorch import _hostfield as hf
+from flock_zorch.field import _to_int, _to_lohi, _int_to_ghash, _ghash_to_int
 from flock_zorch.challenger import Challenger
 from flock_zorch._zerocheck_fold import (
     _lagrange_weights, _interpolate_at_z_on_lambda, _fold_at_z_rows, _phi_int, _ONE,
@@ -71,8 +70,8 @@ def medium_challenges() -> list[int]:
     (flock `medium_challenges_ghash`)."""
     out = []
     for e in (1, 2, 4, 8):
-        ge = 1 << e
-        out.append(hf.mul(ge, hf.inv(1 ^ ge)))
+        ge = _int_to_ghash(1 << e)
+        out.append(_ghash_to_int(ge * _int_to_ghash(1 ^ (1 << e)) ** -1))
     return out
 
 
