@@ -10,7 +10,7 @@ rows); everything else is the same recursive Ligerito driver gated for sha2.
 
 Run (regen: cargo run --release --example dump_keccak_ligerito -- 64 artifacts/keccak_ligerito_golden.bin):
   export PATH="$HOME/.local/cuda13/bin:$PATH"
-  JAX_PLATFORMS=cuda PYTHONPATH=python:/home/jooman/fractalyze/zorch <venv> \
+  JAX_PLATFORMS=cuda PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
       python/flock_zorch/testing/keccak_ligerito_oracle_test.py
 """
 import sys

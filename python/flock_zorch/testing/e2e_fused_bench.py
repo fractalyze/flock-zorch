@@ -8,7 +8,7 @@ this also re-checks a few fields against the m=13 golden before timing.
 
 Run:
   export PATH="$HOME/.local/cuda13/bin:$PATH"
-  JAX_PLATFORMS=cuda PYTHONPATH=python:/home/jooman/fractalyze/zorch <venv> \
+  JAX_PLATFORMS=cuda PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
       python/flock_zorch/testing/e2e_fused_bench.py [m ...]
 """
 import os

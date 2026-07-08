@@ -10,7 +10,7 @@ pcs_open(ligerito)}.
 
 Run (regen: cargo run --release --example dump_keccak_chain -- artifacts/keccak_chain_golden.bin):
   export PATH="$HOME/.local/cuda13/bin:$PATH"
-  JAX_PLATFORMS=cuda PYTHONPATH=python:/home/jooman/fractalyze/zorch <venv> \
+  JAX_PLATFORMS=cuda PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
       python/flock_zorch/testing/keccak_chain_oracle_test.py
 """
 import sys

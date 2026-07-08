@@ -12,7 +12,7 @@ runs ON DEVICE (lincheck.CscCircuit sorted prefix-XOR scan, ~0.5 ms vs the old
 
 Run:
   export PATH="$HOME/.local/cuda13/bin:$PATH"
-  JAX_PLATFORMS=cuda PYTHONPATH=python:/home/jooman/fractalyze/zorch <venv> \
+  JAX_PLATFORMS=cuda PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
       python/flock_zorch/testing/e2e_blake3_bench.py [cpu_ms]
 """
 import sys
