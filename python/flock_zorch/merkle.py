@@ -49,8 +49,8 @@ class _Sha256LeafHasher:
     """`leaf_hasher` seam: `SHA256(leaf_bytes)`. `as_bytes` maps a batch of stored
     leaf rows to their uint8 SHA-256 preimage — identity here, an element-byte
     reinterpret in the GHASH subclass — so it is the one hook that varies with the
-    leaf dtype and a single `_Sha256Merkle` serves both. Batched hashing runs
-    through `_Sha256Merkle._hash_leaves`; `hash` is the single-row form the
+    leaf dtype and a single `_Sha256MerkleTree` serves both. Batched hashing runs
+    through `_Sha256MerkleTree._hash_leaves`; `hash` is the single-row form the
     inherited reconstruct/verify path calls."""
     out = 32
 
@@ -94,7 +94,7 @@ class _Sha256Compressor:
         return hash(type(self))
 
 
-class _Sha256Merkle(MerkleTree):
+class _Sha256MerkleTree(MerkleTree):
     """`MerkleTree` with whole levels hashed batch-native: SHA-256's block schedule
     reads the batch axis from the shape, so the base `vmap(single-hash)` would
     retrace the marker decomposition at the wrong rank — override the two batching
@@ -110,8 +110,8 @@ class _Sha256Merkle(MerkleTree):
         return _digest(groups.reshape(groups.shape[0], 64), 64)
 
 
-_TREE = _Sha256Merkle(_Sha256LeafHasher(), _Sha256Compressor())
-GHASH_TREE = _Sha256Merkle(_GhashSha256LeafHasher(), _Sha256Compressor())
+_TREE = _Sha256MerkleTree(_Sha256LeafHasher(), _Sha256Compressor())
+GHASH_TREE = _Sha256MerkleTree(_GhashSha256LeafHasher(), _Sha256Compressor())
 
 
 def verify_openings_flock(legs) -> bool:
