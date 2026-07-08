@@ -134,12 +134,6 @@ def merkle_root(leaves) -> np.ndarray:
     return np.asarray(_root_dev(jnp.asarray(leaves, dtype=jnp.uint8)))
 
 
-def merkle_root_from_flat(data, n_leaves: int) -> np.ndarray:
-    """Convenience: split a flat uint8 buffer into `n_leaves` equal leaves, hash."""
-    data = np.asarray(data, dtype=np.uint8).reshape(n_leaves, -1)
-    return merkle_root(data)
-
-
 def merkle_tree(leaves) -> np.ndarray:
     """Full flat Merkle tree, byte-identical to flock's `merkle_tree` layout:
     `tree[0..n]` = leaf hashes (level k), then level k-1, …, root at `tree[2n-2]`.
