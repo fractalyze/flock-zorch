@@ -29,10 +29,6 @@ LOG_PACKING = field.LOG_PACKING
 LABEL = b"flock-ring-switch-v0"
 
 
-_to_ghash = field.to_ghash
-_from_ghash = field.from_ghash_host
-
-
 def _reduce_one(packed, x_outer, ch: Challenger):
     """One claim's observe-and-reduce (the block prove and prove_batched share):
     observe LABEL + s_hat_v, sample r'', compute the sumcheck claim. Returns
@@ -40,23 +36,23 @@ def _reduce_one(packed, x_outer, ch: Challenger):
     the caller turns eq_r_dprime into rs_eq_ind (with or without a gamma scale)."""
     ch.observe_label(LABEL)
     suffix = jnp.asarray(np.asarray(x_outer)[1:])             # x_outer[1:], length L
-    suffix_tensor = _to_ghash(sumcheck.build_eq_fused(suffix))
+    suffix_tensor = field.to_ghash(sumcheck.build_eq_fused(suffix))
     s_hat_v = zrs.bit_slice_evals(packed, suffix_tensor)     # (128,) ghash
-    s_hat_v_lanes = _from_ghash(s_hat_v)                     # [128,2]
+    s_hat_v_lanes = field.from_ghash_host(s_hat_v)                     # [128,2]
     ch.observe_f128_slice(s_hat_v_lanes)
     r_dprime = jnp.asarray(ch.sample_f128_vec(LOG_PACKING))  # [7,2]
     eq_r_dprime = sumcheck.build_eq_fused(r_dprime)  # [128,2], kept in lanes for gamma
-    claim = zrs.inner_product(zrs.tensor_algebra_transpose(s_hat_v), _to_ghash(eq_r_dprime))
-    return s_hat_v_lanes, suffix_tensor, eq_r_dprime, _from_ghash(claim)
+    claim = zrs.inner_product(zrs.tensor_algebra_transpose(s_hat_v), field.to_ghash(eq_r_dprime))
+    return s_hat_v_lanes, suffix_tensor, eq_r_dprime, field.from_ghash_host(claim)
 
 
 def prove(packed_witness, x_outer, ch: Challenger):
     """Returns (s_hat_v [128,2], rs_eq_ind [2^L,2], sumcheck_claim [2]).
     Byte-identical to flock `ring_switch::prove`."""
-    packed = _to_ghash(packed_witness)
+    packed = field.to_ghash(packed_witness)
     s_hat_v_lanes, suffix_tensor, eq_r_dprime, claim = _reduce_one(packed, x_outer, ch)
-    rs_eq_ind = zrs.rs_eq_ind(suffix_tensor, _to_ghash(eq_r_dprime))
-    return s_hat_v_lanes, _from_ghash(rs_eq_ind), claim
+    rs_eq_ind = zrs.rs_eq_ind(suffix_tensor, field.to_ghash(eq_r_dprime))
+    return s_hat_v_lanes, field.from_ghash_host(rs_eq_ind), claim
 
 
 def prove_batched(packed_witness, x_outers, ch: Challenger):
@@ -68,14 +64,14 @@ def prove_batched(packed_witness, x_outers, ch: Challenger):
     THEN bake gamma_i into each `rs_eq_ind_i` (the caller-owned linear combination
     — see the zorch module's contract). Returns
     (s_hat_vs, rs_eq_inds[gamma-baked], sumcheck_claims, gammas)."""
-    packed = _to_ghash(packed_witness)
+    packed = field.to_ghash(packed_witness)
     works = [_reduce_one(packed, x_outer, ch) for x_outer in x_outers]
     gammas = [ch.sample_f128() for _ in range(len(x_outers))]
 
     s_hat_vs, rs_eq_inds, sumcheck_claims = [], [], []
     for (s_hat_v_lanes, suffix_tensor, eq_r_dprime, claim), g in zip(works, gammas):
-        scaled = _to_ghash(jnp.asarray(g)) * _to_ghash(jnp.asarray(eq_r_dprime))  # gamma baked into eq
-        rs_eq_inds.append(_from_ghash(zrs.rs_eq_ind(suffix_tensor, scaled)))
+        scaled = field.to_ghash(jnp.asarray(g)) * field.to_ghash(jnp.asarray(eq_r_dprime))  # gamma baked into eq
+        rs_eq_inds.append(field.from_ghash_host(zrs.rs_eq_ind(suffix_tensor, scaled)))
         s_hat_vs.append(s_hat_v_lanes)
         sumcheck_claims.append(claim)
     return s_hat_vs, rs_eq_inds, sumcheck_claims, gammas

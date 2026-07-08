@@ -31,16 +31,7 @@ from flock_zorch import field
 
 U64 = jnp.uint64
 ONE = jnp.asarray([1, 0], dtype=U64)  # F128::ONE = {lo: 1, hi: 0}
-
-
-# The uint64-lane <-> binary_field_ghash bitcast lives in `field` (one source of
-# truth; the ghash->uint64 direction routes through uint32 lanes, so it is not a
-# plain bitcast — see field.to_ghash).
-_to_ghash = field.to_ghash
-_from_ghash = field.from_ghash
-
-
-_ONE_G = _to_ghash(ONE)  # scalar binary_field_ghash one
+_ONE_G = field.to_ghash(ONE)  # scalar binary_field_ghash one
 
 
 def build_eq(r):
@@ -52,14 +43,14 @@ def build_eq(r):
     layer is one elementwise multiply over a doubling table → fully parallel per
     layer, n sequential layers (n static).
     """
-    rg = _to_ghash(r)                    # [n]
+    rg = field.to_ghash(r)                    # [n]
     n = int(rg.shape[0])
     t = _ONE_G.reshape(1)                # [1]
     for i in range(n):
         r_i = rg[i]                      # scalar
         one_minus = r_i + _ONE_G         # (1 + r_i)
         t = jnp.concatenate([t * one_minus, t * r_i], axis=0)
-    return _from_ghash(t)
+    return field.from_ghash(t)
 
 
 _BUILD_EQ_FUSED = jax.jit(build_eq)
@@ -80,10 +71,10 @@ def fold_single(a, challenge):
 
     a: uint64 [2^k, 2] (k ≥ 1); returns uint64 [2^(k-1), 2].
     """
-    ag = _to_ghash(a).reshape(-1, 2)
+    ag = field.to_ghash(a).reshape(-1, 2)
     a0, a1 = ag[:, 0], ag[:, 1]
-    cg = _to_ghash(challenge)
-    return _from_ghash(a0 + cg * (a0 + a1))
+    cg = field.to_ghash(challenge)
+    return field.from_ghash(a0 + cg * (a0 + a1))
 
 
 def fold_pair(a, b, challenge):
@@ -102,15 +93,15 @@ def round_pair(a_mlv, b_mlv, r):
     remaining variables.
     """
     r = jnp.asarray(r, U64)
-    eq = _to_ghash(build_eq(r[1:]))      # [2^(log_n-1)]
-    r0 = _to_ghash(r[0])                  # scalar
-    ag = _to_ghash(a_mlv).reshape(-1, 2)
-    bg = _to_ghash(b_mlv).reshape(-1, 2)
+    eq = field.to_ghash(build_eq(r[1:]))      # [2^(log_n-1)]
+    r0 = field.to_ghash(r[0])                  # scalar
+    ag = field.to_ghash(a_mlv).reshape(-1, 2)
+    bg = field.to_ghash(b_mlv).reshape(-1, 2)
     a0, a1 = ag[:, 0], ag[:, 1]
     b0, b1 = bg[:, 0], bg[:, 1]
     g_one = jnp.sum(eq * (a1 * b1))              # Σ eq·a1·b1
     g_inf = jnp.sum(eq * ((a0 + a1) * (b0 + b1)))  # Σ eq·(a0+a1)(b0+b1)
-    return _from_ghash(r0 * g_one), _from_ghash(g_inf)
+    return field.from_ghash(r0 * g_one), field.from_ghash(g_inf)
 
 
 def eq_eval(r, x):
@@ -118,8 +109,8 @@ def eq_eval(r, x):
 
     r, x: uint64 [n, 2]; returns uint64 [2]. Char-2 form of (1-r)(1-x) + r·x.
     """
-    factors = _to_ghash(r) + _to_ghash(x) + _ONE_G  # [n]
+    factors = field.to_ghash(r) + field.to_ghash(x) + _ONE_G  # [n]
     acc = _ONE_G
     for i in range(int(factors.shape[0])):
         acc = acc * factors[i]
-    return _from_ghash(acc)
+    return field.from_ghash(acc)
