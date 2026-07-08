@@ -269,8 +269,6 @@ def prove_flock_basefold(
     log_batch_size,
     n_queries,
     ch,
-    mul=None,
-    use_host_sha=False,
 ) -> dict:
     """Drive `zorch.pcs.basefold` over flock's shared challenger and assemble a
     flock `BaseFoldProof` dict — byte-identical to the retired in-tree
@@ -282,10 +280,8 @@ def prove_flock_basefold(
     current state, written back after the open) so the BaseFold open continues
     the transcript ring-switch built. The initial matrix is re-committed inside
     the driver (byte-identical to flock's external commit); reusing the external
-    `initial_tree` is a perf follow-up. `mul` / `use_host_sha` are accepted for
-    call-site parity but unused — the ghash dtype carries the field multiply and
-    `merkle.GHASH_TREE` the SHA-256 commit."""
-    del initial_tree, mul, use_host_sha
+    `initial_tree` is a perf follow-up."""
+    del initial_tree
     log_dim = k_code - log_inv_rate
     num_ntts = 1 << log_batch_size
     n_pos = 1 << k_code

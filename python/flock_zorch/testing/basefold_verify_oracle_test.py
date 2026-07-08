@@ -1,7 +1,8 @@
-"""BaseFold verifier round-trip gate: `basefold.prove` output must VERIFY, and
-tampered proofs must REJECT. Byte-anchored indirectly — the prover is byte-green
-vs flock (`basefold_oracle_test`), so a verifier that accepts its output and
-rejects tampering matches flock's `pcs::basefold::verify` acceptance semantics.
+"""BaseFold verifier round-trip gate: `zorch_basefold.prove_flock_basefold`
+output must VERIFY, and tampered proofs must REJECT. Byte-anchored indirectly —
+the prover is byte-green vs flock (`basefold_oracle_test`), so a verifier that
+accepts its output and rejects tampering matches flock's `pcs::basefold::verify`
+acceptance semantics.
 
 Runs over configs spanning 1/2/3 FRI epochs (arity schedule `compute_fri_arities`),
 on CPU (bazel `//python:all`) or GPU (venv, `JAX_PLATFORMS=cuda`).
@@ -18,7 +19,7 @@ import jax.numpy as jnp
 
 jax.config.update("jax_enable_x64", True)
 
-from flock_zorch import field, basefold, merkle, pcs_commit, fri  # noqa: E402
+from flock_zorch import field, basefold, merkle, pcs_commit, fri, zorch_basefold  # noqa: E402
 from flock_zorch import _hostfield as hf  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 
@@ -105,7 +106,7 @@ def _build(m, lir, lbs, seed):
     root, codeword, tree = pcs_commit.commit(z, m, lir, lbs)
     target = _target(z, b)
     ch = Challenger(DOMAIN)
-    proof = basefold.prove(z, b, codeword, tree, k_code, lir, lbs, n_q, ch)
+    proof = zorch_basefold.prove_flock_basefold(z, b, codeword, tree, k_code, lir, lbs, n_q, ch)
     return proof, target, root, k_code
 
 

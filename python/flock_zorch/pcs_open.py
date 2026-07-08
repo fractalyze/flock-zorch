@@ -4,7 +4,8 @@ target) → BaseFold. The entry point is `open()`; the FRI helpers it drives
 (`row_batch_fold_all` / `compute_fri_arities` / `default_fri_queries`) live in
 `fri.py` — a leaf module that this open frontend and the basefold backend both
 import down from. The per-round codeword fold is zorch's
-`coding.AdditiveReedSolomon.fold` (see `basefold.py`). Requires `jax_enable_x64`.
+`coding.AdditiveReedSolomon.fold` (see `zorch_basefold.py`). Requires
+`jax_enable_x64`.
 """
 from __future__ import annotations
 
@@ -18,10 +19,10 @@ def open(z_packed, codeword, initial_tree, x_outer, k_code, log_inv_rate, log_ba
 
     Returns {ring_switch: s_hat_v, basefold: <BaseFoldProof fields>}. `ch` is the
     shared challenger (already carrying commit/zerocheck/lincheck state in e2e)."""
-    from flock_zorch import ring_switch, basefold  # local import: avoid import cycle
+    from flock_zorch import ring_switch, zorch_basefold  # local import: avoid import cycle
     ch.observe_label(b"flock-pcs-open-v0")
     s_hat_v, rs_eq_ind, _target = ring_switch.prove(z_packed, x_outer, ch)  # target unused: not in the proof bytes
     n_queries = default_fri_queries(log_inv_rate)
-    bf = basefold.prove(z_packed, rs_eq_ind, codeword, initial_tree, k_code,
-                        log_inv_rate, log_batch_size, n_queries, ch)
+    bf = zorch_basefold.prove_flock_basefold(z_packed, rs_eq_ind, codeword, initial_tree, k_code,
+                                             log_inv_rate, log_batch_size, n_queries, ch)
     return {"ring_switch": s_hat_v, "basefold": bf}

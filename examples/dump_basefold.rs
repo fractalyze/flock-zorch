@@ -5,8 +5,8 @@
 //! Commits a deterministic witness, then runs unmodified flock `basefold::prove`
 //! with a random `b` (target=0; running_target doesn't affect proof bytes) and the
 //! real `FsChallenger`. Dumps a_init(z_packed) + b + codeword + ALL BaseFoldProof
-//! fields. The jax port (`flock_zorch.basefold.prove`) rebuilds the tree, reruns,
-//! and byte-compares every field.
+//! fields. The jax port (`flock_zorch.zorch_basefold.prove_flock_basefold`)
+//! rebuilds the tree, reruns, and byte-compares every field.
 //!
 //! Usage: `cargo run --release --example dump_basefold -- [m] [log_inv_rate] [log_batch_size] [out]`
 
