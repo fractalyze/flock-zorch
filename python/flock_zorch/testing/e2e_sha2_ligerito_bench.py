@@ -4,7 +4,7 @@ Run: ... e2e_sha2_ligerito_bench.py <flock_cpu_ms>"""
 import sys
 import numpy as np, jax
 jax.config.update("jax_enable_x64", True)
-from flock_zorch import field, zorch_ligerito, zerocheck, lincheck, prover  # noqa: E402
+from flock_zorch import zorch_ligerito, zerocheck, lincheck, prover  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 from flock_zorch.testing.sha2_ligerito_oracle_test import load, _unpack  # noqa: E402
 from flock_zorch.testing._util import best  # noqa: E402
