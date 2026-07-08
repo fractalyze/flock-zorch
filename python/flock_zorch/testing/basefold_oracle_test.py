@@ -7,7 +7,7 @@ under software and clmad mul.
 
 Run:
   cargo run --release --example dump_basefold -- 14 1 2 artifacts/basefold_golden.bin
-  JAX_PLATFORMS=cuda PYTHONPATH=python:/home/jooman/fractalyze/zorch <venv> \
+  JAX_PLATFORMS=cuda PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
       python/flock_zorch/testing/basefold_oracle_test.py
 """
 import sys

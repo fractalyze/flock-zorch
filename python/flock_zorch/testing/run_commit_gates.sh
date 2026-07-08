@@ -10,7 +10,7 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
 cd "$REPO"
-VENV="${VENV:-/home/jooman/fractalyze/zorch/.venv/bin/python}"
+VENV="${VENV:-$REPO/.venv/bin/python}"
 export PATH="$HOME/.local/cuda13/bin:$PATH"
 LOG="artifacts/commit_gate_results.txt"
 

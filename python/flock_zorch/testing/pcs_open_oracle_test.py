@@ -5,7 +5,7 @@ Compares s_hat_v + every BaseFoldProof field byte-for-byte (sw + clmad).
 
 Run:
   cargo run --release --example dump_pcs_open -- 20 1 2 artifacts/pcs_open_golden.bin
-  JAX_PLATFORMS=cuda PYTHONPATH=python:/home/jooman/fractalyze/zorch <venv> \
+  JAX_PLATFORMS=cuda PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
       python/flock_zorch/testing/pcs_open_oracle_test.py
 """
 import sys

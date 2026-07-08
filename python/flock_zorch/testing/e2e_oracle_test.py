@@ -7,7 +7,7 @@ lincheck proof+claim, the ab/c z-claims, and the batched PCS open.
 
 Run (regen golden first: cargo run --release --example dump_e2e -- 13 artifacts/e2e_golden.bin):
   export PATH="$HOME/.local/cuda13/bin:$PATH"
-  JAX_PLATFORMS=cuda PYTHONPATH=python:/home/jooman/fractalyze/zorch <venv> \
+  JAX_PLATFORMS=cuda PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
       python/flock_zorch/testing/e2e_oracle_test.py
 """
 import sys
