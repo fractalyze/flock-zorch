@@ -9,8 +9,7 @@ a/b fold), `fri.{row_batch_fold_all, compute_fri_arities}`, and
 `merkle.{merkle_tree, merkle_multi_proof}` + the SHA-256 `Challenger`. The
 per-round codeword fold is zorch's `coding.AdditiveReedSolomon.fold` (its
 LCH-basis twiddle schedule + fold byte-match flock's additive NTT / FRI goldens;
-see `coding_oracle_test`), run on the native `binary_field_ghash` dtype instead
-of the SoA software/clmad field ops.
+see `coding_oracle_test`), run on the native `binary_field_ghash` dtype.
 
 `target`/running_target do NOT affect the proof bytes (the proof carries the
 round messages, commitments, final values, and query openings — not the running

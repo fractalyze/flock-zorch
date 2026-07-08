@@ -145,7 +145,7 @@ cargo run --release --example dump_sha2 -- 2048 artifacts/sha2_golden.bin   # re
 cargo build --release --example bench_sha2_cpu                              # CPU anchor
 export JAX_PLATFORMS=cuda XLA_PYTHON_CLIENT_PREALLOCATE=false
 export PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"   # zorch from the MODULE.bazel git_override
-export FLOCK_CLMAD_CUBIN=$(pwd)/optim/clmad/ghash_mul.cubin
+export PATH="$HOME/.local/cuda13/bin:$PATH"                 # CUDA 13.3 ptxas → compiler emits clmad
 CPU=$(target/release/examples/bench_sha2_cpu 2048 | grep -oE '[0-9.]+ ms')   # flock CPU ms
 $VENV python/flock_zorch/testing/e2e_sha2_bench.py "${CPU%% ms}"             # GPU vs CPU
 ```
@@ -154,7 +154,7 @@ $VENV python/flock_zorch/testing/e2e_sha2_bench.py "${CPU%% ms}"             # G
 
 - **GPU:** RTX 5090 (sm_120, Blackwell). JAX runtime is the **CUDA 12** stack
   (jax_fork jax-cuda12 + `jax-cuda12-pjrt` + `zk_dtypes`), built into `.venv` by
-  `scripts/setup.sh`; the `clmad` cubin is assembled with **ptxas ≥ 13.x** (sm_120
-  requires it). `jax_enable_x64` is required for the uint64 field lanes.
+  `scripts/setup.sh`; hardware `clmad` is compiler-emitted when a **ptxas ≥ 13.3**
+  is on `PATH` (sm_120 requires it). `jax_enable_x64` is required for the uint64 field lanes.
 - **Rust:** standalone rustup in `~/.cargo` (flock is edition 2024). `flock-core`
   is a path dep at `third_party/flock/crates/flock-core` — the byte-compare baseline.

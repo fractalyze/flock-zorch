@@ -1,7 +1,7 @@
 """Full single-claim PCS open byte-match gate vs flock `pcs::open`.
 
 The capstone of the PCS-open layer: ring-switch + BaseFold on one challenger.
-Compares s_hat_v + every BaseFoldProof field byte-for-byte (sw + clmad).
+Compares s_hat_v + every BaseFoldProof field byte-for-byte (software + `clmad` mul).
 
 Run:
   cargo run --release --example dump_pcs_open -- 20 1 2 artifacts/pcs_open_golden.bin

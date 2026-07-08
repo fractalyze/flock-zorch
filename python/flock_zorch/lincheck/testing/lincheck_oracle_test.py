@@ -1,7 +1,7 @@
 """lincheck byte-match gate vs unmodified flock `lincheck::prove`.
 
 Loads the golden (inputs + flock's LincheckProof), runs the jax port, and asserts
-rounds + z_partial match byte-for-byte (software mul and, if built, clmad).
+rounds + z_partial match byte-for-byte (identical under software and `clmad` mul).
 
 Run:
   cargo run --release --example dump_lincheck -- 12 5 3 artifacts/lincheck_golden.bin
