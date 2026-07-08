@@ -93,26 +93,26 @@ def run(byte_hash=None):
     bits = _unpack(z_packed, m)
     _eq("a==z", g_a, z_packed, results)  # confirm identity witness in golden
     zc = zerocheck.prove_packed(bits, bits, bits, m, ch=ch)
-    _eq("zc round1_ab", zc["round1_ab"], g_zc["r1ab"], results)
-    _eq("zc round1_c", zc["round1_c"], g_zc["r1c"], results)
-    got_mlv = np.array([np.concatenate([a, b]) for a, b in zc["multilinear_rounds"]])
+    _eq("zc round1_ab", zc.round1_ab, g_zc["r1ab"], results)
+    _eq("zc round1_c", zc.round1_c, g_zc["r1c"], results)
+    got_mlv = np.array([np.concatenate([a, b]) for a, b in zc.multilinear_rounds])
     want_mlv = np.array([np.concatenate([a, b]) for a, b in g_zc["mlv"]])
     _eq("zc multilinear_rounds", got_mlv, want_mlv, results)
-    _eq("zc final_a", zc["final_a_eval"], g_zc["fa"], results)
-    _eq("zc final_b", zc["final_b_eval"], g_zc["fb"], results)
-    _eq("zc final_c", zc["final_c_eval"], g_zc["fc"], results)
-    _eq("zc claim z", zc["z"], g_zcl["z"], results)
-    _eq("zc claim mlv_challenges", zc["mlv_challenges"], g_zcl["mlv"], results)
-    _eq("zc claim r_rest", zc["r_rest"], g_zcl["rrest"], results)
+    _eq("zc final_a", zc.final_a_eval, g_zc["fa"], results)
+    _eq("zc final_b", zc.final_b_eval, g_zc["fb"], results)
+    _eq("zc final_c", zc.final_c_eval, g_zc["fc"], results)
+    _eq("zc claim z", zc.z, g_zcl["z"], results)
+    _eq("zc claim mlv_challenges", zc.mlv_challenges, g_zcl["mlv"], results)
+    _eq("zc claim r_rest", zc.r_rest, g_zcl["rrest"], results)
 
     # ---- Stage C: lincheck (identity A0/B0, capture) ----
     k = 1 << k_log
     a0 = np.eye(k, dtype=np.uint64)
     b0 = np.eye(k, dtype=np.uint64)
     inner_rest = k_log - k_skip
-    x_ab = {"z_skip": zc["z"],
-            "x_inner_rest": zc["mlv_challenges"][:inner_rest],
-            "x_outer": zc["mlv_challenges"][inner_rest:]}
+    x_ab = {"z_skip": zc.z,
+            "x_inner_rest": zc.mlv_challenges[:inner_rest],
+            "x_outer": zc.mlv_challenges[inner_rest:]}
     lc_rounds, lc_zp, lc_claim, z_vec_pre = lincheck.prove(
         zlc, a0, b0, x_ab, m, k_log, k_skip, ch=ch, capture=True)
     got_lcr = np.array([np.concatenate([a, b]) for a, b in lc_rounds]) if lc_rounds else np.zeros((0, 4), np.uint64)
@@ -126,7 +126,7 @@ def run(byte_hash=None):
 
     # ---- Stage D: ab / c z-claims ----
     ab_pt = dict(zs=lc_claim["r_inner_skip"], xir=lc_claim["r_inner_rest"], xo=x_ab["x_outer"], v=lc_claim["w"])
-    c_pt = dict(zs=zc["z"], xir=zc["r_rest"][:inner_rest], xo=zc["r_rest"][inner_rest:], v=zc["final_c_eval"])
+    c_pt = dict(zs=zc.z, xir=zc.r_rest[:inner_rest], xo=zc.r_rest[inner_rest:], v=zc.final_c_eval)
     _eq("ab.z_skip", ab_pt["zs"], g_ab["zs"], results)
     _eq("ab.x_outer", ab_pt["xo"], g_ab["xo"], results)
     _eq("ab.value", ab_pt["v"], g_ab["v"], results)
@@ -168,7 +168,7 @@ def run(byte_hash=None):
     a0 = np.eye(1 << k_log, dtype=np.uint64)
     pf = prover.prove_fast(z_packed, m, k_log, k_skip, ub, a0, a0, zlc, stmt,
                            LIR, LBS, byte_hash=byte_hash)
-    _eq("prove_fast zc round1_ab", pf["zerocheck"]["round1_ab"], g_zc["r1ab"], results)
+    _eq("prove_fast zc round1_ab", pf["zerocheck"].round1_ab, g_zc["r1ab"], results)
     _eq("prove_fast lc z_partial", pf["lincheck"][1], g_lc["zp"], results)
     _eq("prove_fast open ring_switch[1]", pf["pcs_open"]["ring_switches"][1], g_rs[1], results)
     _eq("prove_fast open bf final_a", pf["pcs_open"]["basefold"]["final_a"], g_bf["fa"], results)

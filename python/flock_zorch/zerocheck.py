@@ -38,6 +38,24 @@ LABEL = b"flock-zerocheck-v0"
 
 
 @dataclass(frozen=True)
+class ZerocheckProof:
+    """flock's ZerocheckProof — the round-1 URM messages, the multilinear-round
+    (G(1), G(∞)) pairs, and the final a/b/c evaluations. `z`, `mlv_challenges`,
+    and `r_rest` are the claim cross-checks the oracle localizes against, not wire
+    fields."""
+
+    round1_ab: Any
+    round1_c: Any
+    multilinear_rounds: Any
+    final_a_eval: Any
+    final_b_eval: Any
+    final_c_eval: Any
+    z: Any                # claim cross-check
+    mlv_challenges: Any   # claim cross-check
+    r_rest: Any           # claim cross-check
+
+
+@dataclass(frozen=True)
 class _ZerocheckCarry:
     """State threaded between zerocheck's stage Rounds — only what a later stage
     reads from an earlier one. Static config (m, k_skip) lives on the Round
@@ -201,9 +219,10 @@ def zerocheck_chain(m: int, k_skip: int) -> ProveChain:
                        _MultilinearRound(m, k_skip)])
 
 
-def prove_packed(a_bits, b_bits, c_bits, m: int, domain: bytes = None, ch=None) -> dict:
-    """Returns the ZerocheckProof fields + the claim's z / mlv_challenges / r_rest
-    (the latter for the oracle's localization cross-checks).
+def prove_packed(a_bits, b_bits, c_bits, m: int, domain: bytes | None = None,
+                 ch: Challenger | None = None) -> ZerocheckProof:
+    """Returns a `ZerocheckProof` (proof fields + the claim's z / mlv_challenges /
+    r_rest, the latter for the oracle's localization cross-checks).
 
     A `zerocheck_chain` of stage `Round`s (setup → URM → multilinear) threading one
     `Challenger`; pass a shared `ch` (the e2e challenger carrying commit/bind state)
@@ -215,15 +234,14 @@ def prove_packed(a_bits, b_bits, c_bits, m: int, domain: bytes = None, ch=None) 
         ch = Challenger(domain)
     carry, _ch, _msgs = zerocheck_chain(m, k_skip)(
         _ZerocheckCarry(a_bits, b_bits, c_bits), ch)
-    return {
-        "round1_ab": carry.round1_ab,
-        "round1_c": carry.round1_c,
-        "multilinear_rounds": carry.multilinear_rounds,
-        "final_a_eval": carry.final_a_eval,
-        "final_b_eval": carry.final_b_eval,
-        "final_c_eval": carry.final_c_eval,
-        # claim cross-checks:
-        "z": carry.z,
-        "mlv_challenges": carry.mlv_challenges,
-        "r_rest": carry.r[k_skip:],
-    }
+    return ZerocheckProof(
+        round1_ab=carry.round1_ab,
+        round1_c=carry.round1_c,
+        multilinear_rounds=carry.multilinear_rounds,
+        final_a_eval=carry.final_a_eval,
+        final_b_eval=carry.final_b_eval,
+        final_c_eval=carry.final_c_eval,
+        z=carry.z,
+        mlv_challenges=carry.mlv_challenges,
+        r_rest=carry.r[k_skip:],
+    )

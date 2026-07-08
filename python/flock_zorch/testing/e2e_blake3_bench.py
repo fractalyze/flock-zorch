@@ -49,11 +49,11 @@ def main():
         ch = Challenger(b"flock-blake3-v0")
         prover.bind_statement(ch, stmt, root)
         zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch)
-        x_ab = {"z_skip": zc["z"], "x_inner_rest": zc["mlv_challenges"][:ir],
-                "x_outer": zc["mlv_challenges"][ir:]}
+        x_ab = {"z_skip": zc.z, "x_inner_rest": zc.mlv_challenges[:ir],
+                "x_outer": zc.mlv_challenges[ir:]}
         _r, _zp, lc_claim, _zv = lincheck.prove(g["zlc"], None, None, x_ab, m, k_log, k_skip, ch=ch, capture=True, circuit=csc)
         ab_full = np.concatenate([lc_claim["r_inner_rest"], x_ab["x_outer"]], axis=0)
-        c_full = np.concatenate([zc["r_rest"][:ir], zc["r_rest"][ir:]], axis=0)
+        c_full = np.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
         return prover.open_batch(z, codeword, tree, [ab_full, c_full], k_code, lir, lbs, ch)
 
     t = best(prove_once, n=3)
