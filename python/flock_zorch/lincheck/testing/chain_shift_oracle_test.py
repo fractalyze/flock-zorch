@@ -8,7 +8,7 @@ two new prover pieces of the keccak hash-CHAIN protocol.
 Run (regen: cargo run --release --example dump_chain_shift -- artifacts/chain_shift_golden.bin):
   export PATH="$HOME/.local/cuda13/bin:$PATH"
   JAX_PLATFORMS=cuda PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
-      python/flock_zorch/testing/chain_shift_oracle_test.py
+      python/flock_zorch/lincheck/testing/chain_shift_oracle_test.py
 """
 import sys
 from pathlib import Path
@@ -18,10 +18,11 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
-from flock_zorch import field, chain  # noqa: E402
+from flock_zorch import field  # noqa: E402
+from flock_zorch.lincheck import chain  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 
-ART = Path(__file__).resolve().parents[3] / "artifacts"
+ART = Path(__file__).resolve().parents[4] / "artifacts"
 
 
 class R:

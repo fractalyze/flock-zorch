@@ -8,7 +8,7 @@ import numpy as np, jax
 jax.config.update("jax_enable_x64", True)
 from flock_zorch import zorch_ligerito, zerocheck, lincheck, prover  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
-from flock_zorch.keccak3_lincheck import Keccak3LincheckCircuit  # noqa: E402
+from flock_zorch.lincheck.keccak3 import Keccak3LincheckCircuit  # noqa: E402
 from flock_zorch.testing.keccak3_ligerito_oracle_test import load, _unpack  # noqa: E402
 from flock_zorch.testing._util import best  # noqa: E402
 

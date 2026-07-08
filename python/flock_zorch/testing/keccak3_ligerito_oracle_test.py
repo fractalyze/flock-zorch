@@ -24,7 +24,7 @@ jax.config.update("jax_enable_x64", True)
 
 from flock_zorch import zorch_ligerito, zerocheck, lincheck, prover  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
-from flock_zorch.keccak3_lincheck import Keccak3LincheckCircuit  # noqa: E402
+from flock_zorch.lincheck.keccak3 import Keccak3LincheckCircuit  # noqa: E402
 
 ART = Path(__file__).resolve().parents[3] / "artifacts"
 

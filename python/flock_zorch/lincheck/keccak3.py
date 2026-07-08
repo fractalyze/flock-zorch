@@ -14,7 +14,7 @@ single walker; const_pin = the shared Z_CONST.
 
 import numpy as np
 
-from flock_zorch.keccak_lincheck import (
+from flock_zorch.lincheck.keccak import (
     _fold_walker, _device_sub_cols, _WLC, LANE_BITS, STATE_BITS, N_T,
 )
 

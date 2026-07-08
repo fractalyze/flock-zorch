@@ -22,7 +22,7 @@ import jax.numpy as jnp
 
 from flock_zorch import field
 from flock_zorch.sumcheck import build_eq
-from flock_zorch.lincheck import _round_eval, _bind_top
+from flock_zorch.lincheck.prover import _round_eval, _bind_top
 
 LOG_PACKING = field.LOG_PACKING  # 128 = 2^7 bits per packed F128 element
 

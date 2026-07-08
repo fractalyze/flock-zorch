@@ -6,7 +6,7 @@ rounds + z_partial match byte-for-byte (software mul and, if built, clmad).
 Run:
   cargo run --release --example dump_lincheck -- 12 5 3 artifacts/lincheck_golden.bin
   JAX_PLATFORMS=cuda PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
-      python/flock_zorch/testing/lincheck_oracle_test.py
+      python/flock_zorch/lincheck/testing/lincheck_oracle_test.py
 """
 import sys
 from pathlib import Path
@@ -18,7 +18,7 @@ jax.config.update("jax_enable_x64", True)
 
 from flock_zorch import field, lincheck  # noqa: E402
 
-ART = Path(__file__).resolve().parents[3] / "artifacts"
+ART = Path(__file__).resolve().parents[4] / "artifacts"
 
 
 class _Reader:

@@ -30,7 +30,7 @@ from flock_zorch.sumcheck import build_eq_fused, ONE
 from flock_zorch.zerocheck import _lagrange_weights
 from flock_zorch.field import _to_int, _to_lohi
 from flock_zorch.challenger import Challenger
-from flock_zorch._csc_fold import _flatten_nz, _csc_segments, _seg_xor_fold
+from flock_zorch.lincheck._csc_fold import _flatten_nz, _csc_segments, _seg_xor_fold
 from zorch.round import ProveChain, Round
 
 U64 = jnp.uint64

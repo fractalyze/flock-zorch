@@ -90,7 +90,7 @@ py_test(
 py_test(
     name = "lincheck_circuit_protocol_test",
     size = "small",
-    srcs = ["flock_zorch/testing/lincheck_circuit_protocol_test.py"],
+    srcs = ["flock_zorch/lincheck/testing/lincheck_circuit_protocol_test.py"],
     deps = [
         ":flock_zorch",
         ":test_support",

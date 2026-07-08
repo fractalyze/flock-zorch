@@ -16,8 +16,8 @@ import jax
 jax.config.update("jax_enable_x64", True)  # ghash ops at flock_zorch import need x64
 
 from flock_zorch.lincheck import CscCircuit, LincheckCircuit  # noqa: E402
-from flock_zorch.keccak_lincheck import KeccakLincheckCircuit  # noqa: E402
-from flock_zorch.keccak3_lincheck import Keccak3LincheckCircuit  # noqa: E402
+from flock_zorch.lincheck.keccak import KeccakLincheckCircuit  # noqa: E402
+from flock_zorch.lincheck.keccak3 import Keccak3LincheckCircuit  # noqa: E402
 
 
 class _MissingFold:
