@@ -18,7 +18,7 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
-from flock_zorch import field, basefold, merkle  # noqa: E402
+from flock_zorch import field, merkle, zorch_basefold  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 
 ART = Path(__file__).resolve().parents[3] / "artifacts"
@@ -56,7 +56,7 @@ def _check(name):
     init_tree = merkle.merkle_tree(codeword.reshape(n_leaves, num_ntts * 2).view(np.uint8))
 
     ch = Challenger(b"flock-basefold-test")
-    p = basefold.prove(z_packed, b, codeword, init_tree, k_code, lir, lbs, n_queries, ch)
+    p = zorch_basefold.prove_flock_basefold(z_packed, b, codeword, init_tree, k_code, lir, lbs, n_queries, ch)
 
     def eq(x, y): return np.array_equal(np.asarray(x), np.asarray(y))
     checks = {
