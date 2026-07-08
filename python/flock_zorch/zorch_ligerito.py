@@ -41,7 +41,7 @@ from zorch.pcs.ligerito.choreography import LigeritoChoreography
 from zorch.pcs.ligerito.config import LigeritoConfig
 from zorch.pcs.ligerito.prover import LigeritoProver
 
-from flock_zorch import merkle
+from flock_zorch import field, merkle
 
 FLOCK_LIGERITO_LABEL = b"flock-ligerito-basis-v0"
 
@@ -229,13 +229,6 @@ def flock_ligerito_config(
 # --- flock-wire assembly: zorch's LigeritoProof -> flock's proof dict --------
 
 
-def _ghash(lohi) -> Array:
-    """lo‖hi uint64 pairs -> ghash (the driver's algebra dtype)."""
-    return lax.bitcast_convert_type(
-        jnp.asarray(np.asarray(lohi, np.uint64)), jnp.binary_field_ghash
-    )
-
-
 def _lohi(x) -> np.ndarray:
     """ghash (any shape) -> (-1, 2) uint64 lo‖hi, flock's F128 representation."""
     b = np.asarray(lax.bitcast_convert_type(x, jnp.uint8))
@@ -317,14 +310,14 @@ def prove_flock_ligerito(cfg: dict, z_packed, b_combined, target, ch) -> dict:
     The initial matrix is re-committed here (`prover.commit`, byte-identical to
     flock's external L0 commit); reusing that external commit is a perf
     follow-up (avoids a redundant L0 encode)."""
-    z = np.asarray(z_packed, np.uint64).reshape(-1, 2)
-    log_n = int(round(float(np.log2(z.shape[0]))))
+    z = z_packed.reshape(-1, 2)
+    log_n = z.shape[0].bit_length() - 1
     config, chor = flock_ligerito_config(cfg, log_n)
     prover = LigeritoProver(_make_ghash_code, merkle.GHASH_TREE, config, chor)
 
-    w = _bitrev(_ghash(z))
-    b = _bitrev(_ghash(np.asarray(b_combined, np.uint64).reshape(-1, 2)))
-    value = _ghash(np.asarray(target, np.uint64).reshape(1, 2))[0]
+    w = _bitrev(field.to_ghash(z))
+    b = _bitrev(field.to_ghash(b_combined.reshape(-1, 2)))
+    value = field.to_ghash(target)
 
     root, pdata = prover.commit([w])
     proof, t_open = prover.open_with_basis(pdata, b, value, FlockTranscript(ch._t))
