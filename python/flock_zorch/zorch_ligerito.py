@@ -39,7 +39,7 @@ from zorch.coding.reed_solomon import ReedSolomon
 from zorch.hash.sha256 import HashlibSha256
 from zorch.pcs.ligerito.choreography import LigeritoChoreography
 from zorch.pcs.ligerito.config import LigeritoConfig
-from zorch.pcs.ligerito.prover import LigeritoProver
+from zorch.pcs.ligerito.prover import LigeritoProver, LigeritoProverData
 
 from flock_zorch import field, merkle
 
@@ -299,27 +299,49 @@ def _flock_proof_dict(
     }
 
 
-def prove_flock_ligerito(cfg: dict, z_packed, b_combined, target, ch) -> dict:
+def _flock_ligerito_prover(cfg: dict, log_n: int):
+    """`(LigeritoProver, config, choreography)` for a `2^log_n` witness. Rebuilt
+    at both commit and open — the prover is stateless (config + code/tree
+    factories), deterministic from `cfg`, so the commit and open sites derive the
+    same one without threading it (cf. sp1-zorch rebuilding its RS code per
+    call)."""
+    config, chor = flock_ligerito_config(cfg, log_n)
+    prover = LigeritoProver(_make_ghash_code, merkle.GHASH_TREE, config, chor)
+    return prover, config, chor
+
+
+def commit_flock_ligerito(cfg: dict, z_packed) -> tuple[np.ndarray, LigeritoProverData]:
+    """L0 commit for the flock ligerito open. Committing through zorch's own
+    `LigeritoProver.commit` (rather than flock's `pcs_commit.commit`) yields the
+    `LigeritoProverData` the open consumes directly — the commit→open prover-data
+    threading of sp1-zorch's `commit_region`/`TraceCommitData`, so the open never
+    re-encodes or repackages L0. Byte-identical root to flock's `pcs_commit`; the
+    witness is the full-index bit-reversal of flock's `z` under the
+    monomial-commit correspondence."""
+    z = z_packed.reshape(-1, 2)
+    log_n = z.shape[0].bit_length() - 1
+    prover, _config, _chor = _flock_ligerito_prover(cfg, log_n)
+    root, pdata = prover.commit([_bitrev(field.to_ghash(z))])
+    return np.asarray(root), pdata
+
+
+def prove_flock_ligerito(cfg: dict, pdata: LigeritoProverData, b_combined, target, ch) -> dict:
     """Drive `zorch.pcs.ligerito` over flock's shared challenger and assemble a
     flock `LigeritoProof` dict — byte-identical to the retired in-tree
     `ligerito.recursive_prover_with_basis`.
 
-    The Fiat-Shamir rides flock's live `ch` (bridged into a `FlockTranscript`
-    at its current state, written back after the open) so the ligerito open
-    continues the transcript the commit / zerocheck / lincheck phases built.
-    The initial matrix is re-committed here (`prover.commit`, byte-identical to
-    flock's external L0 commit); reusing that external commit is a perf
-    follow-up (avoids a redundant L0 encode)."""
-    z = z_packed.reshape(-1, 2)
-    log_n = z.shape[0].bit_length() - 1
-    config, chor = flock_ligerito_config(cfg, log_n)
-    prover = LigeritoProver(_make_ghash_code, merkle.GHASH_TREE, config, chor)
+    `pdata` is the `LigeritoProverData` from `commit_flock_ligerito` (the L0
+    commit made once, in the commit phase); the open reuses it rather than
+    re-encoding L0. The Fiat-Shamir rides flock's live `ch` (bridged into a
+    `FlockTranscript` at its current state, written back after the open) so the
+    open continues the transcript the commit / zerocheck / lincheck phases
+    built."""
+    log_n = pdata.f.shape[0].bit_length() - 1
+    prover, config, chor = _flock_ligerito_prover(cfg, log_n)
 
-    w = _bitrev(field.to_ghash(z))
     b = _bitrev(field.to_ghash(b_combined.reshape(-1, 2)))
     value = field.to_ghash(target)
 
-    root, pdata = prover.commit([w])
     proof, t_open = prover.open_with_basis(pdata, b, value, FlockTranscript(ch._t))
     ch._t = t_open.inner
-    return _flock_proof_dict(proof, np.asarray(root), config, chor)
+    return _flock_proof_dict(proof, np.asarray(pdata.initial.root), config, chor)

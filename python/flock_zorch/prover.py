@@ -90,16 +90,16 @@ def open_batch(z_packed, codeword, init_tree, x_outers, k_code, log_inv_rate,
     return {"ring_switches": s_hat_vs, "basefold": bf}
 
 
-def open_batch_ligerito(config, z_packed, codeword, init_tree, x_outers, ch) -> dict:
+def open_batch_ligerito(config, z_packed, pdata, x_outers, ch) -> dict:
     """Batched dual-claim PCS open with the LIGERITO backend — the headline path.
     The no-packed-direct case of `open_batch_mixed_ligerito`: N ring-switched
-    claims (x_outers, e.g. ab+c), zero direct ẑ-evaluation claims. Returns
+    claims (x_outers, e.g. ab+c), zero direct ẑ-evaluation claims. `pdata` is the
+    ligerito commit from `zorch_ligerito.commit_flock_ligerito`. Returns
     {ring_switches, ligerito: LigeritoProof}."""
-    return open_batch_mixed_ligerito(config, z_packed, codeword, init_tree, x_outers,
-                                     (), ch)
+    return open_batch_mixed_ligerito(config, z_packed, pdata, x_outers, (), ch)
 
 
-def open_batch_mixed_ligerito(config, z_packed, codeword, init_tree, x_outers, packed_direct,
+def open_batch_mixed_ligerito(config, z_packed, pdata, x_outers, packed_direct,
                               ch) -> dict:
     """Mixed batched open (flock `open_batch_mixed_ligerito_with_precomputed_s_hat_v`)
     — the HASH-CHAIN open, and the general Ligerito open. Combines N ring-switched
@@ -109,7 +109,8 @@ def open_batch_mixed_ligerito(config, z_packed, codeword, init_tree, x_outers, p
     then b_combined gains Σ_j γ_pd_j·eq_ind_j and the target Σ_j γ_pd_j·value_j; the
     recursive Ligerito prover runs against (b_combined, target). γ order: the
     ring-switch γ's first (sampled inside prove_batched), then γ_pd after observing
-    each packed-direct value. M=0 recovers the plain Ligerito open (open_batch_ligerito)."""
+    each packed-direct value. M=0 recovers the plain Ligerito open (open_batch_ligerito).
+    `pdata` is the ligerito commit reused from the commit phase (no L0 re-encode)."""
     ch.observe_label(b"flock-pcs-open-batch-v0")
     s_hat_vs, rs_eq_inds, sumcheck_claims, gammas = ring_switch.prove_batched(z_packed, x_outers, ch)
     # Packed-direct: observe each claim's value, THEN sample the γ_pd (flock order).
@@ -121,10 +122,9 @@ def open_batch_mixed_ligerito(config, z_packed, codeword, init_tree, x_outers, p
     b_combined, target = _combine_claims(rs_eq_inds, gammas, sumcheck_claims,
                                          packed_direct=packed_direct, gammas_pd=gammas_pd)
     # The Ligerito recursion runs in zorch (`zorch.pcs.ligerito`) via the flock
-    # FS seam; the driver re-commits L0 internally, so `codeword`/`init_tree`
-    # are unused here (reusing the external commit is a perf follow-up). The
-    # ghash algebra rides the dtype, so `mul` is not threaded.
-    lig = zorch_ligerito.prove_flock_ligerito(config, z_packed, b_combined, target, ch)
+    # FS seam, reusing the commit-phase `pdata` directly. The ghash algebra rides
+    # the dtype, so `mul` is not threaded.
+    lig = zorch_ligerito.prove_flock_ligerito(config, pdata, b_combined, target, ch)
     return {"ring_switches": s_hat_vs, "ligerito": lig}
 
 

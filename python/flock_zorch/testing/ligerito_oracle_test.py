@@ -71,7 +71,8 @@ def run():
 
     # The flock-zorch prove path → byte-gate every LigeritoProof field.
     ch = Challenger(b"flock-ligerito-test")
-    p = zorch_ligerito.prove_flock_ligerito(cfg, g["f"], g["b"], g["target"], ch)
+    _root, pdata = zorch_ligerito.commit_flock_ligerito(cfg, g["f"])
+    p = zorch_ligerito.prove_flock_ligerito(cfg, pdata, g["b"], g["target"], ch)
 
     def pairs(t): return np.array([np.concatenate([a, b]) for a, b in t]) if t else np.zeros((0, 4), np.uint64)
     def rows_eq(a, b): return len(a) == len(b) and all(np.array_equal(np.asarray(x), np.asarray(y)) for x, y in zip(a, b))
