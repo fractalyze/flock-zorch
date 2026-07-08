@@ -18,7 +18,10 @@ identical to flock's interleaved `comb[c] += α·x` because GF(2¹²⁸) multipl
 distributes over field addition (XOR).
 """
 
+import functools
+
 import numpy as np
+import jax
 import jax.numpy as jnp
 
 from flock_zorch import field
@@ -205,24 +208,154 @@ def _combine_alpha_sides(comb_a, comb_b, alpha):
     return np.asarray(field.from_ghash(a_g * ca_g + cb_g))
 
 
+def _fold_walker_numpy(eq_inner, alpha, sub_cols, z_const, n_cols):
+    """Host reference fold (the `accumulate_subkeccak` walker). Retained as the
+    differential oracle the device fold is gated against (`lincheck_keccak_walker_
+    device_test`); production folds on device via `_fold_walker_dev`. `sub_cols` =
+    list of (col_state0, col_state24, rows_t) per sub-keccak."""
+    eq = np.asarray(eq_inner, np.uint64).reshape(n_cols, 2)
+    comb_a = np.zeros((n_cols, 2), np.uint64)  # α-scaled (A-side), accumulated unscaled
+    comb_b = np.zeros((n_cols, 2), np.uint64)  # plain (B-side)
+    for col_state0, col_state24, rows_t in sub_cols:
+        accumulate_subkeccak(eq, comb_a, comb_b, col_state0, col_state24, rows_t, z_const)
+    # Row 0 (const): A = B = [z_const]. XOR is commutative, so adding it after the
+    # sub-keccak body is bit-identical to flock's row-0-first.
+    e0 = eq[z_const]
+    comb_a[z_const] ^= e0
+    comb_b[z_const] ^= e0
+    return _combine_alpha_sides(comb_a, comb_b, alpha)
+
+
+# ---- Device path (the production fold) --------------------------------------
+# The θ∘ρ∘π transpose has uniform in-degree 11 (measured), so the host walker's
+# overlapping φᵀ / χ `np.bitwise_xor.at` scatter is a clean (STATE_BITS, 11)
+# gather + XOR-reduce — same shape as the forward `_phi_bool`, byte-identical
+# (same GF(2¹²⁸) XOR edge set). The recurrences are unrolled (static depth 24)
+# so the whole fold lowers to one device program (no host↔device bubble).
+
+def _transpose_map(pre_map):
+    """Transpose a θ∘ρ∘π preimage map (S,11) into a gather map (S,11): _T[t] = the
+    sources s with t ∈ pre_map[s]. Turns the overlapping scatter into a gather."""
+    buckets = [[] for _ in range(STATE_BITS)]
+    for s in range(STATE_BITS):
+        for p in pre_map[s]:
+            buckets[int(p)].append(s)
+    assert {len(b) for b in buckets} == {11}, "θ∘ρ∘π transpose fan-in must be 11"
+    return jnp.asarray(np.array(buckets, np.int64))
+
+
+_FWD_T = _transpose_map(_PRE_FWD)          # φᵀ gather
+_CHI_A_T = _transpose_map(_PRE_CHI_A)      # χ a-operand gather
+_CHI_B_T = _transpose_map(_PRE_CHI_B)      # χ b-operand gather
+_PRE_FWD_DEV = jnp.asarray(_PRE_FWD)       # forward φ_bool gather
+_RC_TOGGLE_DEV = jnp.asarray(_RC_TOGGLE_IDX)
+_RC_BITS = jnp.asarray(np.stack([          # (N_T, LANE_BITS) ι round-constant toggle bits
+    (np.uint64(rc) >> _Z_BITS) & np.uint64(1) for rc in ROUND_CONSTANTS]))
+
+
+def _gather_xor(vals, map_T):
+    """φᵀ / χ scatter as a gather+XOR-reduce: out[t] = XOR_k vals[map_T[t,k]]."""
+    return jnp.bitwise_xor.reduce(vals[map_T], axis=-2)
+
+
+def _accumulate_subkeccak_dev(eq, col_state0, col_state24, rows_t):
+    """Device port of `accumulate_subkeccak`, returned functionally (no in-place
+    XOR): comb_a/comb_b values at rows_t (bijective) + col_state0 (2 contribs,
+    pre-XORed) + the z_const scalars. The caller scatter-sets the bijective columns
+    and XOR-merges the shared z_const."""
+    e_s0 = eq[col_state0]                                          # (S,2)
+    vec_pin = eq[col_state24]                                      # (S,2)
+    e_t = eq[rows_t]                                               # (N_T,S,2)
+    chi_a = jnp.bitwise_xor.reduce(e_t[:, _CHI_A_T], axis=2)       # (N_T,S,2)
+    chi_b = jnp.bitwise_xor.reduce(e_t[:, _CHI_B_T], axis=2)
+
+    zc_a = jnp.bitwise_xor.reduce(e_t.reshape(-1, 2), axis=0)      # Σ eq_t (A z_const)
+    zc_b = (jnp.bitwise_xor.reduce(e_s0, axis=0)                   # state_0 + state_24 pins
+            ^ jnp.bitwise_xor.reduce(vec_pin, axis=0))
+
+    # Round-constant GF(2) state machine (unrolled N_T) → RC_24.
+    rc = jnp.zeros(STATE_BITS, jnp.uint64)
+    rc_a = jnp.zeros(2, jnp.uint64)
+    rc_b = jnp.zeros(2, jnp.uint64)
+    for r in range(N_T):
+        mask = rc[:, None]
+        rc_a = rc_a ^ jnp.bitwise_xor.reduce(chi_a[r] * mask, axis=0)
+        rc_b = rc_b ^ jnp.bitwise_xor.reduce(chi_b[r] * mask, axis=0)
+        rc = jnp.bitwise_xor.reduce(rc[_PRE_FWD_DEV], axis=1)      # forward φ_bool
+        rc = rc.at[_RC_TOGGLE_DEV].set(rc[_RC_TOGGLE_DEV] ^ _RC_BITS[r])
+    rc_pin = jnp.bitwise_xor.reduce(vec_pin * rc[:, None], axis=0)
+    zc_a = zc_a ^ rc_a ^ rc_pin
+    zc_b = zc_b ^ rc_b
+
+    # A-side transpose recurrence (unrolled): rows_t[j] ← K^A_{j+1}, col_state0 ← K^A_0.
+    ra = [None] * N_T
+    ra[N_T - 1] = vec_pin                                          # K^A_24
+    k_a = _gather_xor(vec_pin, _FWD_T) ^ chi_a[N_T - 1]            # K^A_23
+    for r in range(N_T - 1, 0, -1):
+        ra[r - 1] = k_a                                           # K^A_r → rows_t[r-1]
+        k_a = _gather_xor(k_a, _FWD_T) ^ chi_a[r - 1]
+    cs0_a = e_s0 ^ k_a                                            # state_0 self-loop ⊕ K^A_0
+
+    # B-side (K^B_24 = 0): rows_t[j] ← K^B_{j+1} (0 at j=N_T-1), col_state0 ← K^B_0.
+    rb = [None] * N_T
+    rb[N_T - 1] = jnp.zeros((STATE_BITS, 2), jnp.uint64)
+    k_b = chi_b[N_T - 1]                                          # K^B_23
+    for r in range(N_T - 1, 0, -1):
+        rb[r - 1] = k_b
+        k_b = _gather_xor(k_b, _FWD_T) ^ chi_b[r - 1]
+    cs0_b = k_b                                                   # K^B_0
+
+    return jnp.stack(ra), jnp.stack(rb), cs0_a, cs0_b, zc_a, zc_b
+
+
+@functools.partial(jax.jit, static_argnums=(3,))
+def _fold_walker_dev(eq, alpha, sub_cols, z_const):
+    """Device fold shared by both keccak walkers. Run each disjoint sub-keccak,
+    scatter-SET its bijective columns (rows_t, col_state0 — no atomics), XOR-merge
+    the shared z_const column (incl. the row-0 const), and α-combine with one field
+    multiply. `eq` is (n_cols, 2); `sub_cols` a list of (col_state0, col_state24,
+    rows_t) device index arrays; `z_const` a static int column."""
+    n_cols = eq.shape[0]
+    comb_a = jnp.zeros((n_cols, 2), jnp.uint64)
+    comb_b = jnp.zeros((n_cols, 2), jnp.uint64)
+    zc_a = jnp.zeros(2, jnp.uint64)
+    zc_b = jnp.zeros(2, jnp.uint64)
+    for col_state0, col_state24, rows_t in sub_cols:
+        ra, rb, ca, cb, za, zb = _accumulate_subkeccak_dev(eq, col_state0, col_state24, rows_t)
+        rtf = rows_t.reshape(-1)
+        comb_a = comb_a.at[rtf].set(ra.reshape(-1, 2)).at[col_state0].set(ca)
+        comb_b = comb_b.at[rtf].set(rb.reshape(-1, 2)).at[col_state0].set(cb)
+        zc_a = zc_a ^ za
+        zc_b = zc_b ^ zb
+    e0 = eq[z_const]                                             # row-0 const (shared)
+    comb_a = comb_a.at[z_const].set(zc_a ^ e0)
+    comb_b = comb_b.at[z_const].set(zc_b ^ e0)
+    a_g, ca_g, cb_g = field.to_ghash(alpha), field.to_ghash(comb_a), field.to_ghash(comb_b)
+    return field.from_ghash(a_g * ca_g + cb_g)                  # α·comb_a ⊕ comb_b
+
+
+def _device_sub_cols(sub_cols):
+    """Device copies of a walker's host index arrays, built once per circuit so the
+    constant column maps aren't re-transferred to the device on every fold."""
+    return [(jnp.asarray(c0), jnp.asarray(c24), jnp.asarray(rt)) for c0, c24, rt in sub_cols]
+
+
+def _fold_walker(eq_inner, alpha, sub_cols_dev, z_const):
+    """Production entry: reshape eq on device and fold, staying device-resident (the
+    caller reuses the result on device, like `CscCircuit`). `sub_cols_dev` is the
+    circuit's device index arrays (built once via `_device_sub_cols`)."""
+    eq = jnp.asarray(eq_inner, dtype=jnp.uint64).reshape(-1, 2)
+    return _fold_walker_dev(eq, jnp.asarray(alpha), sub_cols_dev, int(z_const))
+
+
 class KeccakLincheckCircuit:
     """The procedural single-keccak lincheck walker (flock `KeccakLincheckCircuit`)."""
 
     n_cols = K
     const_pin = Z_CONST  # const-wire pin column (lincheck.prove applies +β here)
+    _sub_cols = [(_COL_STATE0, _COL_STATE24, _ROWS_T)]   # host arrays (test reference)
+    _sub_cols_dev = _device_sub_cols(_sub_cols)          # device, built once
 
     def fold_alpha_batched(self, alpha, eq_inner):
-        """comb[c] = α·(A_0ᵀ·eq)[c] ⊕ (B_0ᵀ·eq)[c], the keccak.rs walker."""
-        eq = np.asarray(eq_inner, np.uint64).reshape(K, 2)
-        comb_a = np.zeros((K, 2), np.uint64)  # α-scaled (A-side), accumulated unscaled
-        comb_b = np.zeros((K, 2), np.uint64)  # plain (B-side)
-
-        accumulate_subkeccak(eq, comb_a, comb_b, _COL_STATE0, _COL_STATE24, _ROWS_T, Z_CONST)
-
-        # ---- Row 0 (const): A = [Z_CONST], B = [Z_CONST]. (XOR is commutative, so
-        # adding it after the sub-keccak body is bit-identical to flock's row-0-first.)
-        e0 = eq[Z_CONST]
-        comb_a[Z_CONST] ^= e0
-        comb_b[Z_CONST] ^= e0
-
-        return _combine_alpha_sides(comb_a, comb_b, alpha)
+        """comb[c] = α·(A_0ᵀ·eq)[c] ⊕ (B_0ᵀ·eq)[c], the keccak.rs walker (device)."""
+        return _fold_walker(eq_inner, alpha, self._sub_cols_dev, Z_CONST)

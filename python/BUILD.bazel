@@ -82,6 +82,18 @@ py_test(
     ],
 )
 
+# Pure-host unit test (no golden): the device keccak walker fold must be
+# byte-identical to the host accumulate_subkeccak reference on random eq.
+py_test(
+    name = "lincheck_keccak_walker_device_test",
+    size = "small",
+    srcs = ["flock_zorch/testing/lincheck_keccak_walker_device_test.py"],
+    deps = [
+        ":flock_zorch",
+        ":test_support",
+    ],
+)
+
 # Pure-host unit test (no golden): the lincheck circuit seam Protocol —
 # asserts every circuit `lincheck.prove(circuit=)` accepts conforms structurally.
 py_test(
