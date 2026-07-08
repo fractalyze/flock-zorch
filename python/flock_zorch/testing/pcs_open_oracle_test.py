@@ -53,11 +53,11 @@ def _check(name):
     init_tree = merkle.merkle_tree(codeword.reshape(1 << k_code, num_ntts * 2).view(np.uint8))
     ch = Challenger(b"flock-pcs-open-test")
     out = pcs_open.open(z_packed, codeword, init_tree, x_outer, k_code, lir, lbs, ch)
-    p = out["basefold"]
+    p = out.basefold
 
     def eq(x, y): return np.array_equal(np.asarray(x), np.asarray(y))
     checks = {
-        "ring_switch.s_hat_v": eq(out["ring_switch"], g_shv),
+        "ring_switch.s_hat_v": eq(out.ring_switch, g_shv),
         "round_messages": all(eq(a, c) and eq(b_, d) for (a, b_), (c, d) in zip(p["round_messages"], g_rm)),
         "post_row_batch_commit": eq(p["post_row_batch_commit"], g_post),
         "round_commitments": eq(np.stack(p["round_commitments"]) if p["round_commitments"] else np.zeros((0, 32), np.uint8), g_rc),

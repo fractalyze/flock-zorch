@@ -62,7 +62,7 @@ class FlockPcsProver:
         prover_data: FlockPcsProverData,
         points: Sequence[Any],
         transcript: Challenger,
-    ) -> tuple[np.ndarray, dict, Challenger]:
+    ) -> tuple[np.ndarray, pcs_open.PcsOpenProof, Challenger]:
         if len(points) != 1:
             raise ValueError(
                 f"flock's PCS opens one ring-switched claim, got {len(points)}")
@@ -70,4 +70,4 @@ class FlockPcsProver:
             prover_data.z_packed, prover_data.codeword, prover_data.tree,
             points[0], self.k_code, self.log_inv_rate, self.log_batch_size,
             transcript)
-        return proof["ring_switch"], proof, transcript
+        return proof.ring_switch, proof, transcript

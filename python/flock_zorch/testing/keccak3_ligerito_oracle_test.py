@@ -104,8 +104,8 @@ def run():
     out = prover.open_batch_ligerito(cfg, g["z"], pdata, [ab_full, c_full], ch)
 
     for i in range(len(g["rs"])):
-        results.append((f"open ring_switch[{i}]", np.array_equal(out["ring_switches"][i], g["rs"][i])))
-    p, gl = out["ligerito"], g["lig"]
+        results.append((f"open ring_switch[{i}]", np.array_equal(out.ring_switches[i], g["rs"][i])))
+    p, gl = out.ligerito, g["lig"]
 
     def pairs(t): return np.array([np.concatenate([a, b]) for a, b in t]) if t else np.zeros((0, 4), np.uint64)
     def rows_eq(a, b): return len(a) == len(b) and all(np.array_equal(np.asarray(x), np.asarray(y)) for x, y in zip(a, b))

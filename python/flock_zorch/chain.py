@@ -17,12 +17,25 @@ then packs the returned claim into the point the mixed packed-direct PCS open
 consumes (the `ChainProof` assembly).
 """
 
+from dataclasses import dataclass
+from typing import Any
+
 import numpy as np
 import jax.numpy as jnp
 
 from flock_zorch import field
 from flock_zorch.sumcheck import build_eq
 from flock_zorch.lincheck import _round_eval, _bind_top
+
+
+@dataclass(frozen=True)
+class PackedDirectClaim:
+    """A packed-direct PCS claim: a ẑ-evaluation `value` at `point` (its eq_ind is
+    `build_eq(point)`), combined into the batched open alongside the ring-switched
+    claims."""
+
+    point: Any
+    value: Any
 
 LOG_PACKING = field.LOG_PACKING  # 128 = 2^7 bits per packed F128 element
 
@@ -88,7 +101,8 @@ def assemble_chain_claim(tau_pos, claims, k_log, region_log):
         np.zeros((high, 2), np.uint64),
         np.asarray(claims["instance_point"], np.uint64).reshape(-1, 2),
     ], axis=0)
-    return {"point": point, "value": np.asarray(claims["value"], np.uint64).reshape(2)}
+    return PackedDirectClaim(point=point,
+                             value=np.asarray(claims["value"], np.uint64).reshape(2))
 
 
 def fold_in_out(packed, k_log, tau_pos, input_byte_off, output_byte_off):
