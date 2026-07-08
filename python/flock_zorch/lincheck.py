@@ -18,6 +18,7 @@ Reuses zorch via the challenger (`zorch.byte_transcript`). Requires
 from __future__ import annotations
 
 import functools
+from dataclasses import dataclass, replace
 from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
@@ -30,6 +31,7 @@ from flock_zorch.zerocheck import _lagrange_weights
 from flock_zorch.field import _to_int, _to_lohi
 from flock_zorch.challenger import Challenger
 from flock_zorch._csc_fold import _flatten_nz, _csc_segments, _seg_xor_fold
+from zorch.round import ProveChain, Round
 
 U64 = jnp.uint64
 LABEL = b"flock-lincheck-v0"
@@ -151,67 +153,143 @@ class LincheckCircuit(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class _LincheckCarry:
+    """State threaded between lincheck's stage Rounds — inputs plus only what a
+    later stage reads from an earlier one. Static config (m, k_log, k_skip,
+    capture) lives on the Round instances (cf. zerocheck._ZerocheckCarry). None
+    fields are per-stage outputs set via replace; not pytree-registered (no @jit
+    boundary)."""
+
+    z_packed_bytes: Any
+    a_dense: Any
+    b_dense: Any
+    x_ab: Any
+    circuit: Any
+    comb: Any = None                 # ← _CombRound
+    rounds: Any = None               # ← _SumcheckRound
+    r_rounds: Any = None             # ← _SumcheckRound (read by _ClaimRound)
+    z_partial: Any = None            # ← _SumcheckRound
+    z_vec_pre: Any = None            # ← _SumcheckRound (capture)
+    claim: Any = None                # ← _ClaimRound
+
+
+class _CombRound(Round):
+    """Sample α, build the quirky eq table, and fold the constraint matrices into
+    comb = α·(A₀ᵀ·eq_inner) ⊕ (B₀ᵀ·eq_inner) — dense or via a `CscCircuit`, with the
+    optional const_pin +β. No proof message — writes comb onto the carry."""
+
+    def __init__(self, k_skip: int):
+        self._k_skip = k_skip
+
+    def __call__(self, carry, transcript):
+        k_skip = self._k_skip
+        x_ab, circuit = carry.x_ab, carry.circuit
+        transcript.observe_label(LABEL)
+        alpha = jnp.asarray(transcript.sample_f128())
+        eq_inner = build_quirky_eq_table(_to_int(x_ab["z_skip"]), x_ab["x_inner_rest"], k_skip)
+        if circuit is not None:
+            comb = jnp.asarray(circuit.fold_alpha_batched(alpha, eq_inner))
+            if circuit.const_pin is not None:
+                beta = jnp.asarray(transcript.sample_f128())   # sampled AFTER alpha (flock order)
+                col = circuit.const_pin
+                comb = comb.at[col].set(
+                    field.from_ghash(field.to_ghash(comb[col]) + field.to_ghash(beta)))
+        else:
+            comb = fold_alpha_batched(alpha, jnp.asarray(carry.a_dense),
+                                      jnp.asarray(carry.b_dense), eq_inner)
+        return replace(carry, comb=comb), transcript, None
+
+
+class _SumcheckRound(Round):
+    """Partial-fold z at x_outer, then the (k_log − k_skip)-round product sumcheck
+    binding the TOP bit. Message = (rounds, z_partial)."""
+
+    def __init__(self, m: int, k_log: int, k_skip: int, capture: bool):
+        self._m, self._k_log, self._k_skip, self._capture = m, k_log, k_skip, capture
+
+    def __call__(self, carry, transcript):
+        m, k_log, k_skip = self._m, self._k_log, self._k_skip
+        inner_rest = k_log - k_skip
+        comb = carry.comb
+        eq_outer = build_eq_fused(jnp.asarray(carry.x_ab["x_outer"]))
+        z_vec = partial_fold_packed_z(carry.z_packed_bytes, m, k_log, eq_outer)
+        z_vec_pre = np.asarray(z_vec) if self._capture else None  # pre-sumcheck (PCS open reuse)
+
+        # Unfused on purpose: each round is _round_eval then _bind_top, mirroring
+        # flock's steps. Do NOT hand-fuse into Rust's sumcheck_bind_both_and_eval_next
+        # — operator fusion is the zkx compiler's job.
+        rounds, r_rounds = [], []
+        if inner_rest > 0:
+            e1, einf = _round_eval(comb, z_vec)
+            for t in range(inner_rest):
+                transcript.observe_f128(e1)
+                transcript.observe_f128(einf)
+                r = jnp.asarray(transcript.sample_f128())
+                rounds.append((np.asarray(e1), np.asarray(einf)))
+                r_rounds.append(r)
+                comb = _bind_top(comb, r)
+                z_vec = _bind_top(z_vec, r)
+                if t + 1 < inner_rest:
+                    e1, einf = _round_eval(comb, z_vec)
+        z_partial = np.asarray(z_vec)
+        carry = replace(carry, rounds=rounds, r_rounds=r_rounds, z_partial=z_partial,
+                        z_vec_pre=z_vec_pre)
+        return carry, transcript, (rounds, z_partial)
+
+
+class _ClaimRound(Round):
+    """Claim derivation (flock prove_padded_inner steps 6-9): observe z_partial,
+    sample a fresh z_skip, then w = ⟨φ8-weights(r_inner_skip), z_partial⟩ and the
+    LSB-first r_inner_rest. Only in the capture chain. Message = the claim."""
+
+    def __init__(self, k_skip: int):
+        self._k_skip = k_skip
+
+    def __call__(self, carry, transcript):
+        k_skip = self._k_skip
+        z_partial = carry.z_partial
+        transcript.observe_f128_slice(z_partial)              # 6. observe z_partial
+        r_inner_skip = transcript.sample_f128()               # 7. fresh z_skip AFTER
+        lam = _lagrange_weights(k_skip, _to_int(r_inner_skip), 0)  # 8. φ8 S-domain weights
+        lam_arr = jnp.asarray(np.stack([_to_lohi(x) for x in lam]))
+        w = np.asarray(field.from_ghash(jnp.sum(                   # inner_product
+            field.to_ghash(lam_arr) * field.to_ghash(jnp.asarray(z_partial)), axis=0)))
+        r_inner_rest = [np.asarray(r) for r in reversed(carry.r_rounds)]  # 9. LSB-first
+        claim = {"r_inner_skip": np.asarray(r_inner_skip),
+                 "r_inner_rest": np.stack(r_inner_rest) if r_inner_rest else np.zeros((0, 2), np.uint64),
+                 "w": w}
+        return replace(carry, claim=claim), transcript, claim
+
+
+def lincheck_chain(m: int, k_log: int, k_skip: int, capture: bool) -> ProveChain:
+    """The lincheck sub-chain: comb → product sumcheck (→ claim, capture only).
+    One definition for the stage wiring (cf. zerocheck.zerocheck_chain). The
+    claim derivation is FS-bearing, so it joins the chain only when captured —
+    that is the exact transcript difference between the two return shapes."""
+    rounds = [_CombRound(k_skip), _SumcheckRound(m, k_log, k_skip, capture)]
+    if capture:
+        rounds.append(_ClaimRound(k_skip))
+    return ProveChain(rounds)
+
+
 def prove(z_packed_bytes, a_dense, b_dense, x_ab, m, k_log, k_skip,
           domain=b"flock-test-v0", ch=None, capture=False,
           circuit: LincheckCircuit | None = None):
     """Run lincheck. x_ab = dict(z_skip:[2], x_inner_rest:[*,2], x_outer:[*,2]).
     Byte-identical to flock `lincheck::prove`/`prove_padded_capture_z_vec`.
 
-    `circuit`: a `CscCircuit` for real hash R1CS (sparse A₀/B₀ at large k, with an
-    optional const_pin +β column); when None, the dense `a_dense`/`b_dense` path is
-    used (small test R1CS). Default returns (rounds, z_partial). With `capture=True`
-    (the e2e fused prover) also returns the post-sumcheck claim and the pre-sumcheck
-    z_vec. Pass a shared `ch` to thread Fiat-Shamir; else a fresh Challenger(domain)."""
-    inner_rest = k_log - k_skip
+    A `lincheck_chain` of stage `Round`s (comb → sumcheck → claim) threading one
+    `Challenger`. `circuit`: a `CscCircuit` for real hash R1CS (sparse A₀/B₀ at
+    large k, with an optional const_pin +β column); when None, the dense
+    `a_dense`/`b_dense` path is used (small test R1CS). Default returns (rounds,
+    z_partial). With `capture=True` (the e2e fused prover) also returns the
+    post-sumcheck claim and the pre-sumcheck z_vec. Pass a shared `ch` to thread
+    Fiat-Shamir; else a fresh Challenger(domain)."""
     if ch is None:
         ch = Challenger(domain)
-    ch.observe_label(LABEL)
-    alpha = jnp.asarray(ch.sample_f128())
-
-    eq_inner = build_quirky_eq_table(_to_int(x_ab["z_skip"]), x_ab["x_inner_rest"], k_skip)
-    if circuit is not None:
-        comb = jnp.asarray(circuit.fold_alpha_batched(alpha, eq_inner))
-        if circuit.const_pin is not None:
-            beta = jnp.asarray(ch.sample_f128())          # sampled AFTER alpha (flock order)
-            col = circuit.const_pin
-            comb = comb.at[col].set(
-                field.from_ghash(field.to_ghash(comb[col]) + field.to_ghash(beta)))
-    else:
-        comb = fold_alpha_batched(alpha, jnp.asarray(a_dense), jnp.asarray(b_dense), eq_inner)
-
-    eq_outer = build_eq_fused(jnp.asarray(x_ab["x_outer"]))
-    z_vec = partial_fold_packed_z(z_packed_bytes, m, k_log, eq_outer)
-    z_vec_pre = np.asarray(z_vec) if capture else None  # pre-sumcheck (PCS open reuse)
-
-    # Unfused on purpose: each round is _round_eval then _bind_top, mirroring flock's
-    # steps. Do NOT hand-fuse into Rust's sumcheck_bind_both_and_eval_next — operator
-    # fusion is the zkx compiler's job.
-    rounds, r_rounds = [], []
-    if inner_rest > 0:
-        e1, einf = _round_eval(comb, z_vec)
-        for t in range(inner_rest):
-            ch.observe_f128(e1)
-            ch.observe_f128(einf)
-            r = jnp.asarray(ch.sample_f128())
-            rounds.append((np.asarray(e1), np.asarray(einf)))
-            r_rounds.append(r)
-            comb = _bind_top(comb, r)
-            z_vec = _bind_top(z_vec, r)
-            if t + 1 < inner_rest:
-                e1, einf = _round_eval(comb, z_vec)
-    z_partial = np.asarray(z_vec)
+    carry, _ch, _msgs = lincheck_chain(m, k_log, k_skip, capture)(
+        _LincheckCarry(z_packed_bytes, a_dense, b_dense, x_ab, circuit), ch)
     if not capture:
-        return rounds, z_partial
-
-    # ---- claim derivation (flock prove_padded_inner steps 6-9) ----
-    ch.observe_f128_slice(z_partial)                      # 6. observe z_partial
-    r_inner_skip = ch.sample_f128()                       # 7. fresh z_skip AFTER
-    lam = _lagrange_weights(k_skip, _to_int(r_inner_skip), 0)  # 8. φ8 S-domain weights
-    lam_arr = jnp.asarray(np.stack([_to_lohi(x) for x in lam]))
-    w = np.asarray(field.from_ghash(jnp.sum(                   # inner_product
-        field.to_ghash(lam_arr) * field.to_ghash(jnp.asarray(z_partial)), axis=0)))
-    r_inner_rest = [np.asarray(r) for r in reversed(r_rounds)]  # 9. LSB-first
-    claim = {"r_inner_skip": np.asarray(r_inner_skip),
-             "r_inner_rest": np.stack(r_inner_rest) if r_inner_rest else np.zeros((0, 2), np.uint64),
-             "w": w}
-    return rounds, z_partial, claim, z_vec_pre
+        return carry.rounds, carry.z_partial
+    return carry.rounds, carry.z_partial, carry.claim, carry.z_vec_pre
