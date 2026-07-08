@@ -19,7 +19,7 @@ Run:
   cargo build --release --example bench_sumcheck_cpu        # once
   export PATH="$HOME/.local/cuda13/bin:$PATH"               # clmad cubin assembler
   JAX_PLATFORMS=cuda PYTHONPATH=python <venv> \
-      python/flock_zorch/testing/sumcheck_gpu_vs_cpu.py
+      python/flock_zorch/sumcheck/testing/sumcheck_gpu_vs_cpu.py
 """
 import subprocess
 import sys
@@ -33,9 +33,9 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp  # noqa: E402
 
 from flock_zorch import field, sumcheck  # noqa: E402
-from flock_zorch.testing import sumcheck_oracle_test as oracle  # noqa: E402
+from flock_zorch.sumcheck.testing import sumcheck_oracle_test as oracle  # noqa: E402
 
-REPO = Path(__file__).resolve().parents[3]
+REPO = Path(__file__).resolve().parents[4]
 SIZES = (16, 18, 20)
 CPU_ITERS = 8
 GPU_ITERS = 50

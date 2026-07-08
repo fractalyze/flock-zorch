@@ -7,7 +7,7 @@ software field mul AND, when available, the clmad FFI — both must match.
 
 Run directly (backend chosen by JAX_PLATFORMS):
     JAX_PLATFORMS=cuda PYTHONPATH=python <venv>/bin/python \
-        python/flock_zorch/testing/sumcheck_oracle_test.py
+        python/flock_zorch/sumcheck/testing/sumcheck_oracle_test.py
 """
 import os
 from pathlib import Path
@@ -25,7 +25,7 @@ _MAGIC = b"FLKSUM01"
 
 def _artifacts_dir() -> Path:
     env = os.environ.get("FLOCK_ZORCH_ARTIFACTS")
-    return Path(env) if env else Path(__file__).resolve().parents[3] / "artifacts"
+    return Path(env) if env else Path(__file__).resolve().parents[4] / "artifacts"
 
 
 class _Reader:
