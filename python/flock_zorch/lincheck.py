@@ -18,6 +18,7 @@ Reuses zorch via the challenger (`zorch.byte_transcript`). Requires
 from __future__ import annotations
 
 import functools
+from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 import jax
@@ -132,8 +133,27 @@ def _bind_top(v, r):
     return field.from_ghash(vlo + rg * (vhi + vlo))
 
 
+@runtime_checkable
+class LincheckCircuit(Protocol):
+    """The circuit seam `prove` consumes — structural, like zorch's `ProverRound`
+    (`zorch.round`): a family of circuits plugged into one unchanging lincheck
+    protocol, varying only the column-marginal fold. `fold_alpha_batched` returns
+    comb[c] = α·(A₀ᵀ·eq_inner)[c] ⊕ (B₀ᵀ·eq_inner)[c]; `const_pin` is the +β pin
+    column, or None. `CscCircuit` (device seg-scan) and the `KeccakLincheckCircuit`
+    / `Keccak3LincheckCircuit` host walkers match it structurally — no inheritance,
+    no shared base. `@runtime_checkable` so `lincheck_circuit_protocol_test` can
+    assert conformance at runtime; that checks member presence, not the fold's math
+    (the byte-match oracle gates pin that)."""
+
+    const_pin: int | None
+
+    def fold_alpha_batched(self, alpha: Any, eq_inner: Any) -> Any:
+        ...
+
+
 def prove(z_packed_bytes, a_dense, b_dense, x_ab, m, k_log, k_skip,
-          domain=b"flock-test-v0", ch=None, capture=False, circuit=None):
+          domain=b"flock-test-v0", ch=None, capture=False,
+          circuit: LincheckCircuit | None = None):
     """Run lincheck. x_ab = dict(z_skip:[2], x_inner_rest:[*,2], x_outer:[*,2]).
     Byte-identical to flock `lincheck::prove`/`prove_padded_capture_z_vec`.
 
