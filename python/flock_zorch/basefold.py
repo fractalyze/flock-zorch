@@ -67,10 +67,6 @@ def _bf_ops():
     return _BF_OPS
 
 
-_to_ghash = field.to_ghash
-_from_ghash = field.from_ghash_host
-
-
 def _leaf_bytes(codeword_np, n_leaves, leaf_f128):
     """codeword uint64 [.,2] -> uint8 [n_leaves, leaf_f128*16] (LE F128 bytes)."""
     return codeword_np.reshape(n_leaves, leaf_f128 * 2).view(np.uint8)
@@ -141,13 +137,13 @@ def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_s
                     post_rb_codeword = cw_np
         else:
             if cw_g is None:
-                cw_g = _to_ghash(cw_active)      # enter the additive-RS fold domain
-            cw_g = fold_fn(cw_g, _to_ghash(r.reshape(1, 2)))
+                cw_g = field.to_ghash(cw_active)      # enter the additive-RS fold domain
+            cw_g = fold_fn(cw_g, field.to_ghash(r.reshape(1, 2)))
             rounds_in_epoch += 1
             if rounds_in_epoch == arities[current_epoch]:
                 if current_epoch + 1 < num_epochs:
                     leaf_f128 = 1 << arities[current_epoch + 1]
-                    cw_np = _from_ghash(cw_g)
+                    cw_np = field.from_ghash_host(cw_g)
                     n_leaves = cw_np.shape[0] // leaf_f128
                     tree = merkle.merkle_tree(_leaf_bytes(cw_np, n_leaves, leaf_f128))
                     ch.observe_f128(_root_f128(tree[-1]))
@@ -160,7 +156,7 @@ def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_s
 
     final_a = np.asarray(a)[0]
     final_b = np.asarray(bb)[0]
-    final_codeword = _from_ghash(cw_g) if cw_g is not None else np.asarray(cw_active)
+    final_codeword = field.from_ghash_host(cw_g) if cw_g is not None else np.asarray(cw_active)
 
     # ---- query openings: sample positions, gather each layer's leaf, Merkle multi-proofs ----
     cw_full_np = np.asarray(cw_full)
@@ -324,7 +320,7 @@ def verify(target, proof, initial_codeword_root, k_code, log_inv_rate,
                           for _ in range(n_q)], dtype=np.int64)
 
     arity_0 = arities[0] if arities else 0
-    ch_g = [_to_ghash(r.reshape(1, 2)).reshape(()) for r in challenges]  # ghash betas
+    ch_g = [field.to_ghash(r.reshape(1, 2)).reshape(()) for r in challenges]  # ghash betas
 
     # Gather per-query leaves (uint64 SoA) once.
     q_pos = np.array([q[0] for q in proof["queries"]], dtype=np.int64)
@@ -357,11 +353,11 @@ def verify(target, proof, initial_codeword_root, k_code, log_inv_rate,
         got = post_rb_leaves[np.arange(n_q), inner]  # [Q, 2]
         if not np.array_equal(got, prbv):
             return reject("FoldMismatch:t2_crosscheck", challenges)
-        coset_g = _to_ghash(post_rb_leaves.reshape(-1, 2)).reshape(n_q, 1 << arity_0)
+        coset_g = field.to_ghash(post_rb_leaves.reshape(-1, 2)).reshape(n_q, 1 << arity_0)
         expected_g = _fold_coset(code, coset_g,
                                  ch_g[log_batch_size:log_batch_size + arity_0],
                                  k_code, positions >> arity_0, k_code)
-        expected = _from_ghash(expected_g)
+        expected = field.from_ghash_host(expected_g)
 
         cum = arity_0
         for i in range(num_fri_commits):
@@ -374,11 +370,11 @@ def verify(target, proof, initial_codeword_root, k_code, log_inv_rate,
             got = leaves_i[np.arange(n_q), offset]  # [Q, 2]
             if not np.array_equal(got, expected):
                 return reject(f"FoldMismatch:epoch{i}", challenges)
-            leaf_g = _to_ghash(leaves_i.reshape(-1, 2)).reshape(n_q, 1 << next_arity)
+            leaf_g = field.to_ghash(leaves_i.reshape(-1, 2)).reshape(n_q, 1 << next_arity)
             expected_g = _fold_coset(code, leaf_g,
                                      ch_g[log_batch_size + cum:log_batch_size + cum + next_arity],
                                      k_code - cum, p_at >> next_arity, k_code)
-            expected = _from_ghash(expected_g)
+            expected = field.from_ghash_host(expected_g)
             cum += next_arity
 
         p_final = positions >> cum
