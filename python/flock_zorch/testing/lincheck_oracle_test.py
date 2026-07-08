@@ -50,9 +50,7 @@ def _load(path):
     a = _read_matrix(rd, k)
     b = _read_matrix(rd, k)
     z_packed = rd.raw(rd.u64())
-    x_ab = {"z_skip": rd.f128(),
-            "x_inner_rest": rd.f128s(rd.u64()),
-            "x_outer": rd.f128s(rd.u64())}
+    x_ab = lincheck.AbClaimPoint(z_skip=rd.f128(), x_inner_rest=rd.f128s(rd.u64()), x_outer=rd.f128s(rd.u64()))
     n_rounds = rd.u64()
     rounds = [(rd.f128(), rd.f128()) for _ in range(n_rounds)]
     z_partial = rd.f128s(rd.u64())
@@ -62,8 +60,9 @@ def _load(path):
 
 def _check(path, name):
     g = _load(path)
-    rounds, z_partial = lincheck.prove(
+    lp = lincheck.prove(
         g["z_packed"], g["a"], g["b"], g["x_ab"], g["m"], g["k_log"], g["k_skip"])
+    rounds, z_partial = lp.rounds, lp.z_partial
     assert len(rounds) == len(g["rounds"]), (len(rounds), len(g["rounds"]))
     for i, ((e1, einf), (ge1, geinf)) in enumerate(zip(rounds, g["rounds"])):
         assert np.array_equal(e1, ge1) and np.array_equal(einf, geinf), f"round {i} mismatch ({name})"

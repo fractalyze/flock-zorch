@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import functools
 from dataclasses import dataclass, replace
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, NamedTuple, Protocol, runtime_checkable
 
 import numpy as np
 import jax
@@ -27,7 +27,7 @@ import jax.numpy as jnp
 
 from flock_zorch import field
 from flock_zorch.sumcheck import build_eq_fused, ONE
-from flock_zorch.zerocheck import _lagrange_weights
+from flock_zorch.zerocheck import _lagrange_weights, ZerocheckProof
 from flock_zorch.field import _to_int, _to_lohi
 from flock_zorch.challenger import Challenger
 from flock_zorch._csc_fold import _flatten_nz, _csc_segments, _seg_xor_fold
@@ -154,6 +154,50 @@ class LincheckCircuit(Protocol):
 
 
 @dataclass(frozen=True)
+class AbClaimPoint:
+    """The â/b̂ evaluation point lincheck reduces — the zerocheck challenge split
+    (flock's QuirkyPoint): `z_skip` the URM fold-point, `x_inner_rest` the inner
+    multilinear challenges, `x_outer` the outer ones."""
+
+    z_skip: Any
+    x_inner_rest: Any
+    x_outer: Any
+
+    @classmethod
+    def from_zerocheck(cls, zc: ZerocheckProof, inner_rest: int) -> "AbClaimPoint":
+        """The â/b̂ point derived from a zerocheck proof: z_skip is the URM
+        fold-point, and the multilinear challenges split into inner/outer at
+        `inner_rest`."""
+        return cls(z_skip=zc.z,
+                   x_inner_rest=zc.mlv_challenges[:inner_rest],
+                   x_outer=zc.mlv_challenges[inner_rest:])
+
+
+@dataclass(frozen=True)
+class LincheckClaim:
+    """The post-sumcheck claim (flock prove_padded_inner steps 6-9): the fresh
+    inner z_skip, the LSB-first inner-rest challenges, and the reduced value w."""
+
+    r_inner_skip: Any
+    r_inner_rest: Any
+    w: Any
+
+
+class LincheckProof(NamedTuple):
+    """flock's lincheck proof: the product-sumcheck `rounds` and the `z_partial`
+    message. `claim` (a `LincheckClaim`) and `z_vec_pre` are populated only on the
+    captured (e2e) path — the post-sumcheck claim and the pre-sumcheck z_vec the
+    PCS open reuses — and are None otherwise. A NamedTuple (not a dataclass) so the
+    historical `rounds, z_partial, claim, z_vec_pre = prove(...)` unpacking keeps
+    working alongside attribute access."""
+
+    rounds: Any
+    z_partial: Any
+    claim: "LincheckClaim | None" = None
+    z_vec_pre: Any = None
+
+
+@dataclass(frozen=True)
 class _LincheckCarry:
     """State threaded between lincheck's stage Rounds — inputs plus only what a
     later stage reads from an earlier one. Static config (m, k_log, k_skip,
@@ -187,7 +231,7 @@ class _CombRound(Round):
         x_ab, circuit = carry.x_ab, carry.circuit
         transcript.observe_label(LABEL)
         alpha = jnp.asarray(transcript.sample_f128())
-        eq_inner = build_quirky_eq_table(_to_int(x_ab["z_skip"]), x_ab["x_inner_rest"], k_skip)
+        eq_inner = build_quirky_eq_table(_to_int(x_ab.z_skip), x_ab.x_inner_rest, k_skip)
         if circuit is not None:
             comb = jnp.asarray(circuit.fold_alpha_batched(alpha, eq_inner))
             if circuit.const_pin is not None:
@@ -212,7 +256,7 @@ class _SumcheckRound(Round):
         m, k_log, k_skip = self._m, self._k_log, self._k_skip
         inner_rest = k_log - k_skip
         comb = carry.comb
-        eq_outer = build_eq_fused(jnp.asarray(carry.x_ab["x_outer"]))
+        eq_outer = build_eq_fused(jnp.asarray(carry.x_ab.x_outer))
         z_vec = partial_fold_packed_z(carry.z_packed_bytes, m, k_log, eq_outer)
         z_vec_pre = np.asarray(z_vec) if self._capture else None  # pre-sumcheck (PCS open reuse)
 
@@ -256,9 +300,10 @@ class _ClaimRound(Round):
         w = np.asarray(field.from_ghash(jnp.sum(                   # inner_product
             field.to_ghash(lam_arr) * field.to_ghash(jnp.asarray(z_partial)), axis=0)))
         r_inner_rest = [np.asarray(r) for r in reversed(carry.r_rounds)]  # 9. LSB-first
-        claim = {"r_inner_skip": np.asarray(r_inner_skip),
-                 "r_inner_rest": np.stack(r_inner_rest) if r_inner_rest else np.zeros((0, 2), np.uint64),
-                 "w": w}
+        claim = LincheckClaim(
+            r_inner_skip=np.asarray(r_inner_skip),
+            r_inner_rest=np.stack(r_inner_rest) if r_inner_rest else np.zeros((0, 2), np.uint64),
+            w=w)
         return replace(carry, claim=claim), transcript, claim
 
 
@@ -273,23 +318,21 @@ def lincheck_chain(m: int, k_log: int, k_skip: int, capture: bool) -> ProveChain
     return ProveChain(rounds)
 
 
-def prove(z_packed_bytes, a_dense, b_dense, x_ab, m, k_log, k_skip,
-          domain=b"flock-test-v0", ch=None, capture=False,
-          circuit: LincheckCircuit | None = None):
-    """Run lincheck. x_ab = dict(z_skip:[2], x_inner_rest:[*,2], x_outer:[*,2]).
-    Byte-identical to flock `lincheck::prove`/`prove_padded_capture_z_vec`.
+def prove(z_packed_bytes, a_dense, b_dense, x_ab: AbClaimPoint, m: int, k_log: int,
+          k_skip: int, domain: bytes = b"flock-test-v0", ch: Challenger | None = None,
+          capture: bool = False, circuit: LincheckCircuit | None = None) -> LincheckProof:
+    """Run lincheck. `x_ab` is an `AbClaimPoint` (z_skip:[2], x_inner_rest:[*,2],
+    x_outer:[*,2]). Byte-identical to flock `lincheck::prove`/`prove_padded_capture_z_vec`.
 
     A `lincheck_chain` of stage `Round`s (comb → sumcheck → claim) threading one
     `Challenger`. `circuit`: a `CscCircuit` for real hash R1CS (sparse A₀/B₀ at
     large k, with an optional const_pin +β column); when None, the dense
-    `a_dense`/`b_dense` path is used (small test R1CS). Default returns (rounds,
-    z_partial). With `capture=True` (the e2e fused prover) also returns the
-    post-sumcheck claim and the pre-sumcheck z_vec. Pass a shared `ch` to thread
-    Fiat-Shamir; else a fresh Challenger(domain)."""
+    `a_dense`/`b_dense` path is used (small test R1CS). Returns a `LincheckProof`;
+    its `claim`/`z_vec_pre` are populated only with `capture=True` (the e2e fused
+    prover). Pass a shared `ch` to thread Fiat-Shamir; else a fresh Challenger(domain)."""
     if ch is None:
         ch = Challenger(domain)
     carry, _ch, _msgs = lincheck_chain(m, k_log, k_skip, capture)(
         _LincheckCarry(z_packed_bytes, a_dense, b_dense, x_ab, circuit), ch)
-    if not capture:
-        return carry.rounds, carry.z_partial
-    return carry.rounds, carry.z_partial, carry.claim, carry.z_vec_pre
+    return LincheckProof(rounds=carry.rounds, z_partial=carry.z_partial,
+                         claim=carry.claim, z_vec_pre=carry.z_vec_pre)
