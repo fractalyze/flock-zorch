@@ -2,7 +2,7 @@
 
 For small SEQUENTIAL precomputes (e.g. NTT twiddles) that belong on the host per
 the project's host/device split. An F128 is a Python int < 2^128 with bit i =
-coefficient of x^i -- the same bit layout as field.py's uint64 lanes, so
+coefficient of x^i -- the same bit layout as f128.py's uint64 lanes, so
 `val.to_bytes(16, "little")` matches flock's serialization.
 
 `mul`/`inv` are the host scalar counterpart of flock-core `gf2_128.rs`

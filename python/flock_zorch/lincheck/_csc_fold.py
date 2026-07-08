@@ -1,5 +1,5 @@
 """Device CSC (column-sparse) fold for `lincheck.CscCircuit` — the perf machinery
-kept out of lincheck.py so its protocol reads top-to-bottom. The transposed binary
+kept out of lincheck/prover.py so its protocol reads top-to-bottom. The transposed binary
 matvec out[c] = XOR_{r:M[r,c]=1} eq[r] is a column-segmented XOR-reduce: sort the
 flat nonzeros by column ONCE (host), then per fold run a device prefix-XOR scan +
 segment diff + clean scatter-set — no atomics, so the skewed const_pin column is

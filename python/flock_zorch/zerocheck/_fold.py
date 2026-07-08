@@ -1,5 +1,5 @@
 """Device precompute for zerocheck's round-1 c-claim and round-2 binding — the
-Lagrange-weight / batched-inverse / fold-at-z cluster, kept out of zerocheck.py so
+Lagrange-weight / batched-inverse / fold-at-z cluster, kept out of zerocheck/prover.py so
 prove_packed reads as the PIOP. Byte-identical to flock's zerocheck/{univariate_skip,
 multilinear}. The deeply-sequential Lagrange/Fermat work runs on the native binary_field_ghash multiply.
 
