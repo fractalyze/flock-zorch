@@ -94,11 +94,11 @@ def _round1_core_lax(a, b, c, k_skip, eqx):
     `lax.ntt` (test-only; the production swap is tracked separately)."""
     a_l = _to_aes(_extend_lax(a, k_skip))
     b_l = _to_aes(_extend_lax(b, k_skip))
-    c_l = _to_aes(_extend_lax(c, k_skip))
+    c_l = _extend_lax(c, k_skip)
     ab = _to_u8(a_l * b_l).astype(jnp.int32)
     phi = jnp.asarray(gf8.PHI_8_TABLE)
     phi_ab = field.to_ghash(phi[ab])
-    phi_c = field.to_ghash(phi[_to_u8(c_l).astype(jnp.int32)])
+    phi_c = field.to_ghash(phi[c_l.astype(jnp.int32)])
     eqx_g = field.to_ghash(eqx)
     return (field.from_ghash(jnp.sum(eqx_g * phi_ab, axis=0)),
             field.from_ghash(jnp.sum(eqx_g * phi_c, axis=0)))
