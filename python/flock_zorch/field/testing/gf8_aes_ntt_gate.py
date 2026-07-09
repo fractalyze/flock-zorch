@@ -4,13 +4,12 @@
 LCH14 additive NTT; flock's zerocheck round-1 S→Λ extension re-expresses as
 base-subspace transforms only (inverse NTT size ℓ → zero-pad coefficients to
 2ℓ → forward NTT size 2ℓ → second half = the β=ℓ coset), so no coset-offset
-kernel support is needed. Checks, each byte-exact:
+kernel support is needed. Checks, each byte-exact (the generic lax.ntt
+contract — roundtrip + CPU/GPU byte parity — is jax's own test suite's job):
 
-  1. intt ∘ ntt = id over the AES dtype, on CPU and on GPU.
-  2. GPU output == CPU output.
-  3. The re-expressed extension == the hand-rolled coset-twiddle device path
+  1. The re-expressed extension == the hand-rolled coset-twiddle device path
      (`_gf8_device`), on random rows.
-  4. Round-1 with the re-expressed extension byte-matches the `gf8_urm`
+  2. Round-1 with the re-expressed extension byte-matches the `gf8_urm`
      golden (`round1_ab` / `round1_c`) — anchoring the dtype to unmodified
      flock.
 
@@ -53,25 +52,6 @@ def _extend_lax(rows, k_skip: int):
     padded = jnp.concatenate([coeffs, jnp.zeros_like(coeffs)], axis=-1)
     evals = lax.ntt(padded, ntt_type="NTT", ntt_length=2 * ell)
     return _to_u8(evals[..., ell:])
-
-
-def _check_roundtrip_and_cpu_gpu():
-    rng = np.random.default_rng(20260709)
-    for n in (2, 8, 64, 128):
-        x = rng.integers(0, 256, size=(4, n), dtype=np.uint8)
-        outs = {}
-        for dev in {d.platform: d for d in jax.devices() + jax.devices("cpu")}.values():
-            with jax.default_device(dev):
-                v = _to_aes(jnp.asarray(x))
-                fwd = lax.ntt(v, ntt_type="NTT", ntt_length=n)
-                rt = lax.ntt(fwd, ntt_type="INTT", ntt_length=n)
-                assert np.array_equal(np.asarray(_to_u8(rt)), x), \
-                    f"intt(ntt(x)) != x on {dev.platform}, n={n}"
-                outs[dev.platform] = np.asarray(_to_u8(fwd))
-        if len(outs) > 1:
-            vals = list(outs.values())
-            assert all(np.array_equal(vals[0], v) for v in vals[1:]), \
-                f"CPU/GPU forward NTT bytes differ, n={n}"
 
 
 def _check_extension_matches_coset_path():
@@ -133,14 +113,11 @@ def _check_round1_matches_golden(path: Path | None = None):
 
 
 def test_gf8_aes_ntt_gate():
-    _check_roundtrip_and_cpu_gpu()
     _check_extension_matches_coset_path()
     _check_round1_matches_golden()
 
 
 if __name__ == "__main__":
-    _check_roundtrip_and_cpu_gpu()
-    print("lax.ntt AES dtype: intt∘ntt=id + CPU==GPU bytes: PASS")
     _check_extension_matches_coset_path()
     print("re-expressed S→Λ extension == coset path: PASS")
     cfgs = _check_round1_matches_golden()
