@@ -9,11 +9,9 @@ verified 2*2 = 4). Device arithmetic therefore runs on the dtype (`*` / `+` /
 `jnp.sum`); this module only bridges representations at the edges (the golden-fixture
 readers and the challenger's F128 byte serde).
 
-`to_ghash`/`from_ghash` are the device uint64-lane <-> `binary_field_ghash` bitcast.
-They route through uint32 lanes: the direct `uint64[..,2] <-> ghash` bitcast silently
-miscompiles on the CPU PJRT path (a fractalyze/xla BitcastConvertType bug), while
-`uint32[..,4] <-> ghash` is correct on both backends and is the dtype's native lane
-width. `_to_int`/`_to_lohi` are the host int <-> uint64-lane serde (bit i =
+`to_ghash`/`from_ghash` are the device uint64-lane <-> `binary_field_ghash` bitcast
+(a pure reinterpret — flock's {lo, hi} limbs are the dtype's storage bytes).
+`_to_int`/`_to_lohi` are the host int <-> uint64-lane serde (bit i =
 coefficient of x^i). Requires `jax_enable_x64`.
 """
 from __future__ import annotations
@@ -30,22 +28,16 @@ _GHASH = jnp.binary_field_ghash
 
 
 def to_ghash(a):
-    """uint64 `[..., 2]` (lo, hi) F128 -> `binary_field_ghash [...]`, via uint32 lanes.
+    """uint64 `[..., 2]` (lo, hi) F128 -> `binary_field_ghash [...]`.
 
-    flock stores an F128 as its little-endian bytes; the dtype is the same bytes,
-    so this is a pure bitcast. It routes through uint32 lanes because the direct
-    uint64<->ghash bitcast silently miscompiles on the CPU PJRT path (a
-    fractalyze/xla BitcastConvertType bug), while the uint32 bitcast is correct on
-    both backends and is the dtype's native lane width."""
-    a = jnp.asarray(a, U64)
-    u32 = jax.lax.bitcast_convert_type(a, jnp.uint32).reshape(*a.shape[:-1], 4)
-    return jax.lax.bitcast_convert_type(u32, _GHASH)
+    flock stores an F128 as its little-endian bytes and the dtype is the same
+    bytes, so this is a pure bitcast."""
+    return jax.lax.bitcast_convert_type(jnp.asarray(a, U64), _GHASH)
 
 
 def from_ghash(g):
     """`binary_field_ghash [...]` -> uint64 `[..., 2]` (lo, hi). Inverse of `to_ghash`."""
-    u32 = jax.lax.bitcast_convert_type(g, jnp.uint32)
-    return jax.lax.bitcast_convert_type(u32.reshape(*u32.shape[:-1], 2, 2), U64)
+    return jax.lax.bitcast_convert_type(g, U64)
 
 
 def from_ghash_host(g) -> np.ndarray:
