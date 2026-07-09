@@ -1,7 +1,12 @@
-"""Device (GPU) F8 kernels for the zerocheck round-1 URM — the same φ8 table +
-additive NTT as gf8's host reference, in jnp, so round1 runs on the GPU instead of
-host numpy. Byte-identical to gf8's host path (gated by the URM oracle); the heavy
-[N,ell,2] φ8 intermediate is consumed in-fusion (never written to HBM).
+"""Device (GPU) round-1 URM core — the F8 S→Λ extension via the compiler's
+field-generic additive NTT (`lax.ntt` over `binary_field_gf8_aes`), plus the
+φ8 lift and F128 eq-accumulation, fused in one jit kernel. Byte-identical to
+flock's `round1_naive` (gated by the URM oracle); the heavy [N,ell,2] φ8
+intermediate is consumed in-fusion (never written to HBM).
+
+The extension uses base-subspace transforms only: inverse NTT size ℓ →
+zero-pad coefficients to 2ℓ → forward NTT size 2ℓ → second half = the β=ℓ
+coset. No coset-offset kernel support needed.
 
 Reads gf8's host PHI_8_TABLE (the only host<->device shared datum). gf8 ⇄ _gf8_device
 is a deliberate cycle made safe by MODULE imports on both sides (no import-time lookup
@@ -13,63 +18,31 @@ from __future__ import annotations
 
 import functools
 
+import numpy as np
 import jax
 import jax.numpy as jnp
+import zk_dtypes
+from jax import lax
 
 from flock_zorch import field
 from flock_zorch.field import gf8
 
 _PHI_DEV = jnp.asarray(gf8.PHI_8_TABLE)     # [256, 2] uint64
+_AES = np.dtype(zk_dtypes.binary_field_gf8_aes)
 
 
-def _gf8_mul_dev(a, b):
-    """Elementwise F8 multiply on device — ARITHMETIC (clmul8 + mod-0x11B reduce),
-    no table gather. A 256x256 table gather over the F8-NTT's elements is
-    memory-bound; 8 unrolled XOR-shifts + two reduction folds is compute-bound and
-    faster. Byte-identical to the `_MUL` table (same `_clmul8`/`_gf8_reduce` math)."""
-    a16 = a.astype(jnp.uint16)
-    b16 = b.astype(jnp.uint16)
-    p = jnp.zeros_like(a16)
-    for i in range(8):
-        p = p ^ jnp.where(((a16 >> i) & 1) != 0, b16 << i, jnp.uint16(0))
-    h = p >> 8
-    t = (p & 0xFF) ^ h ^ (h << 1) ^ (h << 3) ^ (h << 4)
-    h2 = t >> 8
-    return (((t & 0xFF) ^ h2 ^ (h2 << 1) ^ (h2 << 3) ^ (h2 << 4)) & 0xFF).astype(jnp.uint8)
+def _extend_rows(rows, k_skip: int):
+    """S→Λ extension, uint8 rows [N, 2^k_skip] -> AES-dtype rows on Λ."""
+    ell = 1 << k_skip
+    v = lax.bitcast_convert_type(rows, _AES)
+    coeffs = lax.ntt(v, ntt_type="INTT", ntt_length=ell)
+    padded = jnp.concatenate([coeffs, jnp.zeros_like(coeffs)], axis=-1)
+    evals = lax.ntt(padded, ntt_type="NTT", ntt_length=2 * ell)
+    return evals[..., ell:]
 
 
-def _fft_dev(v, tw, k: int):
-    """Iterative DIF additive-NTT over F8 (device); v: uint8 [N, 2^k]. Equivalent
-    to the recursive `_fft`: level L butterflies 2^L blocks with binary-heap
-    twiddles tw[2^L-1 : 2^(L+1)-1]."""
-    n, ell = v.shape[0], 1 << k
-    for level in range(k):
-        nn, block = 1 << level, ell >> level
-        half = block // 2
-        lam = tw[(1 << level) - 1:(1 << (level + 1)) - 1]      # [nn]
-        vr = v.reshape(n, nn, 2, half)
-        lo, hi = vr[:, :, 0, :], vr[:, :, 1, :]                # [n, nn, half]
-        lam_b = jnp.broadcast_to(lam[None, :, None], lo.shape)
-        new_lo = lo ^ _gf8_mul_dev(lam_b, hi)
-        new_hi = hi ^ new_lo
-        v = jnp.stack([new_lo, new_hi], axis=2).reshape(n, ell)
-    return v
-
-
-def _ifft_dev(v, tw, k: int):
-    """Iterative DIT inverse additive-NTT over F8 (device); deepest level first."""
-    n, ell = v.shape[0], 1 << k
-    for level in reversed(range(k)):
-        nn, block = 1 << level, ell >> level
-        half = block // 2
-        lam = tw[(1 << level) - 1:(1 << (level + 1)) - 1]
-        vr = v.reshape(n, nn, 2, half)
-        lo, hi = vr[:, :, 0, :], vr[:, :, 1, :]
-        lam_b = jnp.broadcast_to(lam[None, :, None], hi.shape)
-        new_hi = hi ^ lo
-        new_lo = lo ^ _gf8_mul_dev(lam_b, new_hi)
-        v = jnp.stack([new_lo, new_hi], axis=2).reshape(n, ell)
-    return v
+def _to_u8(x):
+    return lax.bitcast_convert_type(x, jnp.uint8)
 
 
 _R1_CORE = None
@@ -83,11 +56,12 @@ def _round1_core():
     global _R1_CORE
     if _R1_CORE is None:
         @functools.partial(jax.jit, static_argnums=(3,))
-        def core(a, b, c, k_skip, tw_s, tw_l, eqx):
-            a_l = _fft_dev(_ifft_dev(a, tw_s, k_skip), tw_l, k_skip)
-            b_l = _fft_dev(_ifft_dev(b, tw_s, k_skip), tw_l, k_skip)
-            c_l = _fft_dev(_ifft_dev(c, tw_s, k_skip), tw_l, k_skip)
-            phi_ab = field.to_ghash(_PHI_DEV[_gf8_mul_dev(a_l, b_l).astype(jnp.int32)])
+        def core(a, b, c, k_skip, eqx):
+            a_l = _extend_rows(a, k_skip)
+            b_l = _extend_rows(b, k_skip)
+            c_l = _to_u8(_extend_rows(c, k_skip))
+            ab = _to_u8(a_l * b_l).astype(jnp.int32)
+            phi_ab = field.to_ghash(_PHI_DEV[ab])
             phi_c = field.to_ghash(_PHI_DEV[c_l.astype(jnp.int32)])
             eqx_g = field.to_ghash(eqx)                        # [n_chunks, 1]
             return (field.from_ghash(jnp.sum(eqx_g * phi_ab, axis=0)),
