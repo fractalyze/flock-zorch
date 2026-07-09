@@ -11,7 +11,8 @@ final F128 eq-accumulation runs on device in the native `binary_field_ghash` mul
 F8 is a DIFFERENT tower from the F128 GHASH basis: AES poly x⁸+x⁴+x³+x+1 = 0x11B,
 linked to F128 only through φ₈ (a field homomorphism into a subfield). The
 additive NTT here is also distinct from `ntt.py`'s F128 LCH NTT: a `next_s`
-twiddle recurrence with binary-heap indexing and recursive DIF/DIT butterflies.
+twiddle recurrence with binary-heap indexing (the DIF/DIT butterflies that
+consume these twiddles run on device in `_gf8_device`).
 """
 from __future__ import annotations
 
@@ -106,13 +107,10 @@ def _build_phi8_table() -> np.ndarray:
 PHI_8_TABLE = _build_phi8_table()  # uint64 [256, 2] = F128
 
 
-def phi8(v) -> np.ndarray:
-    """F8 byte(s) -> F128 (uint64[..., 2])."""
-    return PHI_8_TABLE[np.asarray(v, dtype=np.uint8)]
-
-
 # ---------------------------------------------------------------------------
-# AdditiveNttGf8 — additive NTT over F8 (LCH novel-poly basis, coset offset beta).
+# Additive-NTT twiddles over F8 — the binary-heap twiddle table consumed by the
+# device round-1 kernel (`_gf8_device._fft_dev` / `_ifft_dev`). LCH novel-poly
+# basis, coset offset beta; distinct from `ntt.py`'s F128 LCH layer-major table.
 # ---------------------------------------------------------------------------
 
 
@@ -147,50 +145,6 @@ def _compute_twiddles(k: int, beta: int) -> np.ndarray:
         for j in range(length):
             twiddles[write_at - 1 + j] = int(gf8_mul(s_inv, layer[j]))
     return twiddles
-
-
-def _fft(v: np.ndarray, tw: np.ndarray, idx: int) -> np.ndarray:
-    """Decimation-in-frequency: butterfly first, then recurse on the contiguous
-    halves of the last axis. tw indexed binary-heap (node idx -> tw[idx-1])."""
-    if v.shape[-1] == 1:
-        return v
-    half = v.shape[-1] // 2
-    lam = int(tw[idx - 1])
-    lo, hi = v[..., :half], v[..., half:]
-    new_lo = lo ^ gf8_mul(lam, hi)  # v[i] += lam*w
-    new_hi = hi ^ new_lo            # v[half+i] = w + v[i] (updated)
-    lo2 = _fft(new_lo, tw, 2 * idx)
-    hi2 = _fft(new_hi, tw, 2 * idx + 1)
-    return np.concatenate([lo2, hi2], axis=-1)
-
-
-def _ifft(v: np.ndarray, tw: np.ndarray, idx: int) -> np.ndarray:
-    """Decimation-in-time: recurse first, then butterfly last."""
-    if v.shape[-1] == 1:
-        return v
-    half = v.shape[-1] // 2
-    lo = _ifft(v[..., :half], tw, 2 * idx)
-    hi = _ifft(v[..., half:], tw, 2 * idx + 1)
-    lam = int(tw[idx - 1])
-    new_hi = hi ^ lo                # v[half+i] += v[i]
-    new_lo = lo ^ gf8_mul(lam, new_hi)  # v[i] += lam*v[half+i] (updated)
-    return np.concatenate([new_lo, new_hi], axis=-1)
-
-
-class AdditiveNttGf8:
-    """Additive NTT over F8 on the coset W = beta + span{1,2,…,2^(k-1)}."""
-
-    def __init__(self, k: int, beta: int):
-        self.k = k
-        self.beta = int(beta) & 0xFF
-        self.twiddles = _compute_twiddles(k, self.beta)
-
-    def forward(self, v: np.ndarray) -> np.ndarray:
-        """v: uint8 [..., 2^k] -> transformed [..., 2^k]."""
-        return _fft(np.asarray(v, dtype=np.uint8), self.twiddles, 1)
-
-    def inverse(self, v: np.ndarray) -> np.ndarray:
-        return _ifft(np.asarray(v, dtype=np.uint8), self.twiddles, 1)
 
 
 # Device (GPU) F8 kernels for the round-1 URM live in _gf8_device. Module import
