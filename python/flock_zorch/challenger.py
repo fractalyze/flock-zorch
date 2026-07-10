@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from zorch.byte_transcript import ByteHashTranscript
-from zorch.hash.sha256 import HashlibSha256
+from zorch.hash.sha256 import HashlibSha256, Sha256
 
 if TYPE_CHECKING:
     from zorch.hash.byte_hash import ByteHash
@@ -56,12 +56,26 @@ class Challenger:
     FS driver (zorch#9); its byte-identity to the host hashlib is zorch's
     guarantee (`byte_transcript_test.test_device_substrate_matches_host`), so flock
     keeps no gate of its own, and per #7 the marker regresses the host-driven
-    prover, so it is not the default."""
+    prover, so it is not the default.
 
-    def __init__(self, domain: bytes, *, byte_hash: ByteHash | None = None):
+    `grind_hash` is the PoW grind's backend: the grind is the one FS op that is
+    embarrassingly parallel, so the fused `Sha256` wins there (a third of the
+    ligerito prove under the host loop) while the sequential stream stays on
+    `byte_hash`. Byte-identity is zorch's parity guarantee
+    (`byte_transcript_test.test_pow_fused_grind_matches_host`)."""
+
+    def __init__(
+        self,
+        domain: bytes,
+        *,
+        byte_hash: ByteHash | None = None,
+        grind_hash: ByteHash | None = None,
+    ):
         if byte_hash is None:
             byte_hash = HashlibSha256()
-        self._t = ByteHashTranscript.new(domain, byte_hash)
+        if grind_hash is None:
+            grind_hash = Sha256()
+        self._t = ByteHashTranscript.new(domain, byte_hash, grind_hash)
 
     def observe_label(self, label: bytes) -> None:
         self._t = self._t.observe_label(label)
