@@ -248,24 +248,15 @@ class _PcsOpenRound(Round):
 
 
 def prove_fast(z_packed, m, k_log, k_skip, useful_bits, a0, b0, z_lincheck, statement_digest,
-               log_inv_rate=1, log_batch_size=5, domain=b"flock-test-v0",
-               byte_hash=None) -> ProveFastResult:
+               log_inv_rate=1, log_batch_size=5, domain=b"flock-test-v0") -> ProveFastResult:
     """Fused single-call R1CS prover (identity-C path: c = z), byte-identical to
     flock `prover::prove`. A zorch `ProveChain` of stage `Round`s threading one
     shared challenger + a `_ProveCarry` (no per-phase host re-transfer):
     commit+bind → zerocheck → lincheck → batched dual-claim open. a = A·z, b = B·z;
-    for the identity R1CS a = b = c = z (the gated path). Returns the proof + claims.
-
-    `byte_hash` selects the Fiat-Shamir backend injected into the single shared
-    `ByteHashTranscript` threaded through every phase: None (the default) keeps the
-    host `HostSha256`; a `Sha256` (`zorch.sha256` marker) may be injected as a
-    seam for a future on-device FS driver (zorch#9). zorch guarantees the marker is
-    byte-identical to the host hashlib
-    (`byte_transcript_test.test_device_substrate_matches_host`), so flock keeps no
-    device gate of its own; per #7 the marker regresses the host-driven prover."""
+    for the identity R1CS a = b = c = z (the gated path). Returns the proof + claims."""
     pcs = FlockPcsProver(m, log_inv_rate, log_batch_size)
 
-    ch = Challenger(domain, byte_hash=byte_hash)
+    ch = Challenger(domain)
     carry = _ProveCarry(z_packed=z_packed, statement_digest=statement_digest,
                         z_lincheck=z_lincheck, a0=a0, b0=b0)
     carry, _ch, msgs = ProveChain([

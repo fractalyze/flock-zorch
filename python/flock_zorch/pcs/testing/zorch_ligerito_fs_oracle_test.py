@@ -23,9 +23,7 @@ jax.config.update("jax_platforms", "cpu")
 import jax.numpy as jnp  # noqa: E402
 from jax import lax  # noqa: E402
 
-from zorch.byte_transcript import ByteHashTranscript  # noqa: E402
 from zorch.coding.reed_solomon import ReedSolomon  # noqa: E402
-from zorch.hash.sha256 import HostSha256  # noqa: E402
 from zorch.pcs.ligerito.config import LigeritoConfig  # noqa: E402
 from zorch.pcs.ligerito.prover import LigeritoProver  # noqa: E402
 from zorch.pcs.ligerito.verifier import LigeritoVerifier  # noqa: E402
@@ -59,6 +57,17 @@ def _lohi(x) -> np.ndarray:
     return np.frombuffer(b.tobytes(), np.uint64).reshape(-1, 2)
 
 
+def _state_eq(a, b) -> bool:
+    """Streaming-transcript state equality — any framing divergence lands in the
+    midstate/pending block, so this is the buffer-equality of the byte era."""
+    sa, sb = a.state, b.state
+    return all(
+        np.array_equal(np.asarray(x), np.asarray(y))
+        for x, y in ((sa.h, sb.h), (sa.pending, sb.pending),
+                     (sa.pending_len, sb.pending_len), (sa.total_len, sb.total_len))
+    )
+
+
 def check(name: str, ok: bool):
     print(("PASS " if ok else "FAIL ") + name)
     if not ok:
@@ -79,7 +88,7 @@ def test_observe_framing():
     for v in _lohi(vs):
         ch.observe_f128(v)
     ch.observe_bytes(bytes(root))
-    check("observe framing", t.inner.buffer == ch._t.buffer)
+    check("observe framing", _state_eq(t.inner, ch._t))
 
 
 def test_sample_framing():
@@ -97,7 +106,7 @@ def test_sample_framing():
         np.array_equal(_lohi(one)[0], ref_one)
         and np.array_equal(_lohi(vec), ref_vec),
     )
-    check("sample framing", t.inner.buffer == ch._t.buffer)
+    check("sample framing", _state_eq(t.inner, ch._t))
 
 
 def test_grind_lockstep():
@@ -110,12 +119,12 @@ def test_grind_lockstep():
     ch = Challenger(DOMAIN)
     n1, n0 = ch.grind_pow(6), ch.grind_pow(0)
     check("grind nonces", int(w) == n1 and int(w0) == n0 == 0)
-    check("grind stream", t.inner.buffer == ch._t.buffer)
+    check("grind stream", _state_eq(t.inner, ch._t))
 
     v = flock_transcript(DOMAIN)
     v, ok1 = chor.check_grind(v, 6, w)
     v, ok0 = chor.check_grind(v, 0, w0)
-    check("check_grind", bool(ok1) and bool(ok0) and v.inner.buffer == t.inner.buffer)
+    check("check_grind", bool(ok1) and bool(ok0) and _state_eq(v.inner, t.inner))
 
 
 def _ref_distinct_queries(ch: Challenger, block_len: int, count: int) -> list[int]:
@@ -144,7 +153,7 @@ def test_distinct_queries_lockstep():
     ref = _ref_distinct_queries(ch, 16, 6)
     check(
         "distinct queries",
-        pos.tolist() == ref and t.inner.buffer == ch._t.buffer,
+        pos.tolist() == ref and _state_eq(t.inner, ch._t),
     )
 
 

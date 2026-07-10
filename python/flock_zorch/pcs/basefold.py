@@ -18,13 +18,15 @@ bytes of the 32-byte root. Requires `jax_enable_x64`.
 """
 from __future__ import annotations
 
+import functools
+
 import numpy as np
 import jax
 import jax.numpy as jnp
 
 from zorch.coding.additive_reed_solomon import AdditiveReedSolomon
 
-from flock_zorch import field, sumcheck
+from flock_zorch import field, fs, sumcheck
 from flock_zorch.hash import merkle
 from flock_zorch.pcs import fri
 
@@ -78,6 +80,31 @@ def _root_f128(root):
     return root[:16].view(np.uint64)
 
 
+@functools.partial(jax.jit, static_argnums=(4, 5, 6))
+def _replay_round_fs(t, msgs_g, post_rb_g, commits_g, log_batch_size, arities,
+                     num_epochs):
+    """The verify sumcheck's Fiat-Shamir replay as ONE device program: per round
+    observe (u0, u2) and sample r, with the prover's post-row-batch / per-epoch
+    commitment observes interleaved on the same static schedule. Returns the
+    challenge stack; byte-identical to the op-by-op replay."""
+    challenges = []
+    current_epoch = rounds_in_epoch = 0
+    for rnd in range(msgs_g.shape[0]):
+        t = t.observe_scalar(msgs_g[rnd, 0]).observe_scalar(msgs_g[rnd, 1])
+        t, r = t.sample_scalar()
+        challenges.append(r)
+        if rnd + 1 == log_batch_size and arities:
+            t = t.observe_scalar(post_rb_g)
+        if rnd >= log_batch_size:
+            rounds_in_epoch += 1
+            if rounds_in_epoch == arities[current_epoch]:
+                if current_epoch + 1 < num_epochs:
+                    t = t.observe_scalar(commits_g[current_epoch])
+                rounds_in_epoch = 0
+                current_epoch += 1
+    return t, jnp.stack(challenges)
+
+
 def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_size,
           n_queries, ch) -> dict:
     """Run BaseFold open on the SHARED challenger `ch` (so it composes in
@@ -117,11 +144,11 @@ def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_s
     # Each round: send (u0,u2), fold a/b at r; the first log_batch_size rounds defer
     # a row-batch over the codeword, the rest are per-round FRI folds, committed per epoch.
     for rnd in range(log_msg):
-        u0, u2 = (np.asarray(v) for v in round_message(a, bb))
-        ch.observe_f128(u0)
-        ch.observe_f128(u2)
-        round_messages.append((u0, u2))
-        r = jnp.asarray(ch.sample_f128())
+        u0_g, u2_g = round_message(a, bb)
+        ch._t, r_g = fs.observe_pair_sample(
+            ch._t, field.to_ghash(u0_g), field.to_ghash(u2_g))
+        round_messages.append((np.asarray(u0_g), np.asarray(u2_g)))
+        r = field.from_ghash(r_g)
         a = fold_single(a, r)
         bb = fold_single(bb, r)
 
@@ -163,9 +190,10 @@ def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_s
     cw_full_np = np.asarray(cw_full)
     queries, init_pos, post_rb_pos = [], [], []
     epoch_pos = [[] for _ in range(num_fri_commits)]
-    for _ in range(n_queries):
-        raw = ch.sample_f128()
-        position = int(raw[0]) & ((1 << k_code) - 1)
+    ch._t, pos_g = fs.sample_chain(ch._t, n_queries)
+    raw_positions = field.from_ghash_host(pos_g)[:, 0]
+    for qi in range(n_queries):
+        position = int(raw_positions[qi]) & ((1 << k_code) - 1)
         init_leaf = cw_full_np[position * num_ntts:(position + 1) * num_ntts]
         init_pos.append(position)
         if arities:
@@ -275,30 +303,34 @@ def verify(target, proof, initial_codeword_root, k_code, log_inv_rate,
         return reject("InvalidProofShape:n_queries")
 
     # ---- replay sumcheck + observe commitments in lockstep with the prover ----
+    # One jitted device program for the whole FS replay (the schedule is static
+    # given the proof shape); the running-target algebra replays on host after,
+    # off the materialized challenges — it reads the transcript nowhere.
+    msgs = np.stack([(np.asarray(u0, np.uint64), np.asarray(u2, np.uint64))
+                     for u0, u2 in proof["round_messages"]])          # [log_msg, 2, 2]
+    if arities:
+        post_rb_g = field.to_ghash(
+            jnp.asarray(_root_f128(np.asarray(proof["post_row_batch_commit"])).copy()))
+        commits = np.stack(
+            [_root_f128(np.asarray(c)).copy() for c in proof["round_commitments"]]
+        ) if num_fri_commits else np.zeros((0, 2), np.uint64)
+    else:
+        post_rb_g = field.to_ghash(jnp.zeros(2, jnp.uint64))          # unused (static)
+        commits = np.zeros((0, 2), np.uint64)
+    ch._t, ch_stack = _replay_round_fs(
+        ch._t, field.to_ghash(jnp.asarray(msgs)), post_rb_g,
+        field.to_ghash(jnp.asarray(commits)), log_batch_size, tuple(arities),
+        num_epochs)
+    challenges = list(field.from_ghash_host(ch_stack))                # [log_msg] of [2]
+
     running_target = np.asarray(target, np.uint64)
-    challenges = []
-    current_epoch = rounds_in_epoch = 0
     for rnd in range(log_msg):
-        u0, u2 = proof["round_messages"][rnd]
-        u0 = np.asarray(u0, np.uint64); u2 = np.asarray(u2, np.uint64)
-        ch.observe_f128(u0)
-        ch.observe_f128(u2)
-        r = np.asarray(ch.sample_f128(), np.uint64)
-        challenges.append(r)
+        u0, u2 = msgs[rnd]
+        r = challenges[rnd]
         # running_target = u0 + r·(running_target + u2) + r²·u2   (flock).
         u1 = running_target ^ u2
         rr = _hf_mul(r, r)
         running_target = (u0 ^ _hf_mul(r, u1)) ^ _hf_mul(rr, u2)
-
-        if rnd + 1 == log_batch_size and arities:
-            ch.observe_f128(_root_f128(np.asarray(proof["post_row_batch_commit"])))
-        if rnd >= log_batch_size:
-            rounds_in_epoch += 1
-            if rounds_in_epoch == arities[current_epoch]:
-                if current_epoch + 1 < num_epochs:
-                    ch.observe_f128(_root_f128(np.asarray(proof["round_commitments"][current_epoch])))
-                rounds_in_epoch = 0
-                current_epoch += 1
 
     info = {"reason": "", "challenges": challenges}
 
@@ -317,8 +349,9 @@ def verify(target, proof, initial_codeword_root, k_code, log_inv_rate,
 
     # ---- resample query positions (challenger state matches prover) ----
     n_q = len(proof["queries"])
-    positions = np.array([int(np.asarray(ch.sample_f128())[0]) & ((1 << k_code) - 1)
-                          for _ in range(n_q)], dtype=np.int64)
+    ch._t, pos_g = fs.sample_chain(ch._t, n_q)
+    positions = (field.from_ghash_host(pos_g)[:, 0].astype(np.int64)
+                 & ((1 << k_code) - 1))
 
     arity_0 = arities[0] if arities else 0
     ch_g = [field.to_ghash(r.reshape(1, 2)).reshape(()) for r in challenges]  # ghash betas

@@ -1,88 +1,60 @@
-"""flock's Fiat-Shamir challenger (SHA-256), authored over zorch's generic
-byte-duplex transcript — byte-identical to flock-core's `FsChallenger`.
+"""flock's Fiat-Shamir challenger (SHA-256), authored over zorch's device
+`Sha256FieldTranscript` — byte-identical to flock-core's `FsChallenger`.
 
 The Merlin-over-SHA256 wire framing (op tags, u64-LE length prefixes,
-`SHA256(buffer||ctr)` counter-squeeze, re-absorb, PoW) is the scheme-agnostic
-`zorch.byte_transcript.ByteHashTranscript`, parameterized by an injected
-`ByteHash` (the host `HostSha256()`; a `Sha256()` `zorch.sha256` marker is a
-seam for a future on-device FS driver, zorch#9). This
-module is the thin flock glue: it serializes an F128 = uint64[2] lane pair as 16
-bytes (`lo_le8 || hi_le8`) and reinterprets squeezed bytes back. Host-side /
-sequential, matching flock's non-negotiable #3 (Fiat-Shamir runs on the host;
-bulk arithmetic on device).
+`SHA256(buffer||ctr)` counter-squeeze, re-absorb, PoW) is zorch's streaming
+device transcript instantiated with the native GHASH dtype, so observes and
+samples carry F128 elements directly and the transcript state is a
+scan-threadable pytree. Byte-identity across substrates is zorch's guarantee
+(`sha256_field_transcript_test` pins it against `ByteHashTranscript`), so flock
+keeps no gate of its own.
+
+This wrapper keeps flock-core's `&mut self` API shape and the `uint64[..., 2]`
+lane representation at its boundary; each `sample_*` therefore materializes the
+challenge to host numpy. Sub-protocols migrate to threading the transcript
+itself through their jitted rounds, at which point this wrapper shrinks away.
 
 Requires `zorch` on PYTHONPATH (run gates with `PYTHONPATH=python:../zorch`).
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import numpy as np
+import jax.numpy as jnp
 
-from zorch.byte_transcript import ByteHashTranscript
-from zorch.hash.sha256 import HostSha256
+from zorch.sha256_field_transcript import Sha256FieldTranscript
 
-if TYPE_CHECKING:
-    from zorch.hash.byte_hash import ByteHash
-
-
-def _f128_bytes(v) -> bytes:
-    """F128 (uint64[2] = [lo, hi]) -> 16 LE bytes = lo.to_le8 || hi.to_le8."""
-    return np.asarray(v, dtype="<u8").reshape(2).tobytes()
-
-
-def _f128s_bytes(vs) -> bytes:
-    """[n, 2] F128 -> n*16 bytes, each element lo_le8 || hi_le8, in order."""
-    return np.ascontiguousarray(np.asarray(vs, dtype="<u8").reshape(-1, 2)).tobytes()
-
-
-def _f128_from(buf: bytes) -> np.ndarray:
-    return np.frombuffer(buf, dtype="<u8").reshape(2).astype(np.uint64)
-
-
-def _f128s_from(buf: bytes, n: int) -> np.ndarray:
-    return np.frombuffer(buf, dtype="<u8").reshape(n, 2).astype(np.uint64)
+from flock_zorch import field
 
 
 class Challenger:
-    """Mutable wrapper over a functional byte transcript, mirroring flock's
-    `&mut self` `FsChallenger` API. F128 values are `uint64[..., 2]` arrays (the
-    `field.py` representation).
+    """Mutable wrapper over the functional device transcript, mirroring flock's
+    `&mut self` `FsChallenger` API. F128 values are `uint64[..., 2]` arrays at
+    this boundary (the `field.py` representation); the transcript holds native
+    `binary_field_ghash` elements."""
 
-    `byte_hash` selects the backend injected into the one
-    `zorch.byte_transcript.ByteHashTranscript`: `None` (the default) is the host
-    `HostSha256` — flock's Fiat-Shamir is host-sequential (non-negotiable #3).
-    A `Sha256` (the `zorch.sha256` marker) may be injected for a future on-device
-    FS driver (zorch#9); its byte-identity to the host hashlib is zorch's
-    guarantee (`byte_transcript_test.test_device_substrate_matches_host`), so flock
-    keeps no gate of its own, and per #7 the marker regresses the host-driven
-    prover, so it is not the default."""
-
-    def __init__(self, domain: bytes, *, byte_hash: ByteHash | None = None):
-        if byte_hash is None:
-            byte_hash = HostSha256()
-        self._t = ByteHashTranscript.new(domain, byte_hash)
+    def __init__(self, domain: bytes):
+        self._t = Sha256FieldTranscript.new(domain, jnp.binary_field_ghash)
 
     def observe_label(self, label: bytes) -> None:
         self._t = self._t.observe_label(label)
 
-    def observe_bytes(self, data: bytes) -> None:
-        self._t = self._t.observe_bytes(bytes(data))
+    def observe_bytes(self, data) -> None:
+        self._t = self._t.observe_bytes(np.frombuffer(bytes(data), np.uint8))
 
     def observe_f128(self, v) -> None:
-        self._t = self._t.observe_scalar(_f128_bytes(v))
+        self._t = self._t.observe_scalar(field.to_ghash(jnp.asarray(v)))
 
     def observe_f128_slice(self, vs) -> None:
-        vs = np.asarray(vs, dtype=np.uint64).reshape(-1, 2)
-        self._t = self._t.observe_slice(_f128s_bytes(vs), int(vs.shape[0]))
+        vs = jnp.asarray(np.asarray(vs, np.uint64).reshape(-1, 2))
+        self._t = self._t.observe(field.to_ghash(vs))
 
     def sample_f128(self) -> np.ndarray:
-        self._t, buf = self._t.sample_scalar(16)
-        return _f128_from(buf)
+        self._t, g = self._t.sample_scalar()
+        return field.from_ghash_host(g)
 
     def sample_f128_vec(self, n: int) -> np.ndarray:
-        self._t, buf = self._t.sample_slice(n, 16)
-        return _f128s_from(buf, n)
+        self._t, g = self._t.sample(n)
+        return field.from_ghash_host(g)
 
     def grind_pow(self, bits: int) -> int:
         self._t, nonce = self._t.grind_pow(bits)

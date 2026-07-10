@@ -12,6 +12,7 @@ py_library(
     deps = [
         "@zorch//zorch:byte_transcript",
         "@zorch//zorch:round",
+        "@zorch//zorch:sha256_field_transcript",
         "@zorch//zorch/coding:additive_reed_solomon",
         "@zorch//zorch/coding:reed_solomon",
         "@zorch//zorch/commit:merkle",
