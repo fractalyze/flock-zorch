@@ -11,8 +11,10 @@ py_library(
     visibility = ["//visibility:public"],
     deps = [
         "@zorch//zorch:byte_transcript",
+        "@zorch//zorch:prove",
         "@zorch//zorch:round",
         "@zorch//zorch:sha256_field_transcript",
+        "@zorch//zorch/sumcheck",
         "@zorch//zorch/coding:additive_reed_solomon",
         "@zorch//zorch/coding:reed_solomon",
         "@zorch//zorch/commit:merkle",

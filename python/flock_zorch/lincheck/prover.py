@@ -31,6 +31,7 @@ from flock_zorch.zerocheck import _lagrange_weights, ZerocheckProof
 from flock_zorch.field import _to_int, _to_lohi
 from flock_zorch.challenger import Challenger
 from flock_zorch.lincheck._csc_fold import _flatten_nz, _csc_segments, _seg_xor_fold
+from flock_zorch.sumcheck.inf_product import prove_inf_product
 from zorch.round import ProveChain, Round
 
 U64 = jnp.uint64
@@ -112,27 +113,6 @@ def _partial_fold_dev(zp, eq_outer, n_outer):
     bits = bits.reshape(n_outer, zp.shape[1]).astype(jnp.uint64)                    # i_outer=byte·8+r
     sel = bits[:, :, None] * eq_outer[:, None, :]                                   # 0/1 select, [n_outer,k,2]
     return field.from_ghash(jnp.sum(field.to_ghash(sel), axis=0))                 # [k, 2]
-
-
-def _round_eval(c, z):
-    """Product-sumcheck round message (q(1), q(∞)) over the TOP-bit split (flock
-    `sumcheck_round_eval`): half = len/2; (Σ chi·zhi, Σ (chi+clo)(zhi+zlo))."""
-    cg, zg = field.to_ghash(c), field.to_ghash(z)
-    half = cg.shape[0] // 2
-    clo, chi = cg[:half], cg[half:]
-    zlo, zhi = zg[:half], zg[half:]
-    e1 = jnp.sum(chi * zhi)
-    einf = jnp.sum((chi + clo) * (zhi + zlo))
-    return field.from_ghash(e1), field.from_ghash(einf)
-
-
-def _bind_top(v, r):
-    """Bind the top variable at r (flock `sumcheck_bind_top`):
-    v'[i] = v[i] + r·(v[i+half] + v[i]); length halves."""
-    vg, rg = field.to_ghash(v), field.to_ghash(r)
-    half = vg.shape[0] // 2
-    vlo, vhi = vg[:half], vg[half:]
-    return field.from_ghash(vlo + rg * (vhi + vlo))
 
 
 @runtime_checkable
@@ -260,23 +240,18 @@ class _SumcheckRound(Round):
         z_vec = partial_fold_packed_z(carry.z_packed_bytes, m, k_log, eq_outer)
         z_vec_pre = np.asarray(z_vec) if self._capture else None  # pre-sumcheck (PCS open reuse)
 
-        # Unfused on purpose: each round is _round_eval then _bind_top, mirroring
-        # flock's steps. Do NOT hand-fuse into Rust's sumcheck_bind_both_and_eval_next
-        # — operator fusion is the zkx compiler's job.
         rounds, r_rounds = [], []
         if inner_rest > 0:
-            e1, einf = _round_eval(comb, z_vec)
-            for t in range(inner_rest):
-                transcript.observe_f128(e1)
-                transcript.observe_f128(einf)
-                r = jnp.asarray(transcript.sample_f128())
-                rounds.append((np.asarray(e1), np.asarray(einf)))
-                r_rounds.append(r)
-                comb = _bind_top(comb, r)
-                z_vec = _bind_top(z_vec, r)
-                if t + 1 < inner_rest:
-                    e1, einf = _round_eval(comb, z_vec)
-        z_partial = np.asarray(z_vec)
+            stacked = jnp.stack([field.to_ghash(jnp.asarray(comb)),
+                                 field.to_ghash(z_vec)])
+            stacked, transcript._t, msgs = prove_inf_product(
+                stacked, transcript._t, inner_rest)
+            for e1, einf, r in msgs:
+                rounds.append((field.from_ghash_host(e1), field.from_ghash_host(einf)))
+                r_rounds.append(field.from_ghash_host(r))
+            z_partial = field.from_ghash_host(stacked[1])
+        else:
+            z_partial = np.asarray(z_vec)
         carry = replace(carry, rounds=rounds, r_rounds=r_rounds, z_partial=z_partial,
                         z_vec_pre=z_vec_pre)
         return carry, transcript, (rounds, z_partial)
