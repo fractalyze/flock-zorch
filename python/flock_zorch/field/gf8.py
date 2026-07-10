@@ -1,79 +1,21 @@
-"""F8 = GF(2⁸) (AES field) + the φ₈ embedding into F128 + the additive NTT over
-F8 — the machinery flock's zerocheck round-1 univariate-skip URM (`round1_naive`)
-needs. Byte-identical to flock-core's `field/gf2_8.rs`, `field/phi8.rs`,
-`ntt.rs::AdditiveNttGf8`, and `zerocheck/univariate_skip.rs::round1_naive`.
+"""φ₈ embedding of F8 = GF(2⁸) (AES field) into F128 + the zerocheck round-1
+univariate-skip URM orchestration (`round1_naive`). Byte-identical to
+flock-core's `field/phi8.rs` and `zerocheck/univariate_skip.rs::round1_naive`.
 
-F8 work is small (64-wide columns, one pass per witness row) and one-time per
-prove; byte-identity is the goal, not throughput — the bulk GPU win is the F128
-multilinear rounds + NTT. So the F8 field/NTT live on host (numpy), and only the
-final F128 eq-accumulation runs on device in the native `binary_field_ghash` multiply.
-
-F8 is a DIFFERENT tower from the F128 GHASH basis: AES poly x⁸+x⁴+x³+x+1 = 0x11B,
-linked to F128 only through φ₈ (a field homomorphism into a subfield). The
-additive NTT here is also distinct from `ntt.py`'s F128 LCH NTT: a `next_s`
-twiddle recurrence with binary-heap indexing (the DIF/DIT butterflies that
-consume these twiddles run on device in `_gf8_device`).
+F8 arithmetic and its additive NTT are compiler-native: the
+`binary_field_gf8_aes` dtype (AES poly x⁸+x⁴+x³+x+1 = 0x11B) dispatches the
+field-generic LCH14 additive NTT through `lax.ntt`, so this module carries no
+field code — only φ₈ (a field homomorphism into an F128 subfield, the only
+link between the AES basis and the GHASH basis) and the round-1 plumbing.
+The fused device core lives in `_gf8_device`.
 """
 from __future__ import annotations
-
-import functools
 
 import numpy as np
 import jax
 import jax.numpy as jnp
 
 from flock_zorch import sumcheck
-
-# ---------------------------------------------------------------------------
-# F8 = GF(2^8), AES irreducible x^8+x^4+x^3+x+1 = 0x11B (reduction const 0x1B).
-# ---------------------------------------------------------------------------
-
-
-def _clmul8(a: int, b: int) -> int:
-    """Carry-less (GF(2)[x]) product of two bytes -> u16."""
-    acc = 0
-    for i in range(8):
-        if (a >> i) & 1:
-            acc ^= b << i
-    return acc
-
-
-def _gf8_reduce(p: int) -> int:
-    """Reduce a degree-<=14 product mod 0x11B. Two folds (x^8 = x^4+x^3+x+1);
-    the first fold can re-overflow bit 8, so a second pass is required."""
-    h = p >> 8
-    t = (p & 0xFF) ^ h ^ (h << 1) ^ (h << 3) ^ (h << 4)
-    h2 = t >> 8
-    return ((t & 0xFF) ^ h2 ^ (h2 << 1) ^ (h2 << 3) ^ (h2 << 4)) & 0xFF
-
-
-# Full 256x256 F8 multiply table + 256-entry Fermat (x^254) inverse table, host.
-_MUL = np.array(
-    [[_gf8_reduce(_clmul8(a, b)) for b in range(256)] for a in range(256)],
-    dtype=np.uint8,
-)
-
-
-def _gf8_inv_scalar(a: int) -> int:
-    result, sq = 1, a
-    for i in range(8):  # exponent x^254 = bits 0xFE
-        if (0xFE >> i) & 1:
-            result = _gf8_reduce(_clmul8(result, sq))
-        sq = _gf8_reduce(_clmul8(sq, sq))
-    return result
-
-
-_INV = np.array([_gf8_inv_scalar(a) for a in range(256)], dtype=np.uint8)
-
-
-def gf8_mul(a, b):
-    """Elementwise F8 multiply (broadcasts via the 256x256 table gather)."""
-    return _MUL[np.asarray(a, dtype=np.uint8), np.asarray(b, dtype=np.uint8)]
-
-
-def gf8_inv(a):
-    return _INV[np.asarray(a, dtype=np.uint8)]
-
 
 # ---------------------------------------------------------------------------
 # phi8: F8 -> F128 embedding (256-entry table). F2-linear, so the full table is
@@ -107,46 +49,6 @@ def _build_phi8_table() -> np.ndarray:
 PHI_8_TABLE = _build_phi8_table()  # uint64 [256, 2] = F128
 
 
-# ---------------------------------------------------------------------------
-# Additive-NTT twiddles over F8 — the binary-heap twiddle table consumed by the
-# device round-1 kernel (`_gf8_device._fft_dev` / `_ifft_dev`). LCH novel-poly
-# basis, coset offset beta; distinct from `ntt.py`'s F128 LCH layer-major table.
-# ---------------------------------------------------------------------------
-
-
-def _next_s(s: int, root: int) -> int:
-    """next_s(s, root) = s*s + root*s = s*(s+root), in F8."""
-    return int(gf8_mul(s, s)) ^ int(gf8_mul(root, s))
-
-
-@functools.lru_cache(maxsize=None)
-def _compute_twiddles(k: int, beta: int) -> np.ndarray:
-    """Binary-heap twiddle table, uint8 [2^k - 1]. Level-L twiddles at offset
-    2^L - 1. Distinct from the F128 NTT's layer-major table. Memoized on (k, beta)
-    — data-independent; the result is consumed read-only (jnp.asarray'd)."""
-    if k == 0:
-        return np.zeros(0, dtype=np.uint8)
-    n = 1 << k
-    twiddles = np.zeros(n - 1, dtype=np.uint8)
-    length = 1 << (k - 1)
-    layer = [(int(beta) ^ ((2 * i) & 0xFF)) for i in range(length)]  # beta + F8(2*i)
-    s_at_root = 1
-    write_at = length
-    for i in range(length):  # level 0 written as-is (s_at_root = 1)
-        twiddles[write_at - 1 + i] = layer[i]
-    for _ in range(1, k):
-        write_at >>= 1
-        next_s_root = _next_s(layer[1] ^ layer[0], s_at_root)
-        new_len = write_at
-        layer = [_next_s(layer[2 * i], s_at_root) for i in range(new_len)]  # uses OLD s_at_root
-        length = new_len
-        s_at_root = next_s_root
-        s_inv = int(gf8_inv(s_at_root))
-        for j in range(length):
-            twiddles[write_at - 1 + j] = int(gf8_mul(s_inv, layer[j]))
-    return twiddles
-
-
 # Device (GPU) F8 kernels for the round-1 URM live in _gf8_device. Module import
 # (after the host PHI_8_TABLE above): the gf8 <-> _gf8_device cycle is broken by
 # importing the MODULE and reaching its kernels at call time (no import-time lookup).
@@ -176,14 +78,9 @@ def round1_rows(a, b, c, m: int, k_skip: int, r):
     """Round-1 URM from device witness rows (uint8 [2^(m-k_skip), 2^k_skip]). The
     compute half of `round1_naive`, so the witness can be transferred once and
     reused by `zerocheck._fold_at_z_rows`. Returns (P^AB, P^C) as numpy."""
-    ell = 1 << k_skip
-    # F8 NTT + a·b + phi8 on the GPU (the round-1 URM was the prover's dominant host
-    # cost); twiddles are tiny (2^k-1 entries), memoized on host.
-    tw_s = jnp.asarray(_compute_twiddles(k_skip, 0))     # S = {0..ell-1}
-    tw_l = jnp.asarray(_compute_twiddles(k_skip, ell))   # Lambda = {ell..2*ell-1}
     r = np.asarray(r, dtype=np.uint64)
     eqx = sumcheck.build_eq_fused(jnp.asarray(r[k_skip:]))[:, None, :]  # [n_chunks, 1, 2]
-    p_ab, p_c = _gf8_device._round1_core()(a, b, c, k_skip, tw_s, tw_l, eqx)  # fused extend+phi+accum
+    p_ab, p_c = _gf8_device._round1_core()(a, b, c, k_skip, eqx)  # fused extend+phi+accum
     return np.asarray(p_ab), np.asarray(p_c)
 
 
