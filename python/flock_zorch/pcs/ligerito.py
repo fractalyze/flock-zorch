@@ -36,7 +36,7 @@ from jax import Array, lax
 
 from zorch.byte_transcript import ByteHashTranscript
 from zorch.coding.reed_solomon import ReedSolomon
-from zorch.hash.sha256 import HashlibSha256
+from zorch.hash.sha256 import HostSha256
 from zorch.pcs.ligerito.choreography import LigeritoChoreography
 from zorch.pcs.ligerito.config import LigeritoConfig
 from zorch.pcs.ligerito.prover import LigeritoProver, LigeritoProverData
@@ -107,7 +107,7 @@ class FlockTranscript:
 def flock_transcript(domain: bytes) -> FlockTranscript:
     """A fresh `FlockTranscript` seeded like flock's `FsChallenger` (host
     SHA-256; flock's Fiat-Shamir is host-sequential)."""
-    return FlockTranscript(ByteHashTranscript.new(domain, HashlibSha256()))
+    return FlockTranscript(ByteHashTranscript.new(domain, HostSha256()))
 
 
 @dataclass(frozen=True)

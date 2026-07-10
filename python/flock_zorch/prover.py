@@ -258,7 +258,7 @@ def prove_fast(z_packed, m, k_log, k_skip, useful_bits, a0, b0, z_lincheck, stat
 
     `byte_hash` selects the Fiat-Shamir backend injected into the single shared
     `ByteHashTranscript` threaded through every phase: None (the default) keeps the
-    host `HashlibSha256`; a `Sha256` (`zorch.sha256` marker) may be injected as a
+    host `HostSha256`; a `Sha256` (`zorch.sha256` marker) may be injected as a
     seam for a future on-device FS driver (zorch#9). zorch guarantees the marker is
     byte-identical to the host hashlib
     (`byte_transcript_test.test_device_substrate_matches_host`), so flock keeps no

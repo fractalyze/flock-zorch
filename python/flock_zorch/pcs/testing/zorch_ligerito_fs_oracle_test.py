@@ -25,7 +25,7 @@ from jax import lax  # noqa: E402
 
 from zorch.byte_transcript import ByteHashTranscript  # noqa: E402
 from zorch.coding.reed_solomon import ReedSolomon  # noqa: E402
-from zorch.hash.sha256 import HashlibSha256  # noqa: E402
+from zorch.hash.sha256 import HostSha256  # noqa: E402
 from zorch.pcs.ligerito.config import LigeritoConfig  # noqa: E402
 from zorch.pcs.ligerito.prover import LigeritoProver  # noqa: E402
 from zorch.pcs.ligerito.verifier import LigeritoVerifier  # noqa: E402
