@@ -34,6 +34,20 @@ ONE = jnp.asarray([1, 0], dtype=U64)  # F128::ONE = {lo: 1, hi: 0}
 _ONE_G = field.to_ghash(ONE)  # scalar binary_field_ghash one
 
 
+def build_eq_g(rg):
+    """`build_eq` on native ghash: `[n]` challenges -> `[2^n]` eq table. The
+    ghash-native core exists so a jitted caller keeps its whole trace on the
+    dtype — chaining lane bitcasts inside a trace trips the XLA simplifier
+    mis-fold (xla#256)."""
+    n = int(rg.shape[0])
+    t = _ONE_G.reshape(1)                # [1]
+    for i in range(n):
+        r_i = rg[i]                      # scalar
+        one_minus = r_i + _ONE_G         # (1 + r_i)
+        t = jnp.concatenate([t * one_minus, t * r_i], axis=0)
+    return t
+
+
 def build_eq(r):
     """eq evaluation table over `r`: `out[x] = ∏_i ((1+r_i)·(1⊕x_i) + r_i·x_i)`.
 
@@ -43,14 +57,7 @@ def build_eq(r):
     layer is one elementwise multiply over a doubling table → fully parallel per
     layer, n sequential layers (n static).
     """
-    rg = field.to_ghash(r)                    # [n]
-    n = int(rg.shape[0])
-    t = _ONE_G.reshape(1)                # [1]
-    for i in range(n):
-        r_i = rg[i]                      # scalar
-        one_minus = r_i + _ONE_G         # (1 + r_i)
-        t = jnp.concatenate([t * one_minus, t * r_i], axis=0)
-    return field.from_ghash(t)
+    return field.from_ghash(build_eq_g(field.to_ghash(r)))
 
 
 _BUILD_EQ_FUSED = jax.jit(build_eq)
@@ -65,16 +72,20 @@ def build_eq_fused(r):
     return _BUILD_EQ_FUSED(jnp.asarray(r))
 
 
+def fold_single_g(ag, cg):
+    """`fold_single` on native ghash: `[2^k]` -> `[2^(k-1)]` at scalar `cg`."""
+    p = ag.reshape(-1, 2)
+    return p[:, 0] + cg * (p[:, 0] + p[:, 1])
+
+
 def fold_single(a, challenge):
     """Bind the low variable of one multilinear at `challenge` (flock
     `fold_in_place_single`): `out[x] = a[2x] + challenge·(a[2x+1] + a[2x])`.
 
     a: uint64 [2^k, 2] (k ≥ 1); returns uint64 [2^(k-1), 2].
     """
-    ag = field.to_ghash(a).reshape(-1, 2)
-    a0, a1 = ag[:, 0], ag[:, 1]
-    cg = field.to_ghash(challenge)
-    return field.from_ghash(a0 + cg * (a0 + a1))
+    return field.from_ghash(
+        fold_single_g(field.to_ghash(a), field.to_ghash(challenge)))
 
 
 def fold_pair(a, b, challenge):
@@ -82,6 +93,18 @@ def fold_pair(a, b, challenge):
     `fold_in_place_pair`). Returns (a_folded, b_folded), each half-length.
     """
     return fold_single(a, challenge), fold_single(b, challenge)
+
+
+def round_pair_g(ag, bg, rg):
+    """`round_pair` on native ghash: `[2^log_n]` factor pair + `[log_n]`
+    challenges -> the scalar message pair `(r[0]·G(1), G(∞))`."""
+    eq = build_eq_g(rg[1:])                    # [2^(log_n-1)]
+    ap, bp = ag.reshape(-1, 2), bg.reshape(-1, 2)
+    a0, a1 = ap[:, 0], ap[:, 1]
+    b0, b1 = bp[:, 0], bp[:, 1]
+    g_one = jnp.sum(eq * (a1 * b1))                # Σ eq·a1·b1
+    g_inf = jnp.sum(eq * ((a0 + a1) * (b0 + b1)))  # Σ eq·(a0+a1)(b0+b1)
+    return rg[0] * g_one, g_inf
 
 
 def round_pair(a_mlv, b_mlv, r):
@@ -92,16 +115,9 @@ def round_pair(a_mlv, b_mlv, r):
     r[0] is this round's bound-variable challenge and r[1:] is the eq over the
     remaining variables.
     """
-    r = jnp.asarray(r, U64)
-    eq = field.to_ghash(build_eq(r[1:]))      # [2^(log_n-1)]
-    r0 = field.to_ghash(r[0])                  # scalar
-    ag = field.to_ghash(a_mlv).reshape(-1, 2)
-    bg = field.to_ghash(b_mlv).reshape(-1, 2)
-    a0, a1 = ag[:, 0], ag[:, 1]
-    b0, b1 = bg[:, 0], bg[:, 1]
-    g_one = jnp.sum(eq * (a1 * b1))              # Σ eq·a1·b1
-    g_inf = jnp.sum(eq * ((a0 + a1) * (b0 + b1)))  # Σ eq·(a0+a1)(b0+b1)
-    return field.from_ghash(r0 * g_one), field.from_ghash(g_inf)
+    g1, ginf = round_pair_g(field.to_ghash(a_mlv), field.to_ghash(b_mlv),
+                            field.to_ghash(jnp.asarray(r, U64)))
+    return field.from_ghash(g1), field.from_ghash(ginf)
 
 
 def eq_eval(r, x):

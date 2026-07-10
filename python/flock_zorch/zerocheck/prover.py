@@ -16,6 +16,7 @@ PYTHONPATH.
 """
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -23,7 +24,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from flock_zorch import sumcheck
+from flock_zorch import field, sumcheck
 from flock_zorch.field import gf8
 from flock_zorch.field import _to_int, _to_lohi, _int_to_ghash, _ghash_to_int
 from flock_zorch.challenger import Challenger
@@ -94,19 +95,28 @@ def medium_challenges() -> list[int]:
     return out
 
 
-# Module-level jit memo for the per-round field ops. Defining these ONCE (not per
-# prove_packed call) lets jax reuse compiled kernels across proofs and across
-# rounds of the same shape — otherwise every call makes fresh lambdas and
-# recompiles all n_mlv round kernels from scratch.
-_JIT_ROUND_FOLD = None
-
-
-def _jit_round_fold():
-    global _JIT_ROUND_FOLD
-    if _JIT_ROUND_FOLD is None:
-        _JIT_ROUND_FOLD = (jax.jit(lambda a, b, rr: sumcheck.round_pair(a, b, rr)),
-                           jax.jit(lambda a, b, rr: sumcheck.fold_pair(a, b, rr)))
-    return _JIT_ROUND_FOLD
+@functools.partial(jax.jit, static_argnums=(4, 5))
+def _mlv_sumcheck(a_g, b_g, r_g, t, k_skip, n_mlv):
+    """The whole multilinear phase as ONE device program with Fiat-Shamir inside:
+    per round, the eq-weighted message pair (r[0]·G(1), G(∞)) over the shrinking
+    challenge suffix, two scalar-framed observes, one squeeze, then the low-bit
+    fold — finishing with the final a/b evals observed. All-ghash in-trace (the
+    lane conversions happen at the caller's eager boundary): chaining lane
+    bitcasts inside a trace trips the XLA simplifier mis-fold (xla#256)."""
+    msgs, rhos = [], []
+    for i in range(n_mlv):
+        arg_g = jnp.concatenate([sumcheck.eq._ONE_G.reshape(1),
+                                 r_g[k_skip + 1 + i:]], axis=0)
+        m1, minf = sumcheck.round_pair_g(a_g, b_g, arg_g)
+        t = t.observe_scalar(m1).observe_scalar(minf)
+        t, rho = t.sample_scalar()
+        msgs.append((m1, minf))
+        rhos.append(rho)
+        a_g = sumcheck.fold_single_g(a_g, rho)
+        b_g = sumcheck.fold_single_g(b_g, rho)
+    final_a, final_b = a_g[0], b_g[0]
+    t = t.observe_scalar(final_a).observe_scalar(final_b)
+    return t, msgs, jnp.stack(rhos), final_a, final_b
 
 
 class _SetupRound(Round):
@@ -172,42 +182,25 @@ class _MultilinearRound(Round):
     def __call__(self, carry, transcript):
         m, k_skip = self._m, self._k_skip
         n_mlv = m - k_skip
-        r = carry.r
         z_int = _to_int(carry.z)
-        # Per-round field ops are jitted (values identical → byte-match preserved)
-        # so each round runs as ONE fused kernel; the module-level cache compiles
-        # once and reuses across proofs.
-        _round, _fold = _jit_round_fold()
 
-        # round 2: fold witness at z + first multilinear message.
+        # Fold the witness at z, then run the whole multilinear phase (messages,
+        # Fiat-Shamir, folds, final evals) as one jitted device program. Lane <->
+        # ghash conversions stay at this eager boundary (xla#256).
         weights = _lagrange_weights(k_skip, z_int, 0)  # S-domain
-        a_mlv = jnp.asarray(_fold_at_z_rows(carry.a_rows, weights))
-        b_mlv = jnp.asarray(_fold_at_z_rows(carry.b_rows, weights))
-        mlv_arg = np.concatenate([_ONE[None, :], r[k_skip + 1:m]], axis=0)  # [n_mlv, 2]
-        msg1, msginf = _round(a_mlv, b_mlv, jnp.asarray(mlv_arg))
-        rounds = [(np.asarray(msg1), np.asarray(msginf))]
-        transcript.observe_f128(rounds[0][0])
-        transcript.observe_f128(rounds[0][1])
-        rhos = [transcript.sample_f128()]
+        a_g = field.to_ghash(jnp.asarray(_fold_at_z_rows(carry.a_rows, weights)))
+        b_g = field.to_ghash(jnp.asarray(_fold_at_z_rows(carry.b_rows, weights)))
+        transcript._t, msgs, rhos_g, final_a, final_b = _mlv_sumcheck(
+            a_g, b_g, field.to_ghash(jnp.asarray(carry.r)), transcript._t,
+            k_skip, n_mlv)
 
-        # rounds 3..(n_mlv+1): fold at ρ_prev, then next message.
-        for i in range(n_mlv - 1):
-            r_next = np.concatenate([_ONE[None, :], r[k_skip + i + 2:m]], axis=0)
-            a_mlv, b_mlv = _fold(a_mlv, b_mlv, jnp.asarray(rhos[i]))
-            m1, mi = _round(a_mlv, b_mlv, jnp.asarray(r_next))
-            rounds.append((np.asarray(m1), np.asarray(mi)))
-            transcript.observe_f128(rounds[-1][0])
-            transcript.observe_f128(rounds[-1][1])
-            rhos.append(transcript.sample_f128())
-
-        # final binding at ρ_last.
-        a_mlv, b_mlv = _fold(a_mlv, b_mlv, jnp.asarray(rhos[-1]))
-        final_a_eval = np.asarray(a_mlv)[0]
-        final_b_eval = np.asarray(b_mlv)[0]
-        transcript.observe_f128(final_a_eval)
-        transcript.observe_f128(final_b_eval)
+        rounds = [(field.from_ghash_host(m1), field.from_ghash_host(mi))
+                  for m1, mi in msgs]
+        final_a_eval = field.from_ghash_host(final_a)
+        final_b_eval = field.from_ghash_host(final_b)
         carry = replace(carry, multilinear_rounds=rounds, final_a_eval=final_a_eval,
-                        final_b_eval=final_b_eval, mlv_challenges=np.stack(rhos))
+                        final_b_eval=final_b_eval,
+                        mlv_challenges=field.from_ghash_host(rhos_g))
         return carry, transcript, (rounds, final_a_eval, final_b_eval)
 
 
