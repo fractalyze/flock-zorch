@@ -16,7 +16,6 @@ PYTHONPATH.
 """
 from __future__ import annotations
 
-import functools
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -95,28 +94,24 @@ def medium_challenges() -> list[int]:
     return out
 
 
-@functools.partial(jax.jit, static_argnums=(4, 5))
-def _mlv_sumcheck(a_g, b_g, r_g, t, k_skip, n_mlv):
-    """The whole multilinear phase as ONE device program with Fiat-Shamir inside:
-    per round, the eq-weighted message pair (r[0]·G(1), G(∞)) over the shrinking
-    challenge suffix, two scalar-framed observes, one squeeze, then the low-bit
-    fold — finishing with the final a/b evals observed. All-ghash in-trace (the
-    lane conversions happen at the caller's eager boundary): chaining lane
-    bitcasts inside a trace trips the XLA simplifier mis-fold (xla#256)."""
-    msgs, rhos = [], []
-    for i in range(n_mlv):
-        arg_g = jnp.concatenate([sumcheck.eq._ONE_G.reshape(1),
-                                 r_g[k_skip + 1 + i:]], axis=0)
-        m1, minf = sumcheck.round_pair_g(a_g, b_g, arg_g)
-        t = t.observe_scalar(m1).observe_scalar(minf)
-        t, rho = t.sample_scalar()
-        msgs.append((m1, minf))
-        rhos.append(rho)
-        a_g = sumcheck.fold_single_g(a_g, rho)
-        b_g = sumcheck.fold_single_g(b_g, rho)
-    final_a, final_b = a_g[0], b_g[0]
-    t = t.observe_scalar(final_a).observe_scalar(final_b)
-    return t, msgs, jnp.stack(rhos), final_a, final_b
+@jax.jit
+def _mlv_round(a_g, b_g, arg_g, t):
+    """ONE multilinear round as one device program: the eq-weighted message pair
+    (r[0]·G(1), G(∞)) over the challenge suffix, two scalar-framed observes, one
+    squeeze, then the low-bit fold. Per-round, not phase-unrolled: the unrolled
+    n_mlv-round graph compiled for minutes and ran ~6x slower than its parts
+    (XLA fusion/scheduling collapses on it). All-ghash in-trace — the lane
+    conversions happen at the caller's eager boundary (xla#256)."""
+    m1, minf = sumcheck.round_pair_g(a_g, b_g, arg_g)
+    t = t.observe_scalar(m1).observe_scalar(minf)
+    t, rho = t.sample_scalar()
+    return sumcheck.fold_single_g(a_g, rho), sumcheck.fold_single_g(b_g, rho), \
+        t, m1, minf, rho
+
+
+@jax.jit
+def _observe_finals(t, final_a, final_b):
+    return t.observe_scalar(final_a).observe_scalar(final_b)
 
 
 class _SetupRound(Round):
@@ -184,23 +179,30 @@ class _MultilinearRound(Round):
         n_mlv = m - k_skip
         z_int = _to_int(carry.z)
 
-        # Fold the witness at z, then run the whole multilinear phase (messages,
-        # Fiat-Shamir, folds, final evals) as one jitted device program. Lane <->
-        # ghash conversions stay at this eager boundary (xla#256).
+        # Fold the witness at z, then run each multilinear round as one jitted
+        # device program with Fiat-Shamir inside. Lane <-> ghash conversions
+        # stay at this eager boundary (xla#256).
         weights = _lagrange_weights(k_skip, z_int, 0)  # S-domain
         a_g = field.to_ghash(jnp.asarray(_fold_at_z_rows(carry.a_rows, weights)))
         b_g = field.to_ghash(jnp.asarray(_fold_at_z_rows(carry.b_rows, weights)))
-        transcript._t, msgs, rhos_g, final_a, final_b = _mlv_sumcheck(
-            a_g, b_g, field.to_ghash(jnp.asarray(carry.r)), transcript._t,
-            k_skip, n_mlv)
+        r_g = field.to_ghash(jnp.asarray(carry.r))
+        one_g = sumcheck.eq._ONE_G.reshape(1)
 
-        rounds = [(field.from_ghash_host(m1), field.from_ghash_host(mi))
-                  for m1, mi in msgs]
+        t = transcript._t
+        rounds, rhos = [], []
+        for i in range(n_mlv):
+            arg_g = jnp.concatenate([one_g, r_g[k_skip + 1 + i:]], axis=0)
+            a_g, b_g, t, m1, minf, rho = _mlv_round(a_g, b_g, arg_g, t)
+            rounds.append((field.from_ghash_host(m1), field.from_ghash_host(minf)))
+            rhos.append(rho)
+        final_a, final_b = a_g[0], b_g[0]
+        transcript._t = _observe_finals(t, final_a, final_b)
+
         final_a_eval = field.from_ghash_host(final_a)
         final_b_eval = field.from_ghash_host(final_b)
         carry = replace(carry, multilinear_rounds=rounds, final_a_eval=final_a_eval,
                         final_b_eval=final_b_eval,
-                        mlv_challenges=field.from_ghash_host(rhos_g))
+                        mlv_challenges=field.from_ghash_host(jnp.stack(rhos)))
         return carry, transcript, (rounds, final_a_eval, final_b_eval)
 
 
