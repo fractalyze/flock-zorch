@@ -1,16 +1,59 @@
 """Jitted Fiat-Shamir hops over the device transcript.
 
-An eager transcript op is one XLA executable dispatch (~40-190 ms each on the
-CPU backend), so a protocol that makes hundreds of them spends minutes on
-Fiat-Shamir alone. These helpers fuse the recurring op sequences into single
-compiled programs; every input is scalar-shaped, so each compiles once per
-process regardless of instance size.
+An eager transcript op dispatches each of its ~10 internal primitives
+separately (~40-190 ms per op on the CPU backend, similar dispatch overhead on
+GPU), so a protocol making hundreds of them spends minutes on Fiat-Shamir
+alone. Every hop here is one compiled executable; inputs are scalar- or
+static-shaped, so each compiles once per distinct shape (labels compile once
+per literal) and is cached for the process.
 """
 from __future__ import annotations
 
 import functools
 
 import jax
+
+
+@jax.jit
+def observe_scalar(t, x):
+    """Scalar-framed observe — `x` 0-d for one op, `[n]` for n ops."""
+    return t.observe_scalar(x)
+
+
+@jax.jit
+def observe_slice(t, xs):
+    return t.observe(xs)
+
+
+@jax.jit
+def observe_bytes(t, data):
+    return t.observe_bytes(data)
+
+
+@functools.partial(jax.jit, static_argnums=(1,))
+def observe_label(t, label):
+    return t.observe_label(label)
+
+
+@jax.jit
+def sample_scalar(t):
+    return t.sample_scalar()
+
+
+@functools.partial(jax.jit, static_argnums=(1,))
+def sample_slice(t, n):
+    return t.sample(n)
+
+
+@functools.partial(jax.jit, static_argnums=(1,))
+def grind(t, bits):
+    """Device PoW grind — the transcript's windowed search as one program."""
+    return t.grind(bits)
+
+
+@functools.partial(jax.jit, static_argnums=(2,))
+def check_witness(t, witness, bits):
+    return t.check_witness(witness, bits)
 
 
 @jax.jit

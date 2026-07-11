@@ -14,7 +14,7 @@ flock side of both seams so the code-generic driver produces flock's byte wire:
   message emission, tapered per-fold PoW (>0-conditional), unconditional
   per-level query PoW (0 bits still puts a nonce on the wire), and flock's
   rejection-sampled distinct sorted queries — with the transcript's
-  `grind_pow` / `verify_pow` as the grind mechanism.
+  `grind` / `check_witness` as the grind mechanism.
 - `flock_ligerito_config`: the `dump_ligerito` config block as a zorch
   `LigeritoConfig` + `FlockChoreography` pair (LSB-first alpha weights,
   compressed `(c0, c2)` round messages).
@@ -40,7 +40,7 @@ from zorch.pcs.ligerito.config import LigeritoConfig
 from zorch.pcs.ligerito.prover import LigeritoProver, LigeritoProverData
 from zorch.sha256_field_transcript import Sha256FieldTranscript
 
-from flock_zorch import field
+from flock_zorch import field, fs
 from flock_zorch.hash import merkle
 
 FLOCK_LIGERITO_LABEL = b"flock-ligerito-basis-v0"
@@ -67,16 +67,16 @@ class FlockTranscript:
 
     def observe(self, values: Array) -> "FlockTranscript":
         if values.dtype == jnp.uint8:
-            return FlockTranscript(self.inner.observe_bytes(values))
+            return FlockTranscript(fs.observe_bytes(self.inner, values))
         if values.dtype != jnp.binary_field_ghash:
             raise TypeError(f"no flock framing for observed dtype {values.dtype}")
-        return FlockTranscript(self.inner.observe_scalars(values.reshape(-1)))
+        return FlockTranscript(fs.observe_scalar(self.inner, values.reshape(-1)))
 
     def sample(self, n: int = 1) -> tuple["FlockTranscript", Array]:
         if n == 1:
-            inner, g = self.inner.sample_scalar()
+            inner, g = fs.sample_scalar(self.inner)
             return FlockTranscript(inner), g.reshape(1)
-        inner, g = self.inner.sample(n)
+        inner, g = fs.sample_slice(self.inner, n)
         return FlockTranscript(inner), g
 
     def observe_and_sample(
@@ -112,7 +112,7 @@ class FlockChoreography(LigeritoChoreography):
     ) -> FlockTranscript:
         del point  # flock binds the point through the outer basis, not here
         transcript = FlockTranscript(
-            transcript.inner.observe_label(FLOCK_LIGERITO_LABEL)
+            fs.observe_label(transcript.inner, FLOCK_LIGERITO_LABEL)
         )
         transcript = transcript.observe(value)
         return transcript.observe(root)
@@ -134,29 +134,33 @@ class FlockChoreography(LigeritoChoreography):
     def grind(
         self, transcript: FlockTranscript, bits: int
     ) -> tuple[FlockTranscript, Array]:
-        inner, nonce = transcript.inner.grind_pow(bits)
-        return FlockTranscript(inner), jnp.asarray(nonce, jnp.uint64)
+        inner, witness = fs.grind(transcript.inner, bits)
+        return FlockTranscript(inner), jnp.asarray(witness, jnp.uint64)
 
     def check_grind(
         self, transcript: FlockTranscript, bits: int, witness: Array
     ) -> tuple[FlockTranscript, Array]:
-        inner, ok = transcript.inner.verify_pow(int(witness), bits)
-        return FlockTranscript(inner), jnp.asarray(ok)
+        inner, ok = fs.check_witness(transcript.inner, witness, bits)
+        return FlockTranscript(inner), ok
 
     def sample_queries(
         self, transcript: FlockTranscript, block_len: int, count: int
     ) -> tuple[FlockTranscript, Array]:
         # flock `sample_distinct_queries`: one scalar F128 draw per candidate,
-        # low limb mod block_len, re-draw on repeat, sorted ascending.
+        # low limb mod block_len, re-draw on repeat, sorted ascending. Draws are
+        # batched through one scanned device program per shortfall (grouping
+        # doesn't change the stream — each draw is the same op sequence), then
+        # deduped in draw order on host; only actual repeats cost a second hop.
         inner = transcript.inner
         seen: set[int] = set()
         out: list[int] = []
         while len(out) < count:
-            inner, g = inner.sample_scalar()
-            pos = int(field.from_ghash_host(g)[0]) % block_len
-            if pos not in seen:
-                seen.add(pos)
-                out.append(pos)
+            inner, gs = fs.sample_chain(inner, count - len(out))
+            for v in field.from_ghash_host(gs)[:, 0]:
+                pos = int(v) % block_len
+                if pos not in seen:
+                    seen.add(pos)
+                    out.append(pos)
         out.sort()
         return FlockTranscript(inner), jnp.asarray(out, jnp.int32)
 

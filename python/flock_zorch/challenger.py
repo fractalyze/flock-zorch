@@ -23,7 +23,7 @@ import jax.numpy as jnp
 
 from zorch.sha256_field_transcript import Sha256FieldTranscript
 
-from flock_zorch import field
+from flock_zorch import field, fs
 
 
 class Challenger:
@@ -36,30 +36,31 @@ class Challenger:
         self._t = Sha256FieldTranscript.new(domain, jnp.binary_field_ghash)
 
     def observe_label(self, label: bytes) -> None:
-        self._t = self._t.observe_label(label)
+        self._t = fs.observe_label(self._t, label)
 
     def observe_bytes(self, data) -> None:
-        self._t = self._t.observe_bytes(np.frombuffer(bytes(data), np.uint8))
+        self._t = fs.observe_bytes(
+            self._t, np.frombuffer(bytes(data), np.uint8))
 
     def observe_f128(self, v) -> None:
-        self._t = self._t.observe_scalar(field.to_ghash(jnp.asarray(v)))
+        self._t = fs.observe_scalar(self._t, field.to_ghash(jnp.asarray(v)))
 
     def observe_f128_slice(self, vs) -> None:
         vs = jnp.asarray(np.asarray(vs, np.uint64).reshape(-1, 2))
-        self._t = self._t.observe(field.to_ghash(vs))
+        self._t = fs.observe_slice(self._t, field.to_ghash(vs))
 
     def sample_f128(self) -> np.ndarray:
-        self._t, g = self._t.sample_scalar()
+        self._t, g = fs.sample_scalar(self._t)
         return field.from_ghash_host(g)
 
     def sample_f128_vec(self, n: int) -> np.ndarray:
-        self._t, g = self._t.sample(n)
+        self._t, g = fs.sample_slice(self._t, n)
         return field.from_ghash_host(g)
 
     def grind_pow(self, bits: int) -> int:
-        self._t, nonce = self._t.grind_pow(bits)
-        return nonce
+        self._t, witness = fs.grind(self._t, bits)
+        return int(witness)
 
     def verify_pow(self, nonce: int, bits: int) -> bool:
-        self._t, ok = self._t.verify_pow(nonce, bits)
-        return ok
+        self._t, ok = fs.check_witness(self._t, nonce, bits)
+        return bool(np.asarray(ok))
