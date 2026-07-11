@@ -28,7 +28,10 @@ zorch's folds, commits, and induces reproduce flock's bytes exactly (gate:
 """
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
+
+from jax.tree_util import register_dataclass
 
 import jax.numpy as jnp
 import numpy as np
@@ -46,9 +49,11 @@ from flock_zorch.hash import merkle
 FLOCK_LIGERITO_LABEL = b"flock-ligerito-basis-v0"
 
 
+@functools.partial(register_dataclass, data_fields=["inner"], meta_fields=[])
 @dataclass(frozen=True)
 class FlockTranscript:
-    """zorch `Transcript` over flock's device SHA-256 transcript.
+    """zorch `Transcript` over flock's device SHA-256 transcript. A pytree, so
+    it threads jitted regions (the ligerito driver's fold level) as a carry.
 
     `sample(1)` is a scalar squeeze and `sample(n>1)` a slice squeeze, matching
     where the driver draws flock's `sample_f128` vs `sample_f128_vec` — the two
