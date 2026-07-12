@@ -1,36 +1,49 @@
-"""flock's BaseFold PCS open prover (`pcs::basefold::prove`), authored in frx —
-byte-identical to flock-core. The keystone of the PCS open: a sumcheck over
-(a_init, b) interleaved with codeword folding (deferred row-batch over the first
-`log_batch_size` rounds, then per-round FRI folds), per-epoch Merkle commits, and
-query openings.
+"""flock's BaseFold PCS open (`pcs::basefold`), authored in frx — byte-identical
+to flock-core. `prove` drives `zorch.pcs.basefold`'s injectable choreography seam
+(config + sumcheck kernel + Fiat-Shamir choreography) over flock's shared
+challenger, retiring the in-tree jax recursion; `verify` stays flock's own
+byte-anchored verifier.
 
-Reuses flock-zorch's verified primitives: `sumcheck.fold_single` (the low-bit
-a/b fold), `fri.{row_batch_fold_all, compute_fri_arities}`, and
-`merkle.{merkle_tree, merkle_multi_proof}` + the SHA-256 `Challenger`. The
-per-round codeword fold is zorch's `coding.AdditiveReedSolomon.fold` (its
-LCH-basis twiddle schedule + fold byte-match flock's additive NTT / FRI goldens;
-see `coding_oracle_test`), run on the native `binary_field_ghash` dtype.
+The open is a sumcheck over (a_init, b) interleaved with codeword folding
+(deferred row-batch over the first `log_batch_size` rounds, then per-round FRI
+folds), per-epoch Merkle commits, and query openings. flock's fold schedule is a
+non-native cadence (`row_batch_prefix` + multi-arity `fold_arities`), so
+`BasefoldProver.open_with_basis` returns a generic `CadenceProof` that
+`_flock_basefold_proof` reshapes into flock's octopus `BasefoldProof` — the same
+bytes the retired in-tree prover produced.
 
-`target`/running_target do NOT affect the proof bytes (the proof carries the
-round messages, commitments, final values, and query openings — not the running
-target), so they're omitted. Root observes use `root_to_f128` = the FIRST 16
-bytes of the 32-byte root. Requires `jax_enable_x64`.
+Three flock deltas ride the seam (one module per scheme, mirroring `pcs.ligerito`):
+`FlockProductKernel` (the degree-2 `(a, b)` product round), `FlockBasefoldChoreography`
+(flock's Fiat-Shamir shape — `flock-basefold-v0` label, `root_to_f128` observes, no
+terminal observe, masked query positions), and `flock_basefold_config` (the schedule
+as a `BasefoldConfig`).
+
+`target`/running_target do NOT affect the proof bytes (the proof carries the round
+messages, commitments, final values, and query openings — not the running target),
+so they're omitted. Root observes use `root_to_f128` = the FIRST 16 bytes of the
+32-byte root. Requires `jax_enable_x64`.
 """
 from __future__ import annotations
 
 import functools
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
 import frx
 import frx.numpy as jnp
+from frx import Array, lax
 
 from zorch.coding.additive_reed_solomon import AdditiveReedSolomon
+from zorch.pcs.basefold.choreography import BasefoldChoreography
+from zorch.pcs.basefold.config import BasefoldConfig
+from zorch.pcs.basefold.kernel import SumcheckKernel
+from zorch.pcs.basefold.prover import BasefoldProver, BasefoldProverData
 
-from flock_zorch import field, fs, sumcheck
+from flock_zorch import field, fs
 from flock_zorch.hash import merkle
 from flock_zorch.pcs import fri
+from flock_zorch.pcs.ligerito import FlockTranscript
 
 
 @dataclass(frozen=True)
@@ -50,7 +63,282 @@ class BasefoldProof:
     post_row_batch_multi_proof: Any
     epoch_multi_proofs: Any
 
+
 LABEL = b"flock-basefold-v0"
+
+
+# ---------------------------------------------------------------------------
+# Prover — flock's deltas on zorch's BaseFold seam, driven through
+# `BasefoldProver.open_with_basis` (byte-identical to the retired in-tree port).
+# ---------------------------------------------------------------------------
+
+
+def _fold_single(v: Array, r: Array) -> Array:
+    """Bind the low variable of one multilinear at `r` on the ghash dtype:
+    `out[x] = v[2x] + r·(v[2x] + v[2x+1])` (flock `fold_in_place_single`, the
+    char-2 multilinear bind)."""
+    pairs = v.reshape(-1, 2)
+    v0, v1 = pairs[:, 0], pairs[:, 1]
+    return v0 + r * (v0 + v1)
+
+
+@dataclass(frozen=True)
+class FlockProductKernel(SumcheckKernel):
+    """flock's degree-2 product sumcheck round over the state `(a, b)`. The
+    message is `(Σaₑbₑ, Σ(aₑ+aₒ)(bₑ+bₒ))` over the low-bit even/odd split; the
+    fold binds the low variable of both vectors by the shared challenge; the
+    terminal is `(a[0], b[0])`. No opening point, so `round_check` never runs
+    (the flock verifier is untouched by the seam adoption)."""
+
+    def initial_state(self, mle: Array, basis: Array, claim: Array) -> tuple:
+        del claim  # flock's proof bytes don't carry the running target
+        return (mle, basis)  # (a, b)
+
+    def message(self, state: tuple) -> tuple[Array, Array]:
+        a, b = state
+        ae, ao = a[0::2], a[1::2]
+        be, bo = b[0::2], b[1::2]
+        u0 = jnp.sum(ae * be)
+        u2 = jnp.sum((ae + ao) * (be + bo))
+        return u0, u2
+
+    def fold(self, state: tuple, message: tuple[Array, Array], r: Array) -> tuple:
+        del message
+        a, b = state
+        return (_fold_single(a, r), _fold_single(b, r))
+
+    def final(self, state: tuple) -> tuple[Array, Array]:
+        a, b = state
+        return (a[0], b[0])
+
+
+# --- the flock BaseFold Fiat-Shamir choreography -----------------------------
+
+
+@dataclass(frozen=True)
+class FlockBasefoldChoreography(BasefoldChoreography):
+    """flock `pcs::basefold::prove`'s FS shape over `FlockTranscript`: the
+    `flock-basefold-v0` label bind, eager `(u0, u2)` emission, `root_to_f128`
+    root observes, no terminal observe, and flock's masked query positions.
+    No grind (flock's BaseFold grinds nothing)."""
+
+    @property
+    def eager_messages(self) -> bool:
+        return True
+
+    def bind_statement(
+        self, transcript: FlockTranscript, root: Array, point, value: Array
+    ) -> FlockTranscript:
+        del root, point, value  # flock binds only the domain label here
+        return FlockTranscript(transcript.inner.observe_label(LABEL))
+
+    def fold_challenge(
+        self, transcript: FlockTranscript, msg, level: int, fold_idx: int
+    ) -> tuple[FlockTranscript, Array]:
+        del msg, level, fold_idx  # eager: the (u0, u2) message is already absorbed
+        transcript, r = transcript.sample(1)
+        return transcript, r[0]
+
+    def observe_root(self, transcript: FlockTranscript, root: Array) -> FlockTranscript:
+        # root_to_f128: the F128 in the FIRST 16 bytes of the 32-byte root.
+        f128 = lax.bitcast_convert_type(
+            jnp.asarray(root)[:16], jnp.binary_field_ghash
+        )
+        return transcript.observe(f128)
+
+    def observe_final(
+        self, transcript: FlockTranscript, final_poly: Array
+    ) -> FlockTranscript:
+        # flock samples queries straight off the last fold challenge — the final
+        # codeword is never observed.
+        del final_poly
+        return transcript
+
+    def sample_queries(
+        self, transcript: FlockTranscript, block_len: int, count: int
+    ) -> tuple[FlockTranscript, Array]:
+        # flock's BaseFold queries: `count` scalar F128 squeezes, each taken as
+        # its low limb mod block_len (dups kept, order kept — NOT distinct, NOT
+        # sorted). Uses the same `fs.sample_chain` primitive flock's verifier
+        # re-samples positions with, so the two match by construction.
+        inner, pos_g = fs.sample_chain(transcript.inner, count)
+        positions = np.asarray(field.from_ghash_host(pos_g)[:, 0]) % block_len
+        return FlockTranscript(inner), jnp.asarray(positions, jnp.int32)
+
+
+def flock_basefold_config(
+    k_code: int, log_inv_rate: int, log_batch_size: int
+) -> BasefoldConfig:
+    """flock's fold schedule as a `BasefoldConfig`: a `log_batch_size` row-batch
+    prefix, then `compute_fri_arities(log_dim)` epochs. `num_vars` is the total
+    sumcheck round count `log_batch_size + log_dim`."""
+    log_dim = k_code - log_inv_rate
+    return BasefoldConfig(
+        num_vars=log_batch_size + log_dim,
+        num_queries=fri.default_fri_queries(log_inv_rate),
+        row_batch_prefix=log_batch_size,
+        fold_arities=tuple(fri.compute_fri_arities(log_dim)),
+    )
+
+
+# --- wire assembly: zorch CadenceProof -> flock's BasefoldProof --------------
+
+
+def _lohi_scalar(x: Array) -> np.ndarray:
+    """ghash scalar -> uint64 [2] (lo, hi), flock's F128 representation."""
+    b = np.asarray(lax.bitcast_convert_type(x, jnp.uint8)).tobytes()
+    return np.frombuffer(b, np.uint64).copy()
+
+
+def _lohi(x: Array) -> np.ndarray:
+    """ghash (any shape) -> (-1, 2) uint64 lo‖hi (the uint8 bitcast direction)."""
+    b = np.asarray(lax.bitcast_convert_type(x, jnp.uint8)).tobytes()
+    return np.frombuffer(b, np.uint64).reshape(-1, 2).copy()
+
+
+def _leaf_rows(row: Array) -> np.ndarray:
+    """opened leaf rows ghash [Q, w] -> uint64 [Q, w, 2] (per-query F128 leaf)."""
+    q, w = int(row.shape[0]), int(row.shape[1])
+    return _lohi(row).reshape(q, w, 2)
+
+
+def _octopus(opening, num_leaves: int, positions: Array) -> np.ndarray:
+    """flock's octopus multi-proof from a zorch `Opening`'s per-query paths +
+    the sampled positions (byte-identical to `merkle.merkle_multi_proof`)."""
+    paths = np.stack([np.asarray(p, np.uint8) for p in opening.path], axis=1)
+    return merkle.paths_to_multi_proof(paths, num_leaves, np.asarray(positions))
+
+
+def _flock_basefold_proof(proof, k_code: int, log_inv_rate: int, num_ntts: int) -> BasefoldProof:
+    """zorch `CadenceProof` -> flock's `BasefoldProof`, byte-identical to the
+    in-tree `basefold.prove` return."""
+    arities = fri.compute_fri_arities(k_code - log_inv_rate)
+    num_fri_commits = max(len(arities) - 1, 0)
+    has_prefix_commit = bool(arities)  # the post-row-batch commit exists iff FRI does
+
+    round_messages = [
+        (_lohi_scalar(u0), _lohi_scalar(u2)) for (u0, u2) in proof.round_messages
+    ]
+    roots = [np.asarray(r, np.uint8).copy() for r in proof.commit_roots]
+    post_rb_root = roots[0] if has_prefix_commit else np.zeros(32, np.uint8)
+    round_commitments = roots[1:]  # per-epoch roots (all but the last epoch)
+
+    final_a = _lohi_scalar(proof.final_state[0])
+    final_b = _lohi_scalar(proof.final_state[1])
+    final_codeword = _lohi(proof.final_codeword)  # [2^log_inv_rate, 2]
+
+    positions = np.asarray(proof.positions)
+    n_q = int(positions.shape[0])
+
+    # Layer order: 0 = initial, 1 = post-row-batch (if arities), 2+ = epochs.
+    init_rows = _leaf_rows(proof.layer_openings[0].row)  # [Q, num_ntts, 2]
+    if has_prefix_commit:
+        post_rb_rows = _leaf_rows(proof.layer_openings[1].row)  # [Q, 2^arity0, 2]
+        epoch_rows = [
+            _leaf_rows(proof.layer_openings[2 + i].row) for i in range(num_fri_commits)
+        ]
+    else:
+        post_rb_rows = np.zeros((n_q, 0, 2), np.uint64)
+        epoch_rows = []
+
+    queries = []
+    for i in range(n_q):
+        epoch_leaves = [epoch_rows[e][i] for e in range(num_fri_commits)]
+        queries.append((int(positions[i]), init_rows[i], post_rb_rows[i], epoch_leaves))
+
+    initial_mp = _octopus(
+        proof.layer_openings[0], proof.layer_num_leaves[0], proof.layer_positions[0]
+    )
+    if has_prefix_commit:
+        post_rb_mp = _octopus(
+            proof.layer_openings[1], proof.layer_num_leaves[1], proof.layer_positions[1]
+        )
+        epoch_mps = [
+            _octopus(
+                proof.layer_openings[2 + i],
+                proof.layer_num_leaves[2 + i],
+                proof.layer_positions[2 + i],
+            )
+            for i in range(num_fri_commits)
+        ]
+    else:
+        post_rb_mp = np.zeros((0, 32), np.uint8)
+        epoch_mps = []
+
+    return BasefoldProof(
+        round_messages=round_messages,
+        post_row_batch_commit=post_rb_root,
+        round_commitments=round_commitments,
+        final_a=final_a,
+        final_b=final_b,
+        final_codeword=final_codeword,
+        queries=queries,
+        initial_multi_proof=initial_mp,
+        post_row_batch_multi_proof=post_rb_mp,
+        epoch_multi_proofs=epoch_mps,
+    )
+
+
+def prove(
+    z_packed,
+    b_combined,
+    codeword,
+    initial_tree,
+    k_code,
+    log_inv_rate,
+    log_batch_size,
+    n_queries,
+    ch,
+) -> BasefoldProof:
+    """Drive `zorch.pcs.basefold` over flock's shared challenger and assemble a
+    flock `BasefoldProof` — byte-identical to the retired in-tree `basefold.prove`.
+
+    a = z_packed, b = b_combined are the product sumcheck's two vectors; the
+    codeword (the interleaved additive-NTT of z_packed) is folded down. The
+    Fiat-Shamir rides flock's live `ch` (bridged into a `FlockTranscript` at its
+    current state, written back after the open) so the BaseFold open continues
+    the transcript ring-switch built. The initial matrix is re-committed inside
+    the driver (byte-identical to flock's external commit); reusing the external
+    `initial_tree` is a perf follow-up."""
+    del initial_tree
+    log_dim = k_code - log_inv_rate
+    num_ntts = 1 << log_batch_size
+    n_pos = 1 << k_code
+
+    a = field.to_ghash(jnp.asarray(z_packed))  # [2^log_msg]
+    b = field.to_ghash(jnp.asarray(b_combined))  # [2^log_msg]
+    cw_g = field.to_ghash(jnp.asarray(codeword))  # [n_pos * num_ntts]
+
+    code = AdditiveReedSolomon(1 << log_dim, 1 << log_inv_rate, jnp.binary_field_ghash)
+    config = replace(
+        flock_basefold_config(k_code, log_inv_rate, log_batch_size),
+        num_queries=int(n_queries),
+    )
+    prover = BasefoldProver(
+        code,
+        merkle.GHASH_TREE,
+        num_queries=int(n_queries),
+        choreography=FlockBasefoldChoreography(),
+        kernel=FlockProductKernel(),
+        config=config,
+    )
+    pd = BasefoldProverData(
+        digest_layers=[],
+        mle=a,
+        codeword=cw_g,
+        leaves=cw_g.reshape(n_pos, num_ntts),
+        widths=(num_ntts,),
+    )
+    value = field.to_ghash(jnp.zeros(2, jnp.uint64))  # ignored (no target on the wire)
+
+    proof, t = prover.open_with_basis(pd, b, value, FlockTranscript(ch._t))
+    ch._t = t.inner
+    return _flock_basefold_proof(proof, k_code, log_inv_rate, num_ntts)
+
+
+# ---------------------------------------------------------------------------
+# Verifier (byte-anchored to flock-core `pcs::basefold::verify`)
+# ---------------------------------------------------------------------------
 
 
 def _hf_mul(a, b):
@@ -59,40 +347,6 @@ def _hf_mul(a, b):
     ag = np.asarray(a, np.uint64).view(field._GHASH_HOST)
     bg = np.asarray(b, np.uint64).view(field._GHASH_HOST)
     return np.asarray(ag * bg).view(np.uint64)
-
-
-def _round_message(a, b):
-    """Round message (u_0, u_2) = (Σ a_e·b_e, Σ (a_e+a_o)·(b_e+b_o)) over the
-    even/odd split (flock's round-0 prime / fused next-round message). Returns
-    jnp (device) — the caller converts to np for the transcript/proof."""
-    ag, bg = field.to_ghash(a), field.to_ghash(b)
-    ae, ao = ag[0::2], ag[1::2]
-    be, bo = bg[0::2], bg[1::2]
-    u0 = jnp.sum(ae * be)
-    u2 = jnp.sum((ae + ao) * (be + bo))
-    return field.from_ghash(u0), field.from_ghash(u2)
-
-
-# Per-round field ops jitted (memoized) so each round is ONE fused kernel,
-# not eager op-by-op dispatch. The codeword fold lives on `code.fold` (below),
-# on the ghash dtype, so it is not part of this bundle.
-_BF_OPS = None
-
-
-def _bf_ops():
-    global _BF_OPS
-    if _BF_OPS is None:
-        _BF_OPS = (
-            frx.jit(lambda a, b: _round_message(a, b)),
-            frx.jit(lambda a, r: sumcheck.fold_single(a, r)),
-            frx.jit(lambda cw, ch: fri.row_batch_fold_all(cw, ch)),
-        )
-    return _BF_OPS
-
-
-def _leaf_bytes(codeword_np, n_leaves, leaf_f128):
-    """codeword uint64 [.,2] -> uint8 [n_leaves, leaf_f128*16] (LE F128 bytes)."""
-    return codeword_np.reshape(n_leaves, leaf_f128 * 2).view(np.uint8)
 
 
 def _root_f128(root):
@@ -123,141 +377,6 @@ def _replay_round_fs(t, msgs_g, post_rb_g, commits_g, log_batch_size, arities,
                 rounds_in_epoch = 0
                 current_epoch += 1
     return t, jnp.stack(challenges)
-
-
-def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_size,
-          n_queries, ch) -> BasefoldProof:
-    """Run BaseFold open on the SHARED challenger `ch` (so it composes in
-    pcs::open after ring-switch). z_packed=a_init uint64 [2^log_msg,2]; b same;
-    codeword uint64 [2^k_code · num_ntts, 2]; initial_tree uint8 [2·n_leaves-1, 32]
-    (from commit). Returns the BaseFoldProof fields, byte-identical to flock."""
-    log_dim = k_code - log_inv_rate
-    log_msg = log_batch_size + log_dim
-    num_ntts = 1 << log_batch_size
-    arities = fri.compute_fri_arities(log_dim)
-    num_epochs = len(arities)
-    num_fri_commits = max(num_epochs - 1, 0)
-    arity_0 = arities[0] if arities else 0
-    post_rb_leaf_f128 = 1 << arity_0
-    # The fold chain rides ONE additive-RS instance (block_len = 2^k_code); its
-    # LCH twiddles are anchored to that block_len, so a folded layer is not a
-    # smaller code's codeword — every round must go through this instance.
-    code = AdditiveReedSolomon(1 << log_dim, 1 << log_inv_rate,
-                               jnp.binary_field_ghash) if log_dim > 0 else None
-    fold_fn = frx.jit(code.fold) if code is not None else None
-
-    ch.observe_label(LABEL)
-    round_message, fold_single, row_batch = _bf_ops()
-
-    a = jnp.asarray(z_packed)
-    bb = jnp.asarray(b)
-    cw_full = jnp.asarray(codeword)        # initial SoA codeword (kept for T1 leaves)
-    cw_active = cw_full
-    cw_g = None                            # ghash fold state; entered on the first FRI round
-    round_messages, rb_challenges, round_commitments = [], [], []
-    post_rb_codeword = post_rb_tree = None
-    post_rb_root = np.zeros(32, np.uint8)
-    epoch_codewords, epoch_trees, epoch_leaf_f128s = [], [], []
-    current_epoch = rounds_in_epoch = 0
-
-    # ---- interleaved (a,b) sumcheck + codeword fold + per-epoch Merkle commit ----
-    # Each round: send (u0,u2), fold a/b at r; the first log_batch_size rounds defer
-    # a row-batch over the codeword, the rest are per-round FRI folds, committed per epoch.
-    for rnd in range(log_msg):
-        u0_g, u2_g = round_message(a, bb)
-        ch._t, r_g = fs.observe_pair_sample(
-            ch._t, field.to_ghash(u0_g), field.to_ghash(u2_g))
-        round_messages.append((np.asarray(u0_g), np.asarray(u2_g)))
-        r = field.from_ghash(r_g)
-        a = fold_single(a, r)
-        bb = fold_single(bb, r)
-
-        if rnd < log_batch_size:
-            rb_challenges.append(r)
-            if rnd + 1 == log_batch_size:
-                cw_active = row_batch(cw_full, jnp.stack(rb_challenges))
-                if arities:
-                    cw_np = np.asarray(cw_active)
-                    n_leaves = cw_np.shape[0] // post_rb_leaf_f128
-                    post_rb_tree = merkle.merkle_tree(_leaf_bytes(cw_np, n_leaves, post_rb_leaf_f128))
-                    post_rb_root = post_rb_tree[-1]
-                    ch.observe_f128(_root_f128(post_rb_root))
-                    post_rb_codeword = cw_np
-        else:
-            if cw_g is None:
-                cw_g = field.to_ghash(cw_active)      # enter the additive-RS fold domain
-            cw_g = fold_fn(cw_g, field.to_ghash(r.reshape(1, 2)))
-            rounds_in_epoch += 1
-            if rounds_in_epoch == arities[current_epoch]:
-                if current_epoch + 1 < num_epochs:
-                    leaf_f128 = 1 << arities[current_epoch + 1]
-                    cw_np = field.from_ghash_host(cw_g)
-                    n_leaves = cw_np.shape[0] // leaf_f128
-                    tree = merkle.merkle_tree(_leaf_bytes(cw_np, n_leaves, leaf_f128))
-                    ch.observe_f128(_root_f128(tree[-1]))
-                    round_commitments.append(tree[-1])
-                    epoch_codewords.append(cw_np)
-                    epoch_trees.append(tree)
-                    epoch_leaf_f128s.append(leaf_f128)
-                rounds_in_epoch = 0
-                current_epoch += 1
-
-    final_a = np.asarray(a)[0]
-    final_b = np.asarray(bb)[0]
-    final_codeword = field.from_ghash_host(cw_g) if cw_g is not None else np.asarray(cw_active)
-
-    # ---- query openings: sample positions, gather each layer's leaf, Merkle multi-proofs ----
-    cw_full_np = np.asarray(cw_full)
-    queries, init_pos, post_rb_pos = [], [], []
-    epoch_pos = [[] for _ in range(num_fri_commits)]
-    ch._t, pos_g = fs.sample_chain(ch._t, n_queries)
-    raw_positions = field.from_ghash_host(pos_g)[:, 0]
-    for qi in range(n_queries):
-        position = int(raw_positions[qi]) & ((1 << k_code) - 1)
-        init_leaf = cw_full_np[position * num_ntts:(position + 1) * num_ntts]
-        init_pos.append(position)
-        if arities:
-            li = position >> arity_0
-            post_rb_pos.append(li)
-            post_rb_leaf = post_rb_codeword[li * post_rb_leaf_f128:(li + 1) * post_rb_leaf_f128]
-        else:
-            post_rb_leaf = np.zeros((0, 2), np.uint64)
-        epoch_leaves, cum = [], arity_0
-        for i in range(num_fri_commits):
-            lf = epoch_leaf_f128s[i]
-            li = (position >> cum) // lf
-            epoch_leaves.append(epoch_codewords[i][li * lf:(li + 1) * lf])
-            epoch_pos[i].append(li)
-            cum += arities[i + 1]
-        queries.append((position, init_leaf, post_rb_leaf, epoch_leaves))
-
-    n_init_leaves = cw_full_np.shape[0] // num_ntts
-    init_mp = merkle.merkle_multi_proof(initial_tree, n_init_leaves, init_pos)
-    if arities:
-        n_lv = post_rb_codeword.shape[0] // post_rb_leaf_f128
-        post_rb_mp = merkle.merkle_multi_proof(post_rb_tree, n_lv, post_rb_pos)
-    else:
-        post_rb_mp = np.zeros((0, 32), np.uint8)
-    epoch_mps = [merkle.merkle_multi_proof(epoch_trees[i], epoch_codewords[i].shape[0] // epoch_leaf_f128s[i],
-                                           epoch_pos[i]) for i in range(num_fri_commits)]
-
-    return BasefoldProof(
-        round_messages=round_messages,
-        post_row_batch_commit=post_rb_root,
-        round_commitments=round_commitments,
-        final_a=final_a,
-        final_b=final_b,
-        final_codeword=final_codeword,
-        queries=queries,
-        initial_multi_proof=init_mp,
-        post_row_batch_multi_proof=post_rb_mp,
-        epoch_multi_proofs=epoch_mps,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Verifier (byte-anchored to flock-core `pcs::basefold::verify`)
-# ---------------------------------------------------------------------------
 
 
 def _leaf_hash_bytes(leaf_soa: np.ndarray) -> np.ndarray:
