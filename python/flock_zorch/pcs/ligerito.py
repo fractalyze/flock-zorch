@@ -156,6 +156,11 @@ class FlockChoreography(LigeritoChoreography):
         # batched through one scanned device program per shortfall (grouping
         # doesn't change the stream — each draw is the same op sequence), then
         # deduped in draw order on host; only actual repeats cost a second hop.
+        if count > block_len:  # mirrors flock's sample_distinct_queries assert
+            raise ValueError(
+                f"sample_queries: count ({count}) > block_len ({block_len}) — "
+                "config is too thin for this query count"
+            )
         inner = transcript.inner
         seen: set[int] = set()
         out: list[int] = []
