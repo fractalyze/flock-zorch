@@ -95,16 +95,41 @@ def fold_pair(a, b, challenge):
     return fold_single(a, challenge), fold_single(b, challenge)
 
 
-def round_pair_g(ag, bg, rg):
-    """`round_pair` on native ghash: `[2^log_n]` factor pair + `[log_n]`
-    challenges -> the scalar message pair `(r[0]·G(1), G(∞))`."""
-    eq = build_eq_g(rg[1:])                    # [2^(log_n-1)]
+def build_eq_suffix_tables_g(cs_g):
+    """eq tables for every challenge suffix: absorbing `cs_g[i]` as the low bit
+    of `eq(cs_g[i+1:])` yields `eq(cs_g[i:])`, so all n+1 tables cost one
+    doubling chain — n mul layers — instead of n separate `build_eq_g` builds
+    (each layer is a fat clmul kernel XLA compiles for ~0.7 s, so a per-round
+    rebuild multiplied that by the round count). Values match per-suffix
+    `build_eq_g` exactly: GF mul is exact, associative, commutative.
+
+    cs_g: `[n]` ghash challenges. Returns `[T_0 .. T_n]`, `T_i = eq(cs_g[i:])`
+    of shape `[2^(n-i)]`; `T_n = [1]`."""
+    n = int(cs_g.shape[0])
+    t = _ONE_G.reshape(1)
+    out = [t]
+    for i in range(n - 1, -1, -1):
+        c = cs_g[i]
+        t = jnp.stack([t * (c + _ONE_G), t * c], axis=1).reshape(-1)
+        out.append(t)
+    return out[::-1]
+
+
+def round_pair_eq_g(ag, bg, eq, r0g):
+    """`round_pair_g` with the eq table already built — the per-round core for
+    callers that precompute every suffix table once (`build_eq_suffix_tables_g`)."""
     ap, bp = ag.reshape(-1, 2), bg.reshape(-1, 2)
     a0, a1 = ap[:, 0], ap[:, 1]
     b0, b1 = bp[:, 0], bp[:, 1]
     g_one = jnp.sum(eq * (a1 * b1))                # Σ eq·a1·b1
     g_inf = jnp.sum(eq * ((a0 + a1) * (b0 + b1)))  # Σ eq·(a0+a1)(b0+b1)
-    return rg[0] * g_one, g_inf
+    return r0g * g_one, g_inf
+
+
+def round_pair_g(ag, bg, rg):
+    """`round_pair` on native ghash: `[2^log_n]` factor pair + `[log_n]`
+    challenges -> the scalar message pair `(r[0]·G(1), G(∞))`."""
+    return round_pair_eq_g(ag, bg, build_eq_g(rg[1:]), rg[0])
 
 
 def round_pair(a_mlv, b_mlv, r):
