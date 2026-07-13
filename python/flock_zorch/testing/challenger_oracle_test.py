@@ -1,5 +1,5 @@
 """Byte-match gate for flock's Fiat-Shamir challenger (SHA-256), authored over
-zorch's `ByteHashTranscript` (host `HashlibSha256` backend).
+zorch's `ByteHashTranscript` (host `HostSha256` backend).
 
 Replays the EXACT scripted observe/sample/grind sequence from
 `examples/dump_challenger.rs` through `flock_zorch.challenger.Challenger` and

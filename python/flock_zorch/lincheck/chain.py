@@ -11,10 +11,10 @@ The chain protocol glues 2^n committed hash instances into a sequential chain
      α·eq(y,0ⁿ)·(1+s₀), reducing the glue + both endpoints to a SINGLE ẑ-eval
      claim `g(τ',s₀*)`.
 
-The round message + fold are identical to the existing product sumcheck
-(`lincheck._round_eval` / `_bind_top`), so those are reused. `assemble_chain_claim`
-then packs the returned claim into the point the mixed packed-direct PCS open
-consumes (the `ChainProof` assembly).
+The round message + fold are the shared ∞-product round
+(`sumcheck.inf_product`, the same wire lincheck's rounds ride).
+`assemble_chain_claim` then packs the returned claim into the point the mixed
+packed-direct PCS open consumes (the `ChainProof` assembly).
 """
 
 from dataclasses import dataclass
@@ -25,7 +25,7 @@ import jax.numpy as jnp
 
 from flock_zorch import field
 from flock_zorch.sumcheck import build_eq
-from flock_zorch.lincheck.prover import _round_eval, _bind_top
+from flock_zorch.sumcheck.inf_product import prove_inf_product
 
 
 @dataclass(frozen=True)
@@ -66,20 +66,16 @@ def prove_chain_shift(in_vals, out_vals, ch):
     g = np.concatenate([in_vals, out_vals], axis=0)  # [In ‖ Out]
 
     # Product sumcheck Σ_{y,s₀} W·g over n+1 vars (round msg + fold == lincheck's).
-    wt = jnp.asarray(wt); g = jnp.asarray(g)
-    rounds, r_pts = [], []
-    for _ in range(n + 1):
-        e1, einf = _round_eval(wt, g)
-        ch.observe_f128(np.asarray(e1)); ch.observe_f128(np.asarray(einf))
-        r = jnp.asarray(ch.sample_f128())
-        rounds.append((np.asarray(e1), np.asarray(einf)))
-        r_pts.append(np.asarray(r).reshape(2))
-        wt = _bind_top(wt, r)
-        g = _bind_top(g, r)
+    stacked = jnp.stack([field.to_ghash(jnp.asarray(wt)),
+                         field.to_ghash(jnp.asarray(g))])
+    stacked, ch._t, msgs = prove_inf_product(stacked, ch._t, n + 1)
+    rounds = [(field.from_ghash_host(e1), field.from_ghash_host(einf))
+              for e1, einf, _ in msgs]
+    r_pts = [field.from_ghash_host(r).reshape(2) for _, _, r in msgs]
 
     # After n+1 folds g[0] = g(τ',s₀*). Build the point: full[d-1-k]=r_pts[k]
     # (bit d-1 = s₀, the HIGH bit); τ' = full[:n], s₀* = full[n].
-    value = np.asarray(g[0]).reshape(2)
+    value = field.from_ghash_host(stacked[1]).reshape(2)
     d = n + 1
     full = np.zeros((d, 2), np.uint64)
     for k, r in enumerate(r_pts):

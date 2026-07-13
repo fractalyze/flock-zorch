@@ -74,7 +74,7 @@ def bench(m, n=3):
     return best(run, n=n)
 
 
-# The prover runs flock's production host Fiat-Shamir transcript (HashlibSha256).
+# The prover runs flock's production host Fiat-Shamir transcript (HostSha256).
 # The on-device byte transcript was measured in #7 (a ~44s regression, no crossover
 # left-shift; see docs/BENCHMARKS.md) and is not benched here.
 def main():

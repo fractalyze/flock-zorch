@@ -4,17 +4,17 @@ zorch's `zorch.pcs.ligerito` routes every transcript interaction through the
 `LigeritoChoreography` seam over a generic `Transcript`. This module supplies the
 flock side of both seams so the code-generic driver produces flock's byte wire:
 
-- `FlockTranscript`: zorch's functional `Transcript` protocol over the byte
-  challenger substrate (`ByteHashTranscript`, the same one `challenger.Challenger`
-  wraps). Framing is flock's: an F128 observe is a 16-byte `observe_scalar`
-  (lo‖hi LE) per element, a root a raw `observe_bytes`, one challenge a
-  `sample_scalar(16)` and an n-vector one `sample_slice(n, 16)`.
+- `FlockTranscript`: zorch's functional `Transcript` protocol over the device
+  SHA-256 substrate (`Sha256FieldTranscript`, the same one
+  `challenger.Challenger` wraps). Framing is flock's: an F128 observe is a
+  scalar-framed `observe_scalar` per element, a root a raw `observe_bytes`,
+  one challenge a scalar squeeze and an n-vector a slice squeeze.
 - `FlockChoreography`: flock `pcs::ligerito`'s FS shape — the
   `flock-ligerito-basis-v0` statement binding (claim + root, no point), eager
   message emission, tapered per-fold PoW (>0-conditional), unconditional
   per-level query PoW (0 bits still puts a nonce on the wire), and flock's
-  rejection-sampled distinct sorted queries — with the byte `grind_pow` /
-  `verify_pow` as the grind mechanism.
+  rejection-sampled distinct sorted queries — with the transcript's
+  `grind` / `check_witness` as the grind mechanism.
 - `flock_ligerito_config`: the `dump_ligerito` config block as a zorch
   `LigeritoConfig` + `FlockChoreography` pair (LSB-first alpha weights,
   compressed `(c0, c2)` round messages).
@@ -28,53 +28,43 @@ zorch's folds, commits, and induces reproduce flock's bytes exactly (gate:
 """
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
+
+from jax.tree_util import register_dataclass
 
 import jax.numpy as jnp
 import numpy as np
 from jax import Array, lax
 
-from zorch.byte_transcript import ByteHashTranscript
 from zorch.coding.reed_solomon import ReedSolomon
-from zorch.hash.sha256 import HashlibSha256
 from zorch.pcs.ligerito.choreography import LigeritoChoreography
 from zorch.pcs.ligerito.config import LigeritoConfig
 from zorch.pcs.ligerito.prover import LigeritoProver, LigeritoProverData
+from zorch.sha256_field_transcript import Sha256FieldTranscript
 
-from flock_zorch import field
+from flock_zorch import field, fs
 from flock_zorch.hash import merkle
 
 FLOCK_LIGERITO_LABEL = b"flock-ligerito-basis-v0"
 
 
-def _f128_bytes(values: Array) -> bytes:
-    """ghash array (any shape) -> per-element lo‖hi LE bytes, C order. The uint8
-    bitcast is the one working ghash→integer direction (zorch#399)."""
-    return np.asarray(lax.bitcast_convert_type(values, jnp.uint8)).tobytes()
-
-
-def _f128_from_bytes(buf: bytes, n: int) -> Array:
-    """n*16 squeezed bytes -> (n,) ghash (each element lo‖hi LE)."""
-    u8 = jnp.asarray(np.frombuffer(buf, np.uint8).reshape(n, 16))
-    return lax.bitcast_convert_type(u8, jnp.binary_field_ghash)
-
-
-def _np_bytes(values: Array) -> bytes:
-    return np.asarray(values).tobytes()
-
-
+@functools.partial(register_dataclass, data_fields=["inner"], meta_fields=[])
 @dataclass(frozen=True)
 class FlockTranscript:
-    """zorch `Transcript` over flock's byte challenger substrate.
+    """zorch `Transcript` over flock's device SHA-256 transcript. A pytree, so
+    it threads jitted regions (the ligerito driver's fold level) as a carry.
 
     `sample(1)` is a scalar squeeze and `sample(n>1)` a slice squeeze, matching
     where the driver draws flock's `sample_f128` vs `sample_f128_vec` — the two
     frame differently, so a config whose vector draws degenerate to width 1
     (`queries[j] <= 2`, which makes the alpha draw 0- or 1-wide) is rejected by
-    `flock_ligerito_config` rather than silently mis-framed.
+    `flock_ligerito_config` rather than silently mis-framed. An F128 observe is
+    per-element scalar framing (flock's `observe_f128` convention), a uint8
+    array an `observe_bytes`.
     """
 
-    inner: ByteHashTranscript
+    inner: Sha256FieldTranscript
 
     @property
     def has_dedicated_fusion(self) -> bool:
@@ -82,21 +72,17 @@ class FlockTranscript:
 
     def observe(self, values: Array) -> "FlockTranscript":
         if values.dtype == jnp.uint8:
-            return FlockTranscript(self.inner.observe_bytes(_np_bytes(values)))
+            return FlockTranscript(fs.observe_bytes(self.inner, values))
         if values.dtype != jnp.binary_field_ghash:
             raise TypeError(f"no flock framing for observed dtype {values.dtype}")
-        inner = self.inner
-        raw = _f128_bytes(values)
-        for off in range(0, len(raw), 16):
-            inner = inner.observe_scalar(raw[off : off + 16])
-        return FlockTranscript(inner)
+        return FlockTranscript(fs.observe_scalar(self.inner, values.reshape(-1)))
 
     def sample(self, n: int = 1) -> tuple["FlockTranscript", Array]:
         if n == 1:
-            inner, buf = self.inner.sample_scalar(16)
-        else:
-            inner, buf = self.inner.sample_slice(n, 16)
-        return FlockTranscript(inner), _f128_from_bytes(buf, n)
+            inner, g = fs.sample_scalar(self.inner)
+            return FlockTranscript(inner), g.reshape(1)
+        inner, g = fs.sample_slice(self.inner, n)
+        return FlockTranscript(inner), g
 
     def observe_and_sample(
         self, values: Array, n: int = 1
@@ -105,9 +91,8 @@ class FlockTranscript:
 
 
 def flock_transcript(domain: bytes) -> FlockTranscript:
-    """A fresh `FlockTranscript` seeded like flock's `FsChallenger` (host
-    SHA-256; flock's Fiat-Shamir is host-sequential)."""
-    return FlockTranscript(ByteHashTranscript.new(domain, HashlibSha256()))
+    """A fresh `FlockTranscript` seeded like flock's `FsChallenger`."""
+    return FlockTranscript(Sha256FieldTranscript.new(domain, jnp.binary_field_ghash))
 
 
 @dataclass(frozen=True)
@@ -132,7 +117,7 @@ class FlockChoreography(LigeritoChoreography):
     ) -> FlockTranscript:
         del point  # flock binds the point through the outer basis, not here
         transcript = FlockTranscript(
-            transcript.inner.observe_label(FLOCK_LIGERITO_LABEL)
+            fs.observe_label(transcript.inner, FLOCK_LIGERITO_LABEL)
         )
         transcript = transcript.observe(value)
         return transcript.observe(root)
@@ -154,29 +139,38 @@ class FlockChoreography(LigeritoChoreography):
     def grind(
         self, transcript: FlockTranscript, bits: int
     ) -> tuple[FlockTranscript, Array]:
-        inner, nonce = transcript.inner.grind_pow(bits)
-        return FlockTranscript(inner), jnp.asarray(nonce, jnp.uint64)
+        inner, witness = fs.grind(transcript.inner, bits)
+        return FlockTranscript(inner), jnp.asarray(witness, jnp.uint64)
 
     def check_grind(
         self, transcript: FlockTranscript, bits: int, witness: Array
     ) -> tuple[FlockTranscript, Array]:
-        inner, ok = transcript.inner.verify_pow(int(witness), bits)
-        return FlockTranscript(inner), jnp.asarray(ok)
+        inner, ok = fs.check_witness(transcript.inner, witness, bits)
+        return FlockTranscript(inner), ok
 
     def sample_queries(
         self, transcript: FlockTranscript, block_len: int, count: int
     ) -> tuple[FlockTranscript, Array]:
         # flock `sample_distinct_queries`: one scalar F128 draw per candidate,
-        # low limb mod block_len, re-draw on repeat, sorted ascending.
+        # low limb mod block_len, re-draw on repeat, sorted ascending. Draws are
+        # batched through one scanned device program per shortfall (grouping
+        # doesn't change the stream — each draw is the same op sequence), then
+        # deduped in draw order on host; only actual repeats cost a second hop.
+        if count > block_len:  # mirrors flock's sample_distinct_queries assert
+            raise ValueError(
+                f"sample_queries: count ({count}) > block_len ({block_len}) — "
+                "config is too thin for this query count"
+            )
         inner = transcript.inner
         seen: set[int] = set()
         out: list[int] = []
         while len(out) < count:
-            inner, buf = inner.sample_scalar(16)
-            pos = int.from_bytes(buf[:8], "little") % block_len
-            if pos not in seen:
-                seen.add(pos)
-                out.append(pos)
+            inner, gs = fs.sample_chain(inner, count - len(out))
+            for v in field.from_ghash_host(gs)[:, 0]:
+                pos = int(v) % block_len
+                if pos not in seen:
+                    seen.add(pos)
+                    out.append(pos)
         out.sort()
         return FlockTranscript(inner), jnp.asarray(out, jnp.int32)
 

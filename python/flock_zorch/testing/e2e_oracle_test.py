@@ -51,7 +51,7 @@ def _unpack(z_packed, m):
     return np.concatenate([lo, hi], axis=1).reshape(-1)[: 1 << m]
 
 
-def run(byte_hash=None):
+def run():
     rd = R((ART / "e2e_golden.bin").read_bytes())
     assert bytes(rd.take(8)) == b"FLKE2E01", "bad magic"
     m, k_log, k_skip, ub = rd.u(), rd.u(), rd.u(), rd.u()
@@ -84,10 +84,7 @@ def run(byte_hash=None):
     _eq("commit root", root, g_root, results)
 
     # ---- shared challenger + bind_statement ----
-    # byte_hash=None keeps the host HashlibSha256 (flock's FS substrate). The knob
-    # stays a seam for a future on-device FS driver (zorch#9); the marker's
-    # byte-identity to host is zorch's guarantee, so there's no device gate here.
-    ch = Challenger(b"flock-test-v0", byte_hash=byte_hash)
+    ch = Challenger(b"flock-test-v0")
     prover.bind_statement(ch, stmt, root)
 
     # ---- Stage B: zerocheck (a=b=c=z for identity) ----
@@ -166,7 +163,7 @@ def run(byte_hash=None):
     # ---- Stage F: packaged prover.prove_fast reproduces the staged proof ----
     a0 = np.eye(1 << k_log, dtype=np.uint64)
     pf = prover.prove_fast(z_packed, m, k_log, k_skip, ub, a0, a0, zlc, stmt,
-                           LIR, LBS, byte_hash=byte_hash)
+                           LIR, LBS)
     _eq("prove_fast zc round1_ab", pf.zerocheck.round1_ab, g_zc["r1ab"], results)
     _eq("prove_fast lc z_partial", pf.lincheck[1], g_lc["zp"], results)
     _eq("prove_fast open ring_switch[1]", pf.pcs_open.ring_switches[1], g_rs[1], results)

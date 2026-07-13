@@ -40,7 +40,7 @@ def _load_golden():
 def test_oracle():
     n, l, inp, golden = _load_golden()
     blocks = jnp.asarray(sha256._pad(inp))
-    got = np.asarray(jax.jit(sha256._digest_words)(blocks))
+    got = np.asarray(sha256.sha256_chain(sha256.INITIAL_STATE, blocks))
     assert got.shape == golden.shape, (got.shape, golden.shape)
     assert np.array_equal(got, golden), "sha256.digest != flock golden"
     return n, l
@@ -63,7 +63,7 @@ def main() -> int:
 
     inp = _load_golden()[2]
     blocks = jnp.asarray(sha256._pad(inp))
-    fn = jax.jit(sha256._digest_words)
+    fn = lambda b: sha256.sha256_chain(sha256.INITIAL_STATE, b)
     r = fn(blocks); r.block_until_ready()
     best = float("inf")
     for _ in range(GPU_ITERS):

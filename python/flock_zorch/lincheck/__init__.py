@@ -1,8 +1,7 @@
 """Lincheck sub-protocol (prover) + hash-circuit seams.
 
-Authored in `prover`, re-exported so `from flock_zorch import lincheck`,
-`from flock_zorch.lincheck import CscCircuit, LincheckCircuit`, and
-`from flock_zorch.lincheck import _round_eval, _bind_top` resolve unchanged.
+Authored in `prover`, re-exported so `from flock_zorch import lincheck` and
+`from flock_zorch.lincheck import CscCircuit, LincheckCircuit` resolve
+unchanged. The product-sumcheck round lives in `sumcheck.inf_product`.
 """
 from flock_zorch.lincheck.prover import *  # noqa: F401,F403
-from flock_zorch.lincheck.prover import _round_eval, _bind_top  # noqa: F401  (used by chain)
