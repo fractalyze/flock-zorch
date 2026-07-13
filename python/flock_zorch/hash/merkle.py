@@ -20,13 +20,13 @@ import numpy as np
 
 from zorch.commit.merkle import MerkleTree
 
-from zorch.hash.sha256 import _digest_words_marked, U32
+from zorch.hash.sha256 import INITIAL_STATE, sha256_chain, U32
 
 
 def _pad_device(msg, length: int):
     """Device SHA-256 pad: uint8 [B, length] -> uint32 [B, nblocks, 16] BE, all-jnp
     (no host round-trip) so Merkle nodes stay device-resident across levels. flock-
-    local; `length` is static and the compression itself is zorch's `_digest_words`."""
+    local; `length` is static and the compression itself is zorch's `sha256_chain`."""
     b = msg.shape[0]
     bitlen = length * 8
     nblocks = (length + 8) // 64 + 1
@@ -42,7 +42,7 @@ def _pad_device(msg, length: int):
 
 def _digest(msgs, length: int):
     """Marked batched SHA-256: uint8 [B, length] -> uint8 [B, 32] (`zorch.sha256`)."""
-    return _digest_words_marked(_pad_device(msgs, length))
+    return sha256_chain(INITIAL_STATE, _pad_device(msgs, length))
 
 
 class _Sha256LeafHasher:
