@@ -27,7 +27,12 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
+from zorch.sumcheck.domain import compressed_domain, summand_evals
+from zorch.sumcheck.prover import ProductSummand
+
 from flock_zorch import field
+
+_PRODUCT2 = ProductSummand(2)._combine
 
 U64 = jnp.uint64
 ONE = jnp.asarray([1, 0], dtype=U64)  # F128::ONE = {lo: 1, hi: 0}
@@ -117,12 +122,14 @@ def build_eq_suffix_tables_g(cs_g):
 
 def round_pair_eq_g(ag, bg, eq, r0g):
     """`round_pair_g` with the eq table already built — the per-round core for
-    callers that precompute every suffix table once (`build_eq_suffix_tables_g`)."""
-    ap, bp = ag.reshape(-1, 2), bg.reshape(-1, 2)
-    a0, a1 = ap[:, 0], ap[:, 1]
-    b0, b1 = bp[:, 0], bp[:, 1]
-    g_one = jnp.sum(eq * (a1 * b1))                # Σ eq·a1·b1
-    g_inf = jnp.sum(eq * ((a0 + a1) * (b0 + b1)))  # Σ eq·(a0+a1)(b0+b1)
+    callers that precompute every suffix table once (`build_eq_suffix_tables_g`).
+
+    The message `[G(1), G(∞)]` is zorch's compressed product round on the low bind:
+    `summand_evals` over `compressed_domain(1)` with the eq suffix as the per-point
+    weight and `msb=False` (`s(∞)`'s char-2 `(a1−a0)` is flock's `(a0+a1)`)."""
+    g_one, g_inf = summand_evals(
+        jnp.stack([ag, bg]), _PRODUCT2, compressed_domain(1, ag.dtype),
+        weight=eq, msb=False)
     return r0g * g_one, g_inf
 
 
