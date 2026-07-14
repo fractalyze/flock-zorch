@@ -31,6 +31,7 @@ from flock_zorch.zerocheck._fold import (
     _lagrange_weights, _interpolate_at_z_on_lambda, _fold_at_z_rows, _phi_int, _ONE,
 )
 from zorch.round import ProveChain, Round
+from zorch.sumcheck.domain import fold
 
 K_SKIP = 6
 N_INNER = 7  # 3 small + 4 medium fixed-constant inner dims
@@ -107,7 +108,7 @@ def _mlv_round(a_g, b_g, eq_g, r0_g, t):
     m1, minf = sumcheck.round_pair_eq_g(a_g, b_g, eq_g, r0_g)
     t = t.observe_scalar(m1).observe_scalar(minf)
     t, rho = t.sample_scalar()
-    return sumcheck.fold_single_g(a_g, rho), sumcheck.fold_single_g(b_g, rho), \
+    return fold(a_g, rho, msb=False), fold(b_g, rho, msb=False), \
         t, m1, minf, rho
 
 
