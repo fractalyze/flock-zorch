@@ -1,37 +1,39 @@
-"""flock's product-sumcheck round over the TOP-bit split, with the ∞-trick wire.
+"""flock's product-sumcheck round, on zorch's compressed-domain round poly.
 
-flock's multilinear rounds send (s(1), s(∞)) — s(∞) is the Karatsuba leading
-coefficient, sent instead of s(2) — as two scalar-framed observes, then bind the
-TOP bit at the squeezed challenge. The round math is zorch's MSB split/fold
-(`fold` = P0 + r·(P1−P0), which over char 2 is flock's `sumcheck_bind_top`);
-only the message wire is flock's. Driven by `zorch.prove.fold_rounds` inside one
-jit, a whole round loop is a single device program with Fiat-Shamir inside.
+The multilinear rounds send `(s(1), s(∞))` — `s(∞)` the Karatsuba leading
+coefficient sent instead of `s(2)` — observed as two framed scalars, then bind the
+TOP bit at the squeezed challenge. The message is zorch's compressed product round
+poly (`summand_evals` over `compressed_domain(1)`); the per-scalar framing is
+flock-core's wire, so it observes each value on the SHA-256 transcript directly
+(`observe_scalar` / `sample_scalar` — the framing distinction a Merlin/SHA-256
+transcript needs, byte-matched to flock-core). Driven by `zorch.prove.fold_rounds`
+inside one jit, a whole round loop is a single device program with FS inside.
 """
 from __future__ import annotations
 
 import functools
 
 import jax
-import jax.numpy as jnp
 
 from zorch.prove import fold_rounds
 from zorch.round import Round
-from zorch.sumcheck.domain import fold, split_halves
+from zorch.sumcheck.domain import compressed_domain, fold, summand_evals
+from zorch.sumcheck.prover import ProductSummand
+
+_PRODUCT2 = ProductSummand(2)._combine
 
 
 class InfProductRound(Round):
-    """One round over the stacked [2, N] ghash (weight, values) state:
-    message (s(1), s(∞)) = (Σ w_hi·v_hi, Σ (w_hi+w_lo)·(v_hi+v_lo)), observed
-    scalar-framed in that order (flock `sumcheck_round_eval`), then fold at the
-    squeezed challenge."""
+    """One round over the stacked `[2, N]` ghash (weight, values) state: the
+    `(s(1), s(∞))` compressed message observed as two framed scalars, the TOP bit
+    bound at the squeezed challenge, returning `(s(1), s(∞), r)` so the caller keeps
+    each round's challenge."""
 
     def __call__(self, folded, transcript):
-        lo, hi = split_halves(folded)
-        e1 = jnp.sum(hi[0] * hi[1])
-        einf = jnp.sum((hi[0] + lo[0]) * (hi[1] + lo[1]))
-        transcript = transcript.observe_scalar(e1).observe_scalar(einf)
+        msg = summand_evals(folded, _PRODUCT2, compressed_domain(1, folded.dtype))
+        transcript = transcript.observe_scalar(msg[0]).observe_scalar(msg[1])
         transcript, r = transcript.sample_scalar()
-        return fold(folded, r), transcript, (e1, einf, r)
+        return fold(folded, r), transcript, (msg[0], msg[1], r)
 
 
 @functools.partial(jax.jit, static_argnums=(2,))

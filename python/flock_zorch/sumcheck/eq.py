@@ -27,7 +27,13 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
+from zorch.poly.eq import expand_hypercube_step
+from zorch.sumcheck.domain import compressed_domain, fold, summand_evals
+from zorch.sumcheck.prover import ProductSummand
+
 from flock_zorch import field
+
+_PRODUCT2 = ProductSummand(2)._combine
 
 U64 = jnp.uint64
 ONE = jnp.asarray([1, 0], dtype=U64)  # F128::ONE = {lo: 1, hi: 0}
@@ -35,16 +41,14 @@ _ONE_G = field.to_ghash(ONE)  # scalar binary_field_ghash one
 
 
 def build_eq_g(rg):
-    """`build_eq` on native ghash: `[n]` challenges -> `[2^n]` eq table. The
-    ghash-native core exists so a jitted caller keeps its whole trace on the
-    dtype — chaining lane bitcasts inside a trace trips the XLA simplifier
-    mis-fold (xla#256)."""
-    n = int(rg.shape[0])
-    t = _ONE_G.reshape(1)                # [1]
-    for i in range(n):
-        r_i = rg[i]                      # scalar
-        one_minus = r_i + _ONE_G         # (1 + r_i)
-        t = jnp.concatenate([t * one_minus, t * r_i], axis=0)
+    """`build_eq` on native ghash: `[n]` challenges -> `[2^n]` eq table, via zorch's
+    `expand_hypercube_step` (msb=True: the concatenation `[t·(1+r_i), t·r_i]`, whose
+    `(1−r_i)` share equals flock's `(1+r_i)` over char 2). Ghash-native so a jitted
+    caller keeps its whole trace on the dtype — chaining lane bitcasts inside a trace
+    trips the XLA simplifier mis-fold (xla#256)."""
+    t = _ONE_G.reshape(1)
+    for i in range(int(rg.shape[0])):
+        t = expand_hypercube_step(t, rg[i], msb=True)
     return t
 
 
@@ -72,20 +76,15 @@ def build_eq_fused(r):
     return _BUILD_EQ_FUSED(jnp.asarray(r))
 
 
-def fold_single_g(ag, cg):
-    """`fold_single` on native ghash: `[2^k]` -> `[2^(k-1)]` at scalar `cg`."""
-    p = ag.reshape(-1, 2)
-    return p[:, 0] + cg * (p[:, 0] + p[:, 1])
-
-
 def fold_single(a, challenge):
     """Bind the low variable of one multilinear at `challenge` (flock
-    `fold_in_place_single`): `out[x] = a[2x] + challenge·(a[2x+1] + a[2x])`.
+    `fold_in_place_single`): `out[x] = a[2x] + challenge·(a[2x+1] + a[2x])` — zorch's
+    LSB `fold` (`split_pairs`; over char 2 `(p0+p1) == (p1−p0)`).
 
     a: uint64 [2^k, 2] (k ≥ 1); returns uint64 [2^(k-1), 2].
     """
     return field.from_ghash(
-        fold_single_g(field.to_ghash(a), field.to_ghash(challenge)))
+        fold(field.to_ghash(a), field.to_ghash(challenge), msb=False))
 
 
 def fold_pair(a, b, challenge):
@@ -117,12 +116,14 @@ def build_eq_suffix_tables_g(cs_g):
 
 def round_pair_eq_g(ag, bg, eq, r0g):
     """`round_pair_g` with the eq table already built — the per-round core for
-    callers that precompute every suffix table once (`build_eq_suffix_tables_g`)."""
-    ap, bp = ag.reshape(-1, 2), bg.reshape(-1, 2)
-    a0, a1 = ap[:, 0], ap[:, 1]
-    b0, b1 = bp[:, 0], bp[:, 1]
-    g_one = jnp.sum(eq * (a1 * b1))                # Σ eq·a1·b1
-    g_inf = jnp.sum(eq * ((a0 + a1) * (b0 + b1)))  # Σ eq·(a0+a1)(b0+b1)
+    callers that precompute every suffix table once (`build_eq_suffix_tables_g`).
+
+    The message `[G(1), G(∞)]` is zorch's compressed product round on the low bind:
+    `summand_evals` over `compressed_domain(1)` with the eq suffix as the per-point
+    weight and `msb=False` (`s(∞)`'s char-2 `(a1−a0)` is flock's `(a0+a1)`)."""
+    g_one, g_inf = summand_evals(
+        jnp.stack([ag, bg]), _PRODUCT2, compressed_domain(1, ag.dtype),
+        weight=eq, msb=False)
     return r0g * g_one, g_inf
 
 
@@ -143,15 +144,3 @@ def round_pair(a_mlv, b_mlv, r):
     g1, ginf = round_pair_g(field.to_ghash(a_mlv), field.to_ghash(b_mlv),
                             field.to_ghash(jnp.asarray(r, U64)))
     return field.from_ghash(g1), field.from_ghash(ginf)
-
-
-def eq_eval(r, x):
-    """Point evaluation `eq(r, x) = ∏_i (1 + r_i + x_i)` (flock `eq_eval`).
-
-    r, x: uint64 [n, 2]; returns uint64 [2]. Char-2 form of (1-r)(1-x) + r·x.
-    """
-    factors = field.to_ghash(r) + field.to_ghash(x) + _ONE_G  # [n]
-    acc = _ONE_G
-    for i in range(int(factors.shape[0])):
-        acc = acc * factors[i]
-    return field.from_ghash(acc)
