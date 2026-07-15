@@ -22,7 +22,3 @@ jax-cuda12-pjrt==0.10.0.dev20260714051543
 # jax but the resolver lags, so pin it so the lock tracks the jax wheel.
 # 0.0.10 adds the flat AES-basis binary_field_gf8_aes dtype (zk_dtypes#157).
 zk-dtypes==0.0.10
-
-# Benchmark harness (shared across fractalyze repos); used only by the
-# //flock_zorch/...:*bench* targets, not by the flock-zorch wheel itself.
-zkbench==0.4.0
