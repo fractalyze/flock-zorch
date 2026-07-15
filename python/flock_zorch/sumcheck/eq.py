@@ -83,13 +83,6 @@ def fold_single(a, challenge):
         fold(field.to_ghash(a), field.to_ghash(challenge), msb=False))
 
 
-def fold_pair(a, b, challenge):
-    """Bind the low variable of a pair (a, b) at `challenge` (flock
-    `fold_in_place_pair`). Returns (a_folded, b_folded), each half-length.
-    """
-    return fold_single(a, challenge), fold_single(b, challenge)
-
-
 def build_eq_suffix_tables_g(cs_g):
     """eq tables for every challenge suffix: absorbing `cs_g[i]` as the low bit
     of `eq(cs_g[i+1:])` yields `eq(cs_g[i:])`, so all n+1 tables cost one

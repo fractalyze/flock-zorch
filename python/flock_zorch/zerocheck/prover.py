@@ -6,7 +6,7 @@ Proves `a(y)·b(y) ⊕ c(y) = 0 ∀ y ∈ {0,1}^m`. Structure: one univariate-sk
 round-1 (URM, `_urm.round1_naive`) over K_SKIP=6 skip variables, then a multilinear
 sumcheck over the remaining `m − K_SKIP` variables (the iter-10 `sumcheck`
 primitives). Fiat-Shamir is the host SHA-256 `Challenger`; the bulk field arith
-(`round_pair`/`fold_pair`) runs on the native `binary_field_ghash` multiply (→ clmad on GPU).
+(`round_pair`) runs on the native `binary_field_ghash` multiply (→ clmad on GPU).
 
 The protocol fixes the inner 7 of the `r` challenge coordinates to constants
 (`small`/`medium`), and the C track is pinned at round 1 (extract_c), so only AB
