@@ -34,19 +34,19 @@ log "1. submodules — flock + zorch pinned (see .gitmodules)"
 git submodule update --init --recursive
 git submodule status
 
-log "2. python venv -> $VENV_DIR (jax fork + zk_dtypes + zkx CUDA PJRT from the fractalyze index)"
+log "2. python venv -> $VENV_DIR (frx jax-fork + frxlib + zk_dtypes + CUDA PJRT from the fractalyze index)"
 [ -d "$VENV_DIR" ] || "$PYTHON_BIN" -m venv "$VENV_DIR"
 "$VENV_DIR/bin/pip" install -q --upgrade pip
 "$VENV_DIR/bin/pip" install -q -r requirements.in --extra-index-url "$PYPI_INDEX"
-"$VENV_DIR/bin/python" -c 'import jax; print("  jax", jax.__version__)'
+"$VENV_DIR/bin/python" -c 'import frx; print("  frx", frx.__version__)'
 
 log "3. build Rust against third_party/flock — golden dumpers + CPU benches"
 cargo build --release             # lib (rlib)
 cargo build --release --examples  # dump_* (goldens) + bench_*_cpu (apple-to-apple CPU baselines)
 
-log "4. clmad GPU fast path (compiler-emitted by the jax wheel; needs a CUDA 13.3 ptxas on PATH at runtime — nothing to build)"
+log "4. clmad GPU fast path (compiler-emitted by the frx wheel; needs a CUDA 13.3 ptxas on PATH at runtime — nothing to build)"
 if [ -x "${PTXAS:-$HOME/.local/cuda13/bin/ptxas}" ]; then
-  echo "  CUDA-13.x ptxas found — put ~/.local/cuda13/bin on PATH and the pinned jax"
+  echo "  CUDA-13.x ptxas found — put ~/.local/cuda13/bin on PATH and the pinned frx"
   echo "  wheel emits hardware clmad for the GF(2^128) multiply."
 else
   echo "  no CUDA-13.x ptxas — gates/benches use the software binary_field_ghash multiply"

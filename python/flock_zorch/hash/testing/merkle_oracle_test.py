@@ -1,6 +1,6 @@
 """SHA-256 Merkle-tree byte-match gate.
 
-Loads flock's golden (`merkle_root` over N leaves) and asserts the jax port
+Loads flock's golden (`merkle_root` over N leaves) and asserts the frx port
 reproduces the 32-byte root bit-for-bit — the oracle gate. Merkle is a <1% PCS
 component (NTT dominates 96-322x, see README); the gate here is correctness, not a
 speed target; GPU time is informational.
@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 import numpy as np
-import jax
+import frx
 
 from flock_zorch.hash import merkle
 
@@ -52,7 +52,7 @@ def _hooks_on_commit_path() -> bool:
 
 def main() -> int:
     n_leaves, leaf_size, data, golden_root = _load_golden()
-    print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()}")
+    print(f"device: {frx.devices()[0]} | backend: {frx.default_backend()}")
     got = merkle.merkle_root(data)
     ok = np.array_equal(got, golden_root)
     print(f"Merkle root byte-identity vs flock ({n_leaves} x {leaf_size}B leaves): "
@@ -64,7 +64,7 @@ def main() -> int:
 
     # disable_jit so `_root_dev` runs eagerly: the probe observes the Python
     # routing hooks, which a persistent-compilation-cache hit would bypass.
-    with jax.disable_jit():
+    with frx.disable_jit():
         hooks_ok = _hooks_on_commit_path()
     print(f"batch hooks on zorch commit path: {'PASS' if hooks_ok else 'FAIL'}")
     if not hooks_ok:

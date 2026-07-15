@@ -15,13 +15,13 @@ Two layers, both CPU:
 import sys
 
 import numpy as np
-import jax
+import frx
 
-jax.config.update("jax_enable_x64", True)
-jax.config.update("jax_platforms", "cpu")
+frx.config.update("jax_enable_x64", True)
+frx.config.update("jax_platforms", "cpu")
 
-import jax.numpy as jnp  # noqa: E402
-from jax import lax  # noqa: E402
+import frx.numpy as jnp  # noqa: E402
+from frx import lax  # noqa: E402
 
 from zorch.coding.reed_solomon import ReedSolomon  # noqa: E402
 from zorch.pcs.ligerito.config import LigeritoConfig  # noqa: E402

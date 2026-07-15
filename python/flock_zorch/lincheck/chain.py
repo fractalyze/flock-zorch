@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
-import jax.numpy as jnp
+import frx.numpy as jnp
 
 from flock_zorch import field
 from flock_zorch.sumcheck import build_eq

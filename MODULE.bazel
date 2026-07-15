@@ -30,7 +30,7 @@ bazel_dep(name = "rules_python", version = "1.7.0")
 bazel_dep(name = "zorch", version = "0.0.0")
 git_override(
     module_name = "zorch",
-    commit = "747f646460fedd10b902717ee72c69ad6d63fdc0",
+    commit = "ccc70060007377492a70132421df53d26429c754",
     remote = "https://github.com/fractalyze/zorch.git",
 )
 
@@ -42,7 +42,7 @@ python.toolchain(
 
 pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
 pip.parse(
-    # jax / jaxlib / zkx-cuda-pjrt are published on the Fractalyze index.
+    # frx / frxlib / frx-cuda12 wheels are published on the Fractalyze index.
     extra_pip_args = ["--extra-index-url=https://fractalyze.github.io/pypi/simple/"],
     hub_name = "flock_zorch_pip",
     python_version = "3.11",

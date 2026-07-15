@@ -17,8 +17,8 @@ coefficient of x^i). Requires `jax_enable_x64`.
 from __future__ import annotations
 
 import numpy as np
-import jax
-import jax.numpy as jnp
+import frx
+import frx.numpy as jnp
 
 U64 = jnp.uint64
 
@@ -32,12 +32,12 @@ def to_ghash(a):
 
     flock stores an F128 as its little-endian bytes and the dtype is the same
     bytes, so this is a pure bitcast."""
-    return jax.lax.bitcast_convert_type(jnp.asarray(a, U64), _GHASH)
+    return frx.lax.bitcast_convert_type(jnp.asarray(a, U64), _GHASH)
 
 
 def from_ghash(g):
     """`binary_field_ghash [...]` -> uint64 `[..., 2]` (lo, hi). Inverse of `to_ghash`."""
-    return jax.lax.bitcast_convert_type(g, U64)
+    return frx.lax.bitcast_convert_type(g, U64)
 
 
 def from_ghash_host(g) -> np.ndarray:

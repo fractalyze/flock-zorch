@@ -19,7 +19,7 @@ Requires `jax_enable_x64`.
 from __future__ import annotations
 
 import numpy as np
-import jax.numpy as jnp
+import frx.numpy as jnp
 
 from flock_zorch import field, sumcheck
 from flock_zorch.challenger import Challenger

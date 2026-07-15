@@ -15,9 +15,9 @@ import os
 from pathlib import Path
 
 import numpy as np
-import jax
+import frx
 
-jax.config.update("jax_enable_x64", True)
+frx.config.update("jax_enable_x64", True)
 
 from flock_zorch.zerocheck import _urm  # noqa: E402
 

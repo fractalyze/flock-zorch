@@ -1,7 +1,7 @@
 """PCS commit byte-match gate + GPU-vs-CPU speedup (first full sub-protocol).
 
 (1) Byte gate: load flock's golden (`pcs::commit` over a packed witness) and
-    assert the jax port reproduces the 32-byte Merkle root bit-for-bit — this
+    assert the frx port reproduces the 32-byte Merkle root bit-for-bit — this
     covers the WHOLE commit (pack-layout + interleaved NTT + SHA-256 Merkle).
 (2) Speedup: time the commit's dominant compute — the interleaved forward NTT
     (RS encode) — on GPU vs flock's CPU `forward_transform_interleaved`, and
@@ -21,11 +21,11 @@ import time
 from pathlib import Path
 
 import numpy as np
-import jax
+import frx
 
-jax.config.update("jax_enable_x64", True)  # uint64 field lanes
-import jax.numpy as jnp  # noqa: E402
-from jax import lax  # noqa: E402
+frx.config.update("jax_enable_x64", True)  # uint64 field lanes
+import frx.numpy as jnp  # noqa: E402
+from frx import lax  # noqa: E402
 from zorch.coding.additive_reed_solomon import AdditiveReedSolomon  # noqa: E402
 
 from flock_zorch.pcs import commit as pcs_commit  # noqa: E402
@@ -60,7 +60,7 @@ def _cpu_commit_ms(m, lir, lbs):
 
 def main() -> int:
     m, lir, lbs, z_packed, golden = _load_golden()
-    print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()}")
+    print(f"device: {frx.devices()[0]} | backend: {frx.default_backend()}")
     print(f"commit params: m={m} rate=1/2^{lir} batch=2^{lbs}\n")
 
     # (1) Byte gate over the full commit root.
@@ -77,7 +77,7 @@ def main() -> int:
     num_ntts, n_pos_msg = 1 << lbs, 1 << log_dim
     code = AdditiveReedSolomon(n_pos_msg, 1 << lir, jnp.binary_field_ghash)
     zj = jnp.asarray(z_packed)
-    fn = jax.jit(lambda z: code.encode(lax.bitcast_convert_type(
+    fn = frx.jit(lambda z: code.encode(lax.bitcast_convert_type(
         z.reshape(n_pos_msg, num_ntts, 2), jnp.binary_field_ghash).T))
     r = fn(zj); r.block_until_ready()
     best = float("inf")

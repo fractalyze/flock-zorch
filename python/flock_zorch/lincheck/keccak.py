@@ -21,8 +21,8 @@ distributes over field addition (XOR).
 import functools
 
 import numpy as np
-import jax
-import jax.numpy as jnp
+import frx
+import frx.numpy as jnp
 
 from flock_zorch import field
 
@@ -200,7 +200,7 @@ def _accumulate_subkeccak_dev(eq, col_state0, col_state24, rows_t):
     return jnp.stack(ra), jnp.stack(rb), cs0_a, cs0_b, zc_a, zc_b
 
 
-@functools.partial(jax.jit, static_argnums=(3,))
+@functools.partial(frx.jit, static_argnums=(3,))
 def _fold_walker_dev(eq, alpha, sub_cols, z_const):
     """Device fold shared by both keccak walkers. Run each disjoint sub-keccak,
     scatter-SET its bijective columns (rows_t, col_state0 — no atomics), XOR-merge

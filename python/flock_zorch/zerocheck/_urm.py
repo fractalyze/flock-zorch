@@ -12,8 +12,8 @@ The fused device core lives in `_urm_device`.
 from __future__ import annotations
 
 import numpy as np
-import jax
-import jax.numpy as jnp
+import frx
+import frx.numpy as jnp
 
 from flock_zorch import sumcheck
 
@@ -69,7 +69,7 @@ def witness_to_rows(bits, m: int, k_skip: int):
     n_chunks, ell = 1 << (m - k_skip), 1 << k_skip
     if getattr(bits, "ndim", 0) == 2 and bits.shape[-1] == 2 and np.dtype(bits.dtype) == np.uint64:
         return _urm_device._packed_to_rows(jnp.asarray(bits), m, k_skip)   # packed F128 -> device unpack
-    if isinstance(bits, jax.Array):
+    if isinstance(bits, frx.Array):
         return bits.reshape(n_chunks, ell)
     return jnp.asarray(np.asarray(bits, np.uint8).reshape(n_chunks, ell))
 

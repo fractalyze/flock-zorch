@@ -31,11 +31,11 @@ from __future__ import annotations
 import functools
 from dataclasses import dataclass
 
-from jax.tree_util import register_dataclass
+from frx.tree_util import register_dataclass
 
-import jax.numpy as jnp
+import frx.numpy as jnp
 import numpy as np
-from jax import Array, lax
+from frx import Array, lax
 
 from zorch.coding.reed_solomon import ReedSolomon
 from zorch.pcs.ligerito.choreography import LigeritoChoreography

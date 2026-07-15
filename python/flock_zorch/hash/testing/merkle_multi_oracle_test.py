@@ -1,7 +1,7 @@
 """Merkle tree + octopus multi-proof byte-match gate vs flock.
 
 Loads flock's golden (tree data + query positions + multi-proof) and asserts the
-jax port reproduces both the tree (implicitly, via the proof hashes) and the
+frx port reproduces both the tree (implicitly, via the proof hashes) and the
 multi-proof byte-for-byte — the query-opening primitive of the PCS open.
 
 Run:
@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import jax
+import frx
 
 from flock_zorch.hash import merkle
 
@@ -33,7 +33,7 @@ def main() -> int:
     proof_len = int.from_bytes(raw[off:off + 8], "little"); off += 8
     golden = np.frombuffer(raw, np.uint8, proof_len * 32, off).reshape(proof_len, 32)
 
-    print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()}")
+    print(f"device: {frx.devices()[0]} | backend: {frx.default_backend()}")
     tree = merkle.merkle_tree(data)
     got = merkle.merkle_multi_proof(tree, n_leaves, positions)
     ok = got.shape == golden.shape and np.array_equal(got, golden)

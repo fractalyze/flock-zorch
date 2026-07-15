@@ -19,10 +19,10 @@ from __future__ import annotations
 import functools
 
 import numpy as np
-import jax
-import jax.numpy as jnp
+import frx
+import frx.numpy as jnp
 import zk_dtypes
-from jax import lax
+from frx import lax
 
 from flock_zorch import field
 from flock_zorch.zerocheck import _urm
@@ -55,7 +55,7 @@ def _round1_core():
     separate extend + accumulate)."""
     global _R1_CORE
     if _R1_CORE is None:
-        @functools.partial(jax.jit, static_argnums=(3,))
+        @functools.partial(frx.jit, static_argnums=(3,))
         def core(a, b, c, k_skip, eqx):
             a_l = _extend_rows(a, k_skip)
             b_l = _extend_rows(b, k_skip)
@@ -70,7 +70,7 @@ def _round1_core():
     return _R1_CORE
 
 
-@functools.partial(jax.jit, static_argnums=(1, 2))
+@functools.partial(frx.jit, static_argnums=(1, 2))
 def _packed_to_rows(packed, m: int, k_skip: int):
     """Packed F128 witness [2^(m-7), 2] uint64 -> uint8 rows [2^(m-k_skip), 2^k_skip],
     unpacked ON DEVICE (bit r of element i = z[i·128 + r], LSB-first per lane).

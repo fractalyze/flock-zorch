@@ -3,10 +3,10 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import jax
+import frx
 
-jax.config.update("jax_enable_x64", True)
-import jax.numpy as jnp  # noqa: E402
+frx.config.update("jax_enable_x64", True)
+import frx.numpy as jnp  # noqa: E402
 
 from flock_zorch import field  # noqa: E402
 from flock_zorch.pcs import fri  # noqa: E402
@@ -35,7 +35,7 @@ def _row_batch() -> bool:
     cw = np.frombuffer(raw, np.uint64, n_pos * num_ntts * 2, off).reshape(n_pos * num_ntts, 2)
     off += n_pos * num_ntts * 16
     folded = np.frombuffer(raw, np.uint64, n_pos * 2, off).reshape(n_pos, 2)
-    got = np.asarray(jax.jit(lambda c, ch: fri.row_batch_fold_all(c, ch))(
+    got = np.asarray(frx.jit(lambda c, ch: fri.row_batch_fold_all(c, ch))(
         jnp.asarray(cw), jnp.asarray(chal)))
     ok = np.array_equal(got, folded)
     print(f"row_batch_fold byte-match vs flock (n_pos={n_pos} lbs={lbs}): "
@@ -44,7 +44,7 @@ def _row_batch() -> bool:
 
 
 def main() -> int:
-    print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()}")
+    print(f"device: {frx.devices()[0]} | backend: {frx.default_backend()}")
     return 0 if (_kats() & _row_batch()) else 1
 
 

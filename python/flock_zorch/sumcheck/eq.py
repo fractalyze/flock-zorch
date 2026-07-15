@@ -1,4 +1,4 @@
-"""Multilinear-sumcheck arithmetic core, authored in jax — byte-identical to
+"""Multilinear-sumcheck arithmetic core, authored in frx — byte-identical to
 flock's `zerocheck::{univariate_skip,multilinear}` primitives.
 
 These are the reusable kernels shared by BOTH sumchecks in flock's PIOP
@@ -24,10 +24,10 @@ Requires `jax_enable_x64`.
 """
 from __future__ import annotations
 
-import jax
-import jax.numpy as jnp
+import frx
+import frx.numpy as jnp
 
-from zorch.poly.eq import expand_hypercube_step
+from zorch.poly.eq import expand_eq_to_hypercube
 from zorch.sumcheck.domain import compressed_domain, fold, summand_evals
 from zorch.sumcheck.prover import ProductSummand
 
@@ -42,14 +42,10 @@ _ONE_G = field.to_ghash(ONE)  # scalar binary_field_ghash one
 
 def build_eq_g(rg):
     """`build_eq` on native ghash: `[n]` challenges -> `[2^n]` eq table, via zorch's
-    `expand_hypercube_step` (msb=True: the concatenation `[t·(1+r_i), t·r_i]`, whose
-    `(1−r_i)` share equals flock's `(1+r_i)` over char 2). Ghash-native so a jitted
-    caller keeps its whole trace on the dtype — chaining lane bitcasts inside a trace
-    trips the XLA simplifier mis-fold (xla#256)."""
-    t = _ONE_G.reshape(1)
-    for i in range(int(rg.shape[0])):
-        t = expand_hypercube_step(t, rg[i], msb=True)
-    return t
+    `expand_eq_to_hypercube` (msb=True places r_i at bit i; its `(1−r_i)` share
+    equals flock's `(1+r_i)` over char 2). Ghash-native so a jitted caller keeps its
+    whole trace on the dtype, with no in-trace lane bitcasts to fuse around."""
+    return expand_eq_to_hypercube(rg, _ONE_G, msb=True)
 
 
 def build_eq(r):
@@ -64,7 +60,7 @@ def build_eq(r):
     return field.from_ghash(build_eq_g(field.to_ghash(r)))
 
 
-_BUILD_EQ_FUSED = jax.jit(build_eq)
+_BUILD_EQ_FUSED = frx.jit(build_eq)
 
 
 def build_eq_fused(r):

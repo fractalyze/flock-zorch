@@ -12,9 +12,9 @@ synthetic circuits.
 |-----------|--------|
 | GPU | NVIDIA GeForce RTX 5090 (sm_120, 32607 MiB) |
 | CPU | AMD Ryzen 9 9950X3D 16-Core |
-| CUDA | driver 13.x; JAX runtime = CUDA 12 (jax-cuda12 stack); ptxas ≥ 13.3 for compiler-emitted clmad (sm_120) |
+| CUDA | driver 13.x; frx runtime = CUDA 12 (frx-cuda12 stack); ptxas ≥ 13.3 for compiler-emitted clmad (sm_120) |
 | Rust | flock built thin-LTO, `codegen-units=1`, `target-cpu=native` (its honest x86 best) |
-| Python / JAX | 3.11 / jax_fork jax-cuda12 stack |
+| Python / frx | 3.11 / frx jax-fork cuda12 stack |
 | Date | 2026-06-30 UTC |
 
 - **clmad**: YES (compiler-emitted; ptxas 13.3 on PATH) — hardware GF(2¹²⁸) multiply.
@@ -165,7 +165,7 @@ bulk arithmetic and the CPU winning on latency-bound small instances.
 
 ```bash
 # clmad fast path: put a CUDA 13.3 ptxas on PATH (sm_120 requires >= 13.3); the
-# pinned jax wheel's compiler then emits hardware clmad. Nothing to build.
+# pinned frx wheel's compiler then emits hardware clmad. Nothing to build.
 export PATH="$HOME/.local/cuda13/bin:$PATH"
 
 VENV=.venv/bin/python                          # built by scripts/setup.sh

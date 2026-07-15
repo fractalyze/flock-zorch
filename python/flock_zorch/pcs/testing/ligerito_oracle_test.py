@@ -5,7 +5,7 @@ LigeritoProof) and byte-compares the whole flock `LigeritoProof` — every field
 including the octopus `merkle_proof` — produced by `zorch_ligerito.prove_flock_ligerito`
 (the flock-zorch prove path: `zorch.pcs.ligerito` driven through the flock FS seam,
 octopus reassembled from the zorch openings). This is the golden that survived
-retiring the in-tree jax port (flock-zorch#32 T5); the transcript-visible fields
+retiring the in-tree frx port (flock-zorch#32 T5); the transcript-visible fields
 are also gated at the driver level by `zorch_ligerito_driver_oracle_test`.
 
 Run (regen golden: cargo run --release --example dump_ligerito -- 15 artifacts/ligerito_golden.bin):
@@ -16,9 +16,9 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import jax
+import frx
 
-jax.config.update("jax_enable_x64", True)
+frx.config.update("jax_enable_x64", True)
 
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
@@ -97,7 +97,7 @@ def run():
 
 
 def main() -> int:
-    print(f"device {jax.devices()[0]}")
+    print(f"device {frx.devices()[0]}")
     g, results = run()
     allok = True
     for nm, ok in results:

@@ -20,8 +20,8 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
-import jax
-import jax.numpy as jnp
+import frx
+import frx.numpy as jnp
 
 from flock_zorch import field, sumcheck
 from flock_zorch.zerocheck import _urm
@@ -95,7 +95,7 @@ def medium_challenges() -> list[int]:
     return out
 
 
-@jax.jit
+@frx.jit
 def _mlv_round(a_g, b_g, eq_g, r0_g, t):
     """ONE multilinear round as one device program: the eq-weighted message pair
     (r[0]·G(1), G(∞)) over a precomputed suffix table, two scalar-framed
@@ -103,8 +103,9 @@ def _mlv_round(a_g, b_g, eq_g, r0_g, t):
     the unrolled n_mlv-round graph compiled for minutes and ran ~6x slower than
     its parts (XLA fusion/scheduling collapses on it). The eq table comes in as
     an operand — building it in-round re-compiled the whole doubling chain into
-    every round program (~13 s × n_mlv of the cold wall). All-ghash in-trace —
-    the lane conversions happen at the caller's eager boundary (xla#256)."""
+    every round program (~13 s × n_mlv of the cold wall). All-ghash in-trace; the
+    caller converts uint64 lanes at its eager boundary, keeping this one round a
+    single clean ghash kernel."""
     m1, minf = sumcheck.round_pair_eq_g(a_g, b_g, eq_g, r0_g)
     t = t.observe_scalar(m1).observe_scalar(minf)
     t, rho = t.sample_scalar()
@@ -112,12 +113,12 @@ def _mlv_round(a_g, b_g, eq_g, r0_g, t):
         t, m1, minf, rho
 
 
-@jax.jit
+@frx.jit
 def _observe_finals(t, final_a, final_b):
     return t.observe_scalar(final_a).observe_scalar(final_b)
 
 
-_EQ_TABLES = jax.jit(sumcheck.build_eq_suffix_tables_g)
+_EQ_TABLES = frx.jit(sumcheck.build_eq_suffix_tables_g)
 
 
 class _SetupRound(Round):
@@ -186,8 +187,8 @@ class _MultilinearRound(Round):
         z_int = _to_int(carry.z)
 
         # Fold the witness at z, then run each multilinear round as one jitted
-        # device program with Fiat-Shamir inside. Lane <-> ghash conversions
-        # stay at this eager boundary (xla#256).
+        # device program with Fiat-Shamir inside. The jitted rounds run all-ghash,
+        # so the lane <-> ghash conversions stay here at the eager boundary.
         weights = _lagrange_weights(k_skip, z_int, 0)  # S-domain
         a_g = field.to_ghash(jnp.asarray(_fold_at_z_rows(carry.a_rows, weights)))
         b_g = field.to_ghash(jnp.asarray(_fold_at_z_rows(carry.b_rows, weights)))

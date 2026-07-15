@@ -2,8 +2,8 @@
 on the same sha2 instance. Byte-identity pinned by sha2_ligerito_oracle_test.
 Run: ... e2e_sha2_ligerito_bench.py <flock_cpu_ms>"""
 import sys
-import numpy as np, jax
-jax.config.update("jax_enable_x64", True)
+import numpy as np, frx
+frx.config.update("jax_enable_x64", True)
 from flock_zorch import zerocheck, lincheck, prover  # noqa: E402
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
@@ -17,7 +17,7 @@ def main():
     csc = lincheck.CscCircuit(g["a0_rows"], g["b0_rows"], 1 << k_log, const_pin=meta["const_pin"])
     a_bits, b_bits, c_bits = _unpack(g["a"], m), _unpack(g["b"], m), _unpack(g["z"], m)
     z, stmt = g["z"], g["stmt"]
-    print(f"device {jax.devices()[0]} | sha2-ligerito m={m}")
+    print(f"device {frx.devices()[0]} | sha2-ligerito m={m}")
     def prove_once():
         root, pdata = zorch_ligerito.commit_flock_ligerito(cfg, z)
         ch = Challenger(b"flock-sha2-lig-v0"); prover.bind_statement(ch, stmt, root)

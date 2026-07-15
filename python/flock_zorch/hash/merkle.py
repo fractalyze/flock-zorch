@@ -14,8 +14,8 @@ The octopus multi-proof stays flock-side: the proof layout is flock's assembly.
 """
 from __future__ import annotations
 
-import jax
-import jax.numpy as jnp
+import frx
+import frx.numpy as jnp
 import numpy as np
 
 from zorch.commit.merkle import MerkleTree
@@ -75,7 +75,7 @@ class _GhashSha256LeafHasher(_Sha256LeafHasher):
     device ghash→integer direction (ghash→uint64 returns zeros, zorch#399)."""
 
     def as_bytes(self, matrix):
-        return jax.lax.bitcast_convert_type(matrix, jnp.uint8).reshape(matrix.shape[0], -1)
+        return frx.lax.bitcast_convert_type(matrix, jnp.uint8).reshape(matrix.shape[0], -1)
 
 
 class _Sha256Compressor:
@@ -124,12 +124,12 @@ def verify_openings(legs) -> bool:
     return bool(_verify_openings(_TREE, legs))
 
 
-@jax.jit
+@frx.jit
 def _root_dev(leaves):
     return _TREE.commit(leaves)[0]
 
 
-@jax.jit
+@frx.jit
 def _tree_dev(leaves):
     _, layers = _TREE.commit(leaves)
     return jnp.concatenate(layers, axis=0)  # [2*n_leaves - 1, 32], flock's layout
