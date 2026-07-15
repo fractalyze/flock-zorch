@@ -17,6 +17,10 @@ LOG="artifacts/commit_gate_results.txt"
 source "$HOME/.cargo/env" 2>/dev/null || true
 cargo build --release --example dump_commit --example bench_commit_cpu >/dev/null 2>&1
 
+# commit_oracle_test.py imports `zorch.*`, which isn't a pip dep — resolve the
+# git_override'd @zorch the same way the other venv gates do (scripts/setup.sh).
+ZORCH="$(scripts/zorch_pythonpath.sh)"
+
 # (m, log_inv_rate, log_batch_size): cover both RS rates (1/2, 1/4) and several
 # interleave widths + witness sizes.
 CONFIGS=("20 1 5" "24 1 5" "26 1 5" "22 2 1" "22 1 3" "18 2 4")
@@ -31,7 +35,7 @@ fail=0
 for cfg in "${CONFIGS[@]}"; do
   read -r m lir lbs <<< "$cfg"
   ./target/release/examples/dump_commit "$m" "$lir" "$lbs" artifacts/commit_golden.bin >/dev/null
-  out=$(JAX_PLATFORMS=cuda PYTHONPATH=python "$VENV" \
+  out=$(JAX_PLATFORMS=cuda PYTHONPATH="python:$ZORCH" "$VENV" \
         python/flock_zorch/pcs/testing/commit_oracle_test.py 2>&1 || true)
   line=$(echo "$out" | grep -E "byte-identity|encode|GATE" || echo "NO OUTPUT")
   echo "=== m=$m rate=1/2^$lir batch=2^$lbs ===" | tee -a "$LOG"
