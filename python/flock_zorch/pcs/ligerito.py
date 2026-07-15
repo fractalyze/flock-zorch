@@ -151,28 +151,31 @@ class FlockChoreography(LigeritoChoreography):
     def sample_queries(
         self, transcript: FlockTranscript, block_len: int, count: int
     ) -> tuple[FlockTranscript, Array]:
-        # flock `sample_distinct_queries`: one scalar F128 draw per candidate,
-        # low limb mod block_len, re-draw on repeat, sorted ascending. Draws are
-        # batched through one scanned device program per shortfall (grouping
-        # doesn't change the stream — each draw is the same op sequence), then
-        # deduped in draw order on host; only actual repeats cost a second hop.
+        # flock's distinct-query sampler on the low UINT64 limb (`v.lo`); zorch's
+        # `sample_distinct_positions` reduces uint32 and diverges when block_len
+        # isn't a power of two. Device `while_loop` keeps positions on-device (so
+        # the open jits); one squeeze/iter matches `sample_chain`.
         if count > block_len:  # mirrors flock's sample_distinct_queries assert
             raise ValueError(
                 f"sample_queries: count ({count}) > block_len ({block_len}) — "
                 "config is too thin for this query count"
             )
-        inner = transcript.inner
-        seen: set[int] = set()
-        out: list[int] = []
-        while len(out) < count:
-            inner, gs = fs.sample_chain(inner, count - len(out))
-            for v in field.from_ghash_host(gs)[:, 0]:
-                pos = int(v) % block_len
-                if pos not in seen:
-                    seen.add(pos)
-                    out.append(pos)
-        out.sort()
-        return FlockTranscript(inner), jnp.asarray(out, jnp.int32)
+        bl = jnp.uint64(block_len)
+        idx = jnp.arange(count, dtype=jnp.int32)
+
+        def body(carry):
+            inner, out, n = carry
+            inner, g = inner.sample_scalar()
+            lo = field.from_ghash(g).reshape(2)[0]  # low uint64 limb = flock's v.lo
+            pos = (lo % bl).astype(jnp.int32)
+            hit = jnp.any((idx < n) & (out == pos))  # already drawn this level?
+            out = jnp.where(hit, out, out.at[n].set(pos))
+            return inner, out, jnp.where(hit, n, n + jnp.int32(1))
+
+        inner, out, _ = lax.while_loop(
+            lambda c: c[2] < count, body,
+            (transcript.inner, jnp.zeros(count, jnp.int32), jnp.int32(0)))
+        return FlockTranscript(inner), jnp.sort(out)
 
     def observe_residual(
         self, transcript: FlockTranscript, residual: Array
