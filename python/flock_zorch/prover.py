@@ -1,10 +1,8 @@
 """flock's fused R1CS prover (`prover::prove` / `prove_fast_core`), authored in
-jax — byte-identical to flock-core. It is an instance of zorch's R1CS-SNARK
-assembly `zorch.snark.prove_r1cs` (commit → absorb → reduction stage-chain →
-package): flock injects its byte-exact GF(2) stages (zerocheck → lincheck →
-batched PCS open) and its statement-binding, so only the wire differs from the
-prime-field Spartan instance, not the schedule. One shared SHA-256 challenger
-threads the stages with device-resident state (no per-phase host re-transfer).
+jax — byte-identical to flock-core. A zorch `ProveChain` of Stages threading ONE
+shared SHA-256 challenger with device-resident state (no per-phase host
+re-transfer): commit+bind → zerocheck → lincheck → batched PCS open (see
+`prove_fast`).
 
 a = A·z, b = B·z are kept device-resident across the phases (no per-phase witness
 re-transfer). Gated by `testing/e2e_oracle_test.py` against flock `prover::prove`.
@@ -23,8 +21,7 @@ from flock_zorch.pcs import ring_switch, basefold, fri, ligerito as zorch_ligeri
 from flock_zorch.sumcheck import build_eq
 from flock_zorch.challenger import Challenger  # noqa: F401  (re-exported for callers)
 from flock_zorch.pcs import FlockPcsProver
-from zorch.round import Round
-from zorch.snark import prove_r1cs
+from zorch.round import ProveChain, Round
 
 
 @dataclass(frozen=True)
@@ -163,13 +160,28 @@ class _ProveCarry:
     The `None` fields are the per-stage outputs, written via `replace`."""
 
     z_packed: Any             # witness ẑ, device-resident across stages
+    statement_digest: Any     # R1CS instance digest (bound by _CommitStage)
     z_lincheck: Any           # lincheck witness bytes
     a0: Any                   # lincheck A matrix (dense)
     b0: Any                   # lincheck B matrix (dense)
-    codeword: Any = None      # ← seed_carry (commit residue); read by _PcsOpenStage
-    tree: Any = None          # ← seed_carry (commit residue); read by _PcsOpenStage
+    codeword: Any = None      # ← _CommitStage; read by _PcsOpenStage
+    tree: Any = None          # ← _CommitStage; read by _PcsOpenStage
     zc: dict | None = None    # ← _ZerocheckStage; read by lincheck + open + assembly
     lc_claim: dict | None = None  # ← _LincheckStage; read by open + assembly
+
+
+class _CommitStage(Round):
+    """Commit ẑ through the `FlockPcsProver` seam, then bind the transcript to the
+    statement (flock `bind_statement`): the trace-commit Stage (commit + preamble
+    absorb). Message = the root."""
+
+    def __init__(self, pcs: FlockPcsProver):
+        self._pcs = pcs
+
+    def __call__(self, carry, transcript):
+        root, data = self._pcs.commit([carry.z_packed])
+        bind_statement(transcript, carry.statement_digest, root)
+        return replace(carry, codeword=data.codeword, tree=data.tree), transcript, root
 
 
 class _ZerocheckStage(Round):
@@ -218,9 +230,8 @@ class _PcsOpenStage(Round):
         if (carry.zc is None or carry.lc_claim is None
                 or carry.codeword is None or carry.tree is None):
             raise ValueError("the PCS open needs the commit codeword/tree plus the "
-                             "zerocheck and lincheck outputs on the carry; the "
-                             "assembly's seed_carry must seed the commit residue and "
-                             "the zerocheck + lincheck stages must run before it")
+                             "zerocheck and lincheck outputs on the carry; sequence "
+                             "the commit, zerocheck, and lincheck Stages before it")
         inner_rest = self._k_log - self._k_skip
         zc, lc_claim = carry.zc, carry.lc_claim
         x_outer = zc.mlv_challenges[inner_rest:]
@@ -238,32 +249,22 @@ class _PcsOpenStage(Round):
 def prove_fast(z_packed, m, k_log, k_skip, useful_bits, a0, b0, z_lincheck, statement_digest,
                log_inv_rate=1, log_batch_size=5, domain=b"flock-test-v0") -> ProveFastResult:
     """Fused single-call R1CS prover (identity-C path: c = z), byte-identical to
-    flock `prover::prove`. flock's instance of `zorch.snark.prove_r1cs`: the
-    commit + statement-bind ride the assembly template, and flock injects its
-    reduction stages (zerocheck → lincheck → batched dual-claim open) threading
-    one shared challenger + a `_ProveCarry` (no per-phase host re-transfer).
-    a = A·z, b = B·z; for the identity R1CS a = b = c = z (the gated path)."""
+    flock `prover::prove`. A zorch `ProveChain` of Stages threading one shared
+    challenger + a `_ProveCarry` (no per-phase host re-transfer): commit+bind →
+    zerocheck → lincheck → batched dual-claim open. a = A·z, b = B·z; for the
+    identity R1CS a = b = c = z (the gated path). Returns the proof + claims."""
     pcs = FlockPcsProver(m, log_inv_rate, log_batch_size)
-    base = _ProveCarry(z_packed=z_packed, z_lincheck=z_lincheck, a0=a0, b0=b0)
 
-    def absorb(ch, root):
-        bind_statement(ch, statement_digest, root)  # mutates the challenger in place
-        return ch
+    ch = Challenger(domain)
+    carry = _ProveCarry(z_packed=z_packed, statement_digest=statement_digest,
+                        z_lincheck=z_lincheck, a0=a0, b0=b0)
+    carry, _ch, msgs = ProveChain([
+        _CommitStage(pcs),
+        _ZerocheckStage(m),
+        _LincheckStage(m, k_log, k_skip),
+        _PcsOpenStage(pcs, k_log, k_skip),
+    ])(carry, ch)
+    _root, zc, (lc_rounds, lc_zp), pcs_open_proof = msgs
 
-    def seed_carry(data):
-        return replace(base, codeword=data.codeword, tree=data.tree)
-
-    def make_stages(data):
-        return [_ZerocheckStage(m), _LincheckStage(m, k_log, k_skip),
-                _PcsOpenStage(pcs, k_log, k_skip)]
-
-    def package(root, carry, msgs):
-        zc, (lc_rounds, lc_zp), pcs_open_proof = msgs
-        return ProveFastResult(
-            zerocheck=zc, lincheck=(lc_rounds, lc_zp), pcs_open=pcs_open_proof,
-            claim_ab_value=carry.lc_claim.w, claim_c_value=zc.final_c_eval)
-
-    result, _ch = prove_r1cs(
-        pcs, z_packed, Challenger(domain), absorb=absorb, seed_carry=seed_carry,
-        make_stages=make_stages, package=package)
-    return result
+    return ProveFastResult(zerocheck=zc, lincheck=(lc_rounds, lc_zp), pcs_open=pcs_open_proof,
+                           claim_ab_value=carry.lc_claim.w, claim_c_value=zc.final_c_eval)
