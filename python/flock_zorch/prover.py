@@ -157,22 +157,22 @@ def open_batch_mixed_ligerito(config, z_packed, pdata, x_outers, packed_direct,
 
 @dataclass(frozen=True)
 class _ProveCarry:
-    """State threaded between prove_fast's stage `Round`s — only what a later
-    stage reads from an earlier one. Static config (shapes, rates) lives on
-    the Round instances, per zorch's Round convention (cf. sp1-zorch ShardCarry).
+    """State threaded between prove_fast's stages — only what a later stage reads
+    from an earlier one. Static config (shapes, rates) lives on the stage
+    instances, per zorch's `Round`-interface convention (cf. sp1-zorch ShardCarry).
     The `None` fields are the per-stage outputs, written via `replace`."""
 
     z_packed: Any             # witness ẑ, device-resident across stages
     z_lincheck: Any           # lincheck witness bytes
     a0: Any                   # lincheck A matrix (dense)
     b0: Any                   # lincheck B matrix (dense)
-    codeword: Any = None      # ← seed_carry (commit residue); read by _PcsOpenRound
-    tree: Any = None          # ← seed_carry (commit residue); read by _PcsOpenRound
-    zc: dict | None = None    # ← _ZerocheckRound; read by lincheck + open + assembly
-    lc_claim: dict | None = None  # ← _LincheckRound; read by open + assembly
+    codeword: Any = None      # ← seed_carry (commit residue); read by _PcsOpenStage
+    tree: Any = None          # ← seed_carry (commit residue); read by _PcsOpenStage
+    zc: dict | None = None    # ← _ZerocheckStage; read by lincheck + open + assembly
+    lc_claim: dict | None = None  # ← _LincheckStage; read by open + assembly
 
 
-class _ZerocheckRound(Round):
+class _ZerocheckStage(Round):
     """R1CS zerocheck on the identity witness (a = b = c = ẑ). Message = the
     zerocheck proof/claim dict, also threaded onto the carry for later stages."""
 
@@ -185,7 +185,7 @@ class _ZerocheckRound(Round):
         return replace(carry, zc=zc), transcript, zc
 
 
-class _LincheckRound(Round):
+class _LincheckStage(Round):
     """Lincheck reducing a = A·z, b = B·z to the ab evaluation claim at the
     zerocheck challenge point. Message = (rounds, z_partial); writes the ab claim
     onto the carry."""
@@ -196,7 +196,7 @@ class _LincheckRound(Round):
     def __call__(self, carry, transcript):
         if carry.zc is None:
             raise ValueError("lincheck needs the zerocheck output on the carry; "
-                             "sequence a _ZerocheckRound before this Round")
+                             "sequence a _ZerocheckStage before this stage")
         inner_rest = self._k_log - self._k_skip
         zc = carry.zc
         x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, inner_rest)
@@ -206,8 +206,8 @@ class _LincheckRound(Round):
         return replace(carry, lc_claim=lp.claim), transcript, (lp.rounds, lp.z_partial)
 
 
-class _PcsOpenRound(Round):
-    """Batched dual-claim PCS open of the ab + c claims — the final round. ab
+class _PcsOpenStage(Round):
+    """Batched dual-claim PCS open of the ab + c claims — the final stage. ab
     point = lincheck r_inner_rest ++ zerocheck x_outer; c point = the zerocheck
     r_rest. Message = the BatchOpeningProof dict."""
 
@@ -220,7 +220,7 @@ class _PcsOpenRound(Round):
             raise ValueError("the PCS open needs the commit codeword/tree plus the "
                              "zerocheck and lincheck outputs on the carry; the "
                              "assembly's seed_carry must seed the commit residue and "
-                             "the zerocheck + lincheck Rounds must run before it")
+                             "the zerocheck + lincheck stages must run before it")
         inner_rest = self._k_log - self._k_skip
         zc, lc_claim = carry.zc, carry.lc_claim
         x_outer = zc.mlv_challenges[inner_rest:]
@@ -254,8 +254,8 @@ def prove_fast(z_packed, m, k_log, k_skip, useful_bits, a0, b0, z_lincheck, stat
         return replace(base, codeword=data.codeword, tree=data.tree)
 
     def make_stages(data):
-        return [_ZerocheckRound(m), _LincheckRound(m, k_log, k_skip),
-                _PcsOpenRound(pcs, k_log, k_skip)]
+        return [_ZerocheckStage(m), _LincheckStage(m, k_log, k_skip),
+                _PcsOpenStage(pcs, k_log, k_skip)]
 
     def package(root, carry, msgs):
         zc, (lc_rounds, lc_zp), pcs_open_proof = msgs
