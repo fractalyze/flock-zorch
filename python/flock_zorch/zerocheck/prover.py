@@ -3,7 +3,7 @@ serializable proof — authored as a host round loop, byte-identical to flock-co
 `zerocheck::prove_packed_padded_inner`.
 
 Proves `a(y)·b(y) ⊕ c(y) = 0 ∀ y ∈ {0,1}^m`. Structure: one univariate-skip
-round-1 (URM, `gf8.round1_naive`) over K_SKIP=6 skip variables, then a multilinear
+round-1 (URM, `_urm.round1_naive`) over K_SKIP=6 skip variables, then a multilinear
 sumcheck over the remaining `m − K_SKIP` variables (the iter-10 `sumcheck`
 primitives). Fiat-Shamir is the host SHA-256 `Challenger`; the bulk field arith
 (`round_pair`/`fold_pair`) runs on the native `binary_field_ghash` multiply (→ clmad on GPU).
@@ -24,7 +24,7 @@ import jax
 import jax.numpy as jnp
 
 from flock_zorch import field, sumcheck
-from flock_zorch.field import gf8
+from flock_zorch.zerocheck import _urm
 from flock_zorch.field import _to_int, _to_lohi, _int_to_ghash, _ghash_to_int
 from flock_zorch.challenger import Challenger
 from flock_zorch.zerocheck._fold import (
@@ -156,10 +156,10 @@ class _UrmRound(Round):
         m, k_skip = self._m, self._k_skip
         # Transfer the witness to device ONCE (round1 reads a/b/c; the multilinear
         # fold_at_z reuses a/b without re-sending) — the device-resident pattern.
-        a_rows = gf8.witness_to_rows(carry.a_bits, m, k_skip)
-        b_rows = gf8.witness_to_rows(carry.b_bits, m, k_skip)
-        c_rows = gf8.witness_to_rows(carry.c_bits, m, k_skip)
-        round1_ab, round1_c = gf8.round1_rows(a_rows, b_rows, c_rows, m, k_skip, carry.r)
+        a_rows = _urm.witness_to_rows(carry.a_bits, m, k_skip)
+        b_rows = _urm.witness_to_rows(carry.b_bits, m, k_skip)
+        c_rows = _urm.witness_to_rows(carry.c_bits, m, k_skip)
+        round1_ab, round1_c = _urm.round1_rows(a_rows, b_rows, c_rows, m, k_skip, carry.r)
         transcript.observe_f128_slice(round1_ab)
         transcript.observe_f128_slice(round1_c)
         z = transcript.sample_f128()
