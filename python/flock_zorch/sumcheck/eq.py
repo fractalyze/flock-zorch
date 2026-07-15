@@ -92,6 +92,13 @@ def fold_single(a, challenge):
         fold(field.to_ghash(a), field.to_ghash(challenge), msb=False))
 
 
+def fold_single_g(ag, challenge_g):
+    """`fold_single` on native ghash: binds the low variable of `ag` at
+    `challenge_g`, ghash in and out. For callers threading the sumcheck state on
+    the dtype (no per-round lane bitcast around the fold)."""
+    return fold(ag, challenge_g, msb=False)
+
+
 def build_eq_suffix_tables_g(cs_g):
     """eq tables for every challenge suffix: absorbing `cs_g[i]` as the low bit
     of `eq(cs_g[i+1:])` yields `eq(cs_g[i:])`, so all n+1 tables cost one

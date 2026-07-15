@@ -41,11 +41,10 @@ def _hf_mul(a, b):
     return np.asarray(ag * bg).view(np.uint64)
 
 
-def _round_message(a, b):
+def _round_message(ag, bg):
     """Round message (u_0, u_2) = (Σ a_e·b_e, Σ (a_e+a_o)·(b_e+b_o)) over the
-    even/odd split (flock's round-0 prime / fused next-round message). Returns
-    jnp (device) — the caller converts to np for the transcript/proof."""
-    ag, bg = field.to_ghash(a), field.to_ghash(b)
+    even/odd split (flock's round-0 prime / fused next-round message). `ag`/`bg` are
+    the native-ghash sumcheck state; returns ghash (u0, u2)."""
     ae, ao = ag[0::2], ag[1::2]
     be, bo = bg[0::2], bg[1::2]
     u0 = jnp.sum(ae * be)
@@ -64,7 +63,7 @@ def _bf_ops():
     if _BF_OPS is None:
         _BF_OPS = (
             frx.jit(lambda a, b: _round_message(a, b)),
-            frx.jit(lambda a, r: sumcheck.fold_single(a, r)),
+            frx.jit(lambda a, r: sumcheck.fold_single_g(a, r)),
             frx.jit(lambda cw, ch: fri.row_batch_fold_all(cw, ch)),
         )
     return _BF_OPS
@@ -129,8 +128,8 @@ def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_s
     ch.observe_label(LABEL)
     round_message, fold_single, row_batch = _bf_ops()
 
-    a = jnp.asarray(z_packed)
-    bb = jnp.asarray(b)
+    a = field.to_ghash(jnp.asarray(z_packed))   # native-ghash sumcheck state
+    bb = field.to_ghash(jnp.asarray(b))
     cw_full = jnp.asarray(codeword)        # initial SoA codeword (kept for T1 leaves)
     cw_active = cw_full
     cw_g = None                            # ghash fold state; entered on the first FRI round
@@ -147,9 +146,9 @@ def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_s
         u0_g, u2_g = round_message(a, bb)
         ch._t, r_g = fs.observe_pair_sample(ch._t, u0_g, u2_g)
         round_messages.append((field.from_ghash_host(u0_g), field.from_ghash_host(u2_g)))
-        r = field.from_ghash(r_g)
-        a = fold_single(a, r)
-        bb = fold_single(bb, r)
+        r = field.from_ghash(r_g)              # lanes: row-batch challenges + FRI state
+        a = fold_single(a, r_g)                # ghash fold of the sumcheck state
+        bb = fold_single(bb, r_g)
 
         if rnd < log_batch_size:
             rb_challenges.append(r)
@@ -181,8 +180,8 @@ def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_s
                 rounds_in_epoch = 0
                 current_epoch += 1
 
-    final_a = np.asarray(a)[0]
-    final_b = np.asarray(bb)[0]
+    final_a = field.from_ghash_host(a)[0]
+    final_b = field.from_ghash_host(bb)[0]
     final_codeword = field.from_ghash_host(cw_g) if cw_g is not None else np.asarray(cw_active)
 
     # ---- query openings: sample positions, gather each layer's leaf, Merkle multi-proofs ----
