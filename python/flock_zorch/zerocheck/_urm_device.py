@@ -8,7 +8,7 @@ The extension uses base-subspace transforms only: inverse NTT size ℓ →
 zero-pad coefficients to 2ℓ → forward NTT size 2ℓ → second half = the β=ℓ
 coset. No coset-offset kernel support needed.
 
-Reads gf8's host PHI_8_TABLE (the only host<->device shared datum). gf8 ⇄ _gf8_device
+Reads _urm's host PHI_8_TABLE (the only host<->device shared datum). _urm ⇄ _urm_device
 is a deliberate cycle made safe by MODULE imports on both sides (no import-time lookup
 of a not-yet-defined name) + call-time attribute access, so either load order works.
 
@@ -25,9 +25,9 @@ import zk_dtypes
 from jax import lax
 
 from flock_zorch import field
-from flock_zorch.field import gf8
+from flock_zorch.zerocheck import _urm
 
-_PHI_DEV = jnp.asarray(gf8.PHI_8_TABLE)     # [256, 2] uint64
+_PHI_DEV = jnp.asarray(_urm.PHI_8_TABLE)     # [256, 2] uint64
 _AES = np.dtype(zk_dtypes.binary_field_gf8_aes)
 
 

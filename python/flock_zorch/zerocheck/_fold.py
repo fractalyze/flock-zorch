@@ -12,7 +12,7 @@ import jax
 import jax.numpy as jnp
 
 from flock_zorch import field
-from flock_zorch.field import gf8
+from flock_zorch.zerocheck import _urm
 from flock_zorch.field import _to_int, _to_lohi
 
 _ONE = np.array([1, 0], dtype=np.uint64)
@@ -20,7 +20,7 @@ _ONE_G = field.to_ghash(jnp.asarray(_ONE))  # binary_field_ghash scalar one
 
 
 def _phi_int(v: int) -> int:
-    return _to_int(gf8.PHI_8_TABLE[v])
+    return _to_int(_urm.PHI_8_TABLE[v])
 
 
 def _prod_axis1(mat):

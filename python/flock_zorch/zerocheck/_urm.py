@@ -7,7 +7,7 @@ F8 arithmetic and its additive NTT are compiler-native: the
 field-generic LCH14 additive NTT through `lax.ntt`, so this module carries no
 field code — only φ₈ (a field homomorphism into an F128 subfield, the only
 link between the AES basis and the GHASH basis) and the round-1 plumbing.
-The fused device core lives in `_gf8_device`.
+The fused device core lives in `_urm_device`.
 """
 from __future__ import annotations
 
@@ -49,10 +49,10 @@ def _build_phi8_table() -> np.ndarray:
 PHI_8_TABLE = _build_phi8_table()  # uint64 [256, 2] = F128
 
 
-# Device (GPU) F8 kernels for the round-1 URM live in _gf8_device. Module import
-# (after the host PHI_8_TABLE above): the gf8 <-> _gf8_device cycle is broken by
-# importing the MODULE and reaching its kernels at call time (no import-time lookup).
-from flock_zorch.field import _gf8_device
+# Device (GPU) round-1 URM kernels live in _urm_device. Module import (after the
+# host PHI_8_TABLE above): the _urm <-> _urm_device cycle is broken by importing
+# the MODULE and reaching its kernels at call time (no import-time lookup).
+from flock_zorch.zerocheck import _urm_device
 
 
 # ---------------------------------------------------------------------------
@@ -68,7 +68,7 @@ def witness_to_rows(bits, m: int, k_skip: int):
     array (transferred once); or an already-device array (reshaped, no copy)."""
     n_chunks, ell = 1 << (m - k_skip), 1 << k_skip
     if getattr(bits, "ndim", 0) == 2 and bits.shape[-1] == 2 and np.dtype(bits.dtype) == np.uint64:
-        return _gf8_device._packed_to_rows(jnp.asarray(bits), m, k_skip)   # packed F128 -> device unpack
+        return _urm_device._packed_to_rows(jnp.asarray(bits), m, k_skip)   # packed F128 -> device unpack
     if isinstance(bits, jax.Array):
         return bits.reshape(n_chunks, ell)
     return jnp.asarray(np.asarray(bits, np.uint8).reshape(n_chunks, ell))
@@ -80,7 +80,7 @@ def round1_rows(a, b, c, m: int, k_skip: int, r):
     reused by `zerocheck._fold_at_z_rows`. Returns (P^AB, P^C) as numpy."""
     r = np.asarray(r, dtype=np.uint64)
     eqx = sumcheck.build_eq_fused(jnp.asarray(r[k_skip:]))[:, None, :]  # [n_chunks, 1, 2]
-    p_ab, p_c = _gf8_device._round1_core()(a, b, c, k_skip, eqx)  # fused extend+phi+accum
+    p_ab, p_c = _urm_device._round1_core()(a, b, c, k_skip, eqx)  # fused extend+phi+accum
     return np.asarray(p_ab), np.asarray(p_c)
 
 

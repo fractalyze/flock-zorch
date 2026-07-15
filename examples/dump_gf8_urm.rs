@@ -1,5 +1,5 @@
 //! Golden-fixture dumper for the zerocheck round-1 univariate-skip URM
-//! (`round1_naive`) and the φ₈ table — port targets for `flock_zorch.gf8`.
+//! (`round1_naive`) and the φ₈ table — port targets for `flock_zorch.zerocheck._urm`.
 //!
 //! Dumps flock's `PHI_8_TABLE` (256 F128, for a cross-check of the F2-linear
 //! reconstruction) and, for a few (m, k_skip), the reference `round1_naive`
