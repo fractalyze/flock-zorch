@@ -25,10 +25,10 @@ import frx.numpy as jnp
 
 from flock_zorch import field, sumcheck
 from flock_zorch.zerocheck import _urm
-from flock_zorch.field import _to_int, _to_lohi, _int_to_ghash, _ghash_to_int
+from flock_zorch.field import _lanes_to_ghash, _ghash_to_lanes
 from flock_zorch.challenger import Challenger
 from flock_zorch.zerocheck._fold import (
-    _lagrange_weights, _interpolate_at_z_on_lambda, _fold_at_z_rows, _phi_int, _ONE,
+    _lagrange_weights, _interpolate_at_z_on_lambda, _fold_at_z_dev,
 )
 from zorch.round import ProveChain, Round
 from zorch.sumcheck.domain import fold
@@ -80,19 +80,21 @@ class _ZerocheckCarry:
     mlv_challenges: Any = None       # ← _MultilinearRound
 
 
-def small_challenges() -> list[int]:
-    """[φ₈(0xF7), φ₈(0x53), φ₈(0xB5)] (flock `small_challenges_ghash`)."""
-    return [_phi_int(0xF7), _phi_int(0x53), _phi_int(0xB5)]
+def small_challenges() -> np.ndarray:
+    """[φ₈(0xF7), φ₈(0x53), φ₈(0xB5)] (flock `small_challenges_ghash`). uint64 [3, 2]."""
+    return _urm.PHI_8_TABLE[[0xF7, 0x53, 0xB5]]
 
 
-def medium_challenges() -> list[int]:
+def medium_challenges() -> np.ndarray:
     """[γ^E·(1+γ^E)⁻¹ for E∈{1,2,4,8}], γ^E = single bit at lo position E
-    (flock `medium_challenges_ghash`)."""
-    out = []
-    for e in (1, 2, 4, 8):
-        ge = 1 << e
-        out.append(_ghash_to_int(_int_to_ghash(ge) * _int_to_ghash(1 ^ ge) ** -1))
-    return out
+    (flock `medium_challenges_ghash`). uint64 [4, 2].
+
+    Inverted scalar-wise: `** -1` on a ghash *array* takes numpy's ufunc path,
+    which rejects the -1 exponent; zk_dtypes' host inverse is scalar-only."""
+    gamma = _lanes_to_ghash(np.array([[1 << e, 0] for e in (1, 2, 4, 8)], np.uint64))
+    one_plus = _lanes_to_ghash(np.array([[1 ^ (1 << e), 0] for e in (1, 2, 4, 8)], np.uint64))
+    return _ghash_to_lanes(
+        np.array([g * gp1 ** -1 for g, gp1 in zip(gamma, one_plus)], field._GHASH_HOST))
 
 
 @frx.jit
@@ -136,10 +138,8 @@ class _SetupRound(Round):
         # r = r_skip ++ small ++ medium ++ r_outer
         r = np.zeros((m, 2), dtype=np.uint64)
         r[:k_skip] = r_skip
-        for i, v in enumerate(small_challenges()):
-            r[k_skip + i] = _to_lohi(v)
-        for i, v in enumerate(medium_challenges()):
-            r[k_skip + 3 + i] = _to_lohi(v)
+        r[k_skip:k_skip + 3] = small_challenges()
+        r[k_skip + 3:k_skip + N_INNER] = medium_challenges()
         if m - k_skip - N_INNER > 0:
             r[k_skip + N_INNER:] = r_outer
         return replace(carry, r=r), transcript, None
@@ -164,10 +164,8 @@ class _UrmRound(Round):
         transcript.observe_f128_slice(round1_ab)
         transcript.observe_f128_slice(round1_c)
         z = transcript.sample_f128()
-        z_int = _to_int(z)
         # c-claim: interpolate round1_c at z.
-        round1_c_int = [_to_int(round1_c[i]) for i in range(round1_c.shape[0])]
-        final_c_eval = _to_lohi(_interpolate_at_z_on_lambda(round1_c_int, k_skip, z_int))
+        final_c_eval = _interpolate_at_z_on_lambda(round1_c, k_skip, z)
         carry = replace(carry, a_rows=a_rows, b_rows=b_rows, round1_ab=round1_ab,
                         round1_c=round1_c, z=z, final_c_eval=final_c_eval)
         return carry, transcript, (round1_ab, round1_c)
@@ -184,14 +182,13 @@ class _MultilinearRound(Round):
     def __call__(self, carry, transcript):
         m, k_skip = self._m, self._k_skip
         n_mlv = m - k_skip
-        z_int = _to_int(carry.z)
 
         # Fold the witness at z, then run each multilinear round as one jitted
         # device program with Fiat-Shamir inside. The jitted rounds run all-ghash,
         # so the lane <-> ghash conversions stay here at the eager boundary.
-        weights = _lagrange_weights(k_skip, z_int, 0)  # S-domain
-        a_g = field.to_ghash(jnp.asarray(_fold_at_z_rows(carry.a_rows, weights)))
-        b_g = field.to_ghash(jnp.asarray(_fold_at_z_rows(carry.b_rows, weights)))
+        weights = jnp.asarray(_lagrange_weights(k_skip, carry.z, 0))  # S-domain
+        a_g = field.to_ghash(_fold_at_z_dev(carry.a_rows, weights))
+        b_g = field.to_ghash(_fold_at_z_dev(carry.b_rows, weights))
         r_g = field.to_ghash(jnp.asarray(carry.r))
 
         t = transcript._t
