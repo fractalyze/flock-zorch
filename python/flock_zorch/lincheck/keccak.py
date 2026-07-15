@@ -222,8 +222,8 @@ def _fold_walker_dev(eq, alpha, sub_cols, z_const):
     e0 = eq[z_const]                                             # row-0 const (shared)
     comb_a = comb_a.at[z_const].set(zc_a ^ e0)
     comb_b = comb_b.at[z_const].set(zc_b ^ e0)
-    a_g, ca_g, cb_g = field.to_ghash(alpha), field.to_ghash(comb_a), field.to_ghash(comb_b)
-    return a_g * ca_g + cb_g                  # α·comb_a ⊕ comb_b
+    ca_g, cb_g = field.to_ghash(comb_a), field.to_ghash(comb_b)
+    return alpha * ca_g + cb_g                # α·comb_a ⊕ comb_b (alpha native ghash)
 
 
 def _device_sub_cols(sub_cols):

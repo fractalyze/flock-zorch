@@ -53,6 +53,12 @@ class Challenger:
         self._t, g = fs.sample_scalar(self._t)
         return field.from_ghash_host(g)
 
+    def sample_f128_g(self):
+        """Sample one F128 as a native `binary_field_ghash` scalar — no host
+        round-trip, for device consumers that would otherwise re-lift the lanes."""
+        self._t, g = fs.sample_scalar(self._t)
+        return g
+
     def sample_f128_vec(self, n: int) -> np.ndarray:
         self._t, g = fs.sample_slice(self._t, n)
         return field.from_ghash_host(g)

@@ -58,11 +58,10 @@ def _mat_fold(mat_dense, eq):
 
 def fold_alpha_batched(alpha, a_dense, b_dense, eq_inner):
     """comb[c] = α·(A₀ᵀ·eq_inner)[c] ⊕ (B₀ᵀ·eq_inner)[c] (flock
-    `sparse_row_fold_alpha_batched`)."""
+    `sparse_row_fold_alpha_batched`). `alpha` is a native ghash scalar."""
     ae = _mat_fold(a_dense, eq_inner)  # ghash
     be = _mat_fold(b_dense, eq_inner)
-    alpha_g = field.to_ghash(jnp.asarray(alpha))
-    return alpha_g * ae + be  # ghash [c]
+    return alpha * ae + be  # ghash [c]
 
 
 class CscCircuit:
@@ -88,8 +87,7 @@ class CscCircuit:
         zero = jnp.zeros((self.k, 2), U64)
         out_a = _seg_xor_fold(eq, *self._a_seg, self.k) if self._a_seg else zero
         out_b = _seg_xor_fold(eq, *self._b_seg, self.k) if self._b_seg else zero
-        alpha_g = field.to_ghash(jnp.asarray(alpha))
-        return alpha_g * field.to_ghash(out_a) + field.to_ghash(out_b)  # ghash [k]
+        return alpha * field.to_ghash(out_a) + field.to_ghash(out_b)  # ghash [k]; alpha native ghash
 
 
 def partial_fold_packed_z(z_packed_bytes: bytes, m: int, k_log: int, eq_outer):
@@ -210,14 +208,14 @@ class _CombRound(Round):
         k_skip = self._k_skip
         x_ab, circuit = carry.x_ab, carry.circuit
         transcript.observe_label(LABEL)
-        alpha = jnp.asarray(transcript.sample_f128())
+        alpha = transcript.sample_f128_g()                     # native ghash
         eq_inner = build_quirky_eq_table(_to_int(x_ab.z_skip), x_ab.x_inner_rest, k_skip)
         if circuit is not None:
             comb = circuit.fold_alpha_batched(alpha, eq_inner)  # ghash
             if circuit.const_pin is not None:
-                beta = jnp.asarray(transcript.sample_f128())   # sampled AFTER alpha (flock order)
+                beta = transcript.sample_f128_g()              # sampled AFTER alpha (flock order)
                 col = circuit.const_pin
-                comb = comb.at[col].set(comb[col] + field.to_ghash(beta))
+                comb = comb.at[col].set(comb[col] + beta)
         else:
             comb = fold_alpha_batched(alpha, jnp.asarray(carry.a_dense),
                                       jnp.asarray(carry.b_dense), eq_inner)
