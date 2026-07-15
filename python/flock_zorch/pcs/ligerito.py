@@ -337,8 +337,8 @@ def prove_flock_ligerito(cfg: dict, pdata: LigeritoProverData, b_combined, targe
     log_n = pdata.f.shape[0].bit_length() - 1
     prover, config, chor = _flock_ligerito_prover(cfg, log_n)
 
-    b = _bitrev(field.to_ghash(b_combined.reshape(-1, 2)))
-    value = field.to_ghash(target)
+    b = _bitrev(b_combined)          # b_combined already native ghash [2^L]
+    value = target                   # native ghash scalar
 
     proof, t_open = prover.open_with_basis(pdata, b, value, FlockTranscript(ch._t))
     ch._t = t_open.inner

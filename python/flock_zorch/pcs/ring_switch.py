@@ -63,12 +63,12 @@ def prove_batched(packed_witness, x_outers, ch: Challenger):
     (s_hat_vs, rs_eq_inds[gamma-baked], sumcheck_claims, gammas)."""
     packed = field.to_ghash(packed_witness)
     works = [_reduce_one(packed, x_outer, ch) for x_outer in x_outers]
-    gammas = [ch.sample_f128() for _ in range(len(x_outers))]
+    gammas = [ch.sample_f128_g() for _ in range(len(x_outers))]  # native ghash
 
     s_hat_vs, rs_eq_inds, sumcheck_claims = [], [], []
     for (s_hat_v_lanes, suffix_tensor, eq_r_dprime, claim), g in zip(works, gammas):
-        scaled = field.to_ghash(jnp.asarray(g)) * eq_r_dprime  # gamma baked into eq
-        rs_eq_inds.append(field.from_ghash_host(zrs.rs_eq_ind(suffix_tensor, scaled)))
+        scaled = g * eq_r_dprime  # gamma baked into eq
+        rs_eq_inds.append(zrs.rs_eq_ind(suffix_tensor, scaled))  # ghash [2^L], device-resident
         s_hat_vs.append(s_hat_v_lanes)
         sumcheck_claims.append(claim)
     return s_hat_vs, rs_eq_inds, sumcheck_claims, gammas
