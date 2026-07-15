@@ -1,21 +1,31 @@
 """φ₈ embedding of F8 = GF(2⁸) (AES field) into F128 + the zerocheck round-1
-univariate-skip URM orchestration (`round1_naive`). Byte-identical to
-flock-core's `field/phi8.rs` and `zerocheck/univariate_skip.rs::round1_naive`.
+univariate-skip URM (`round1_naive`) — host orchestration and the fused device
+core. Byte-identical to flock-core's `field/phi8.rs` and
+`zerocheck/univariate_skip.rs::round1_naive`.
 
 F8 arithmetic and its additive NTT are compiler-native: the
 `binary_field_gf8_aes` dtype (AES poly x⁸+x⁴+x³+x+1 = 0x11B) dispatches the
 field-generic LCH14 additive NTT through `lax.ntt`, so this module carries no
 field code — only φ₈ (a field homomorphism into an F128 subfield, the only
 link between the AES basis and the GHASH basis) and the round-1 plumbing.
-The fused device core lives in `_urm_device`.
+
+The S→Λ extension uses base-subspace transforms only: inverse NTT size ℓ →
+zero-pad coefficients to 2ℓ → forward NTT size 2ℓ → second half = the β=ℓ
+coset. No coset-offset kernel support needed.
+
+Requires jax_enable_x64.
 """
 from __future__ import annotations
+
+import functools
 
 import numpy as np
 import frx
 import frx.numpy as jnp
+import zk_dtypes
+from frx import lax
 
-from flock_zorch import sumcheck
+from flock_zorch import field, sumcheck
 
 # ---------------------------------------------------------------------------
 # phi8: F8 -> F128 embedding (256-entry table). F2-linear, so the full table is
@@ -46,13 +56,62 @@ def _build_phi8_table() -> np.ndarray:
     return table
 
 
-PHI_8_TABLE = _build_phi8_table()  # uint64 [256, 2] = F128
+PHI_8_TABLE = _build_phi8_table()  # uint64 [256, 2] = F128 (host; `_fold` indexes it)
+
+_PHI_DEV = jnp.asarray(PHI_8_TABLE)
+_AES = np.dtype(zk_dtypes.binary_field_gf8_aes)
 
 
-# Device (GPU) round-1 URM kernels live in _urm_device. Module import (after the
-# host PHI_8_TABLE above): the _urm <-> _urm_device cycle is broken by importing
-# the MODULE and reaching its kernels at call time (no import-time lookup).
-from flock_zorch.zerocheck import _urm_device
+# ---------------------------------------------------------------------------
+# Device (GPU) round-1 URM core.
+# ---------------------------------------------------------------------------
+
+
+def _extend_rows(rows, k_skip: int):
+    """S→Λ extension, uint8 rows [N, 2^k_skip] -> AES-dtype rows on Λ."""
+    ell = 1 << k_skip
+    v = lax.bitcast_convert_type(rows, _AES)
+    coeffs = lax.ntt(v, ntt_type="INTT", ntt_length=ell)
+    padded = jnp.concatenate([coeffs, jnp.zeros_like(coeffs)], axis=-1)
+    evals = lax.ntt(padded, ntt_type="NTT", ntt_length=2 * ell)
+    return evals[..., ell:]
+
+
+def _to_u8(x):
+    return lax.bitcast_convert_type(x, jnp.uint8)
+
+
+@functools.partial(frx.jit, static_argnums=(3,))
+def _round1_core(a, b, c, k_skip, eqx):
+    """Fused round-1 core: extend a/b/c S→Λ, a·b, φ8-embed, AND eq-accumulate —
+    all in ONE jit kernel so the large [N,ell,2] φ8 intermediate is consumed
+    in-fusion and never written to HBM (halves round1's bandwidth vs the
+    separate extend + accumulate)."""
+    a_l = _extend_rows(a, k_skip)
+    b_l = _extend_rows(b, k_skip)
+    c_l = _to_u8(_extend_rows(c, k_skip))
+    ab = _to_u8(a_l * b_l).astype(jnp.int32)
+    phi_ab = field.to_ghash(_PHI_DEV[ab])
+    phi_c = field.to_ghash(_PHI_DEV[c_l.astype(jnp.int32)])
+    eqx_g = field.to_ghash(eqx)                        # [n_chunks, 1]
+    return (field.from_ghash(jnp.sum(eqx_g * phi_ab, axis=0)),
+            field.from_ghash(jnp.sum(eqx_g * phi_c, axis=0)))
+
+
+@functools.partial(frx.jit, static_argnums=(1, 2))
+def _packed_to_rows(packed, m: int, k_skip: int):
+    """Packed F128 witness [2^(m-7), 2] uint64 -> uint8 rows [2^(m-k_skip), 2^k_skip],
+    unpacked ON DEVICE (bit r of element i = z[i·128 + r], LSB-first per lane).
+
+    The witness is 1/8 the size packed (one F128 lane vs one byte per bit), so
+    taking the packed form and unpacking here turns a fat host->device transfer
+    into a small one + a cheap device kernel — the same device-unpack pattern
+    `prover._unpack_bits_dev` uses for the identity path."""
+    bi = jnp.arange(64, dtype=jnp.uint64)
+    lo = ((packed[:, 0:1] >> bi) & jnp.uint64(1)).astype(jnp.uint8)
+    hi = ((packed[:, 1:2] >> bi) & jnp.uint64(1)).astype(jnp.uint8)
+    bits = jnp.concatenate([lo, hi], axis=1).reshape(-1)        # [2^m]
+    return bits.reshape(1 << (m - k_skip), 1 << k_skip)
 
 
 # ---------------------------------------------------------------------------
@@ -68,7 +127,7 @@ def witness_to_rows(bits, m: int, k_skip: int):
     array (transferred once); or an already-device array (reshaped, no copy)."""
     n_chunks, ell = 1 << (m - k_skip), 1 << k_skip
     if getattr(bits, "ndim", 0) == 2 and bits.shape[-1] == 2 and np.dtype(bits.dtype) == np.uint64:
-        return _urm_device._packed_to_rows(jnp.asarray(bits), m, k_skip)   # packed F128 -> device unpack
+        return _packed_to_rows(jnp.asarray(bits), m, k_skip)   # packed F128 -> device unpack
     if isinstance(bits, frx.Array):
         return bits.reshape(n_chunks, ell)
     return jnp.asarray(np.asarray(bits, np.uint8).reshape(n_chunks, ell))
@@ -80,7 +139,7 @@ def round1_rows(a, b, c, m: int, k_skip: int, r):
     reused by `zerocheck._fold_at_z_rows`. Returns (P^AB, P^C) as numpy."""
     r = np.asarray(r, dtype=np.uint64)
     eqx = sumcheck.build_eq_fused(jnp.asarray(r[k_skip:]))[:, None, :]  # [n_chunks, 1, 2]
-    p_ab, p_c = _urm_device._round1_core()(a, b, c, k_skip, eqx)  # fused extend+phi+accum
+    p_ab, p_c = _round1_core(a, b, c, k_skip, eqx)  # fused extend+phi+accum
     return np.asarray(p_ab), np.asarray(p_c)
 
 
