@@ -82,9 +82,9 @@ def _combine_claims(rs_eq_inds, gammas, sumcheck_claims, packed_direct=(), gamma
     their XOR-sum; target = Σ γ_i·sumcheck_claim_i. Packed-direct claims add
     γ_pd_j·eq(point_j) to b and γ_pd_j·value_j to target. NB: all observe/sample stay
     at the call sites — this is pure arithmetic, so it cannot perturb the transcript."""
-    b_combined = field.to_ghash(jnp.asarray(rs_eq_inds[0]))
+    b_combined = rs_eq_inds[0]                                     # native ghash [2^L]
     for r in rs_eq_inds[1:]:
-        b_combined = b_combined + field.to_ghash(jnp.asarray(r))   # γ_rs already baked in
+        b_combined = b_combined + r                                # γ_rs already baked in
     target = field.to_ghash(jnp.zeros(2, jnp.uint64))              # ghash scalar zero
     for g, sc in zip(gammas, sumcheck_claims):                     # g native ghash
         target = target + g * field.to_ghash(jnp.asarray(sc))

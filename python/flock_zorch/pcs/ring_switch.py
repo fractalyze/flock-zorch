@@ -63,7 +63,9 @@ def prove_batched(packed_witness, x_outers, ch: Challenger):
     sample r_dprime[7]; THEN sample N gamma's (sound only after all observations);
     THEN bake gamma_i into each `rs_eq_ind_i` (the caller-owned linear combination
     — see the zorch module's contract). Returns
-    (s_hat_vs, rs_eq_inds[gamma-baked], sumcheck_claims, gammas)."""
+    (s_hat_vs, rs_eq_inds[gamma-baked, native ghash on device], sumcheck_claims,
+    gammas). The rs_eq_inds are XOR-summed straight into b_combined by _combine_claims,
+    so they stay device-resident (never materialized to host)."""
     packed = field.to_ghash(packed_witness)
     works = [_reduce_one(packed, x_outer, ch) for x_outer in x_outers]
     gammas = [ch.sample_f128_g() for _ in range(len(x_outers))]  # native ghash
@@ -71,7 +73,7 @@ def prove_batched(packed_witness, x_outers, ch: Challenger):
     s_hat_vs, rs_eq_inds, sumcheck_claims = [], [], []
     for (s_hat_v_lanes, suffix_tensor, eq_r_dprime, claim), g in zip(works, gammas):
         scaled = g * eq_r_dprime  # gamma baked into eq
-        rs_eq_inds.append(field.from_ghash_host(zrs.rs_eq_ind(suffix_tensor, scaled)))
+        rs_eq_inds.append(zrs.rs_eq_ind(suffix_tensor, scaled))  # ghash [2^L]
         s_hat_vs.append(s_hat_v_lanes)
         sumcheck_claims.append(claim)
     return s_hat_vs, rs_eq_inds, sumcheck_claims, gammas
