@@ -50,7 +50,7 @@ def _round_message(a, b):
     be, bo = bg[0::2], bg[1::2]
     u0 = jnp.sum(ae * be)
     u2 = jnp.sum((ae + ao) * (be + bo))
-    return field.from_ghash(u0), field.from_ghash(u2)
+    return u0, u2  # ghash
 
 
 # Per-round field ops jitted (memoized) so each round is ONE fused kernel,
@@ -145,9 +145,8 @@ def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_s
     # a row-batch over the codeword, the rest are per-round FRI folds, committed per epoch.
     for rnd in range(log_msg):
         u0_g, u2_g = round_message(a, bb)
-        ch._t, r_g = fs.observe_pair_sample(
-            ch._t, field.to_ghash(u0_g), field.to_ghash(u2_g))
-        round_messages.append((np.asarray(u0_g), np.asarray(u2_g)))
+        ch._t, r_g = fs.observe_pair_sample(ch._t, u0_g, u2_g)
+        round_messages.append((field.from_ghash_host(u0_g), field.from_ghash_host(u2_g)))
         r = field.from_ghash(r_g)
         a = fold_single(a, r)
         bb = fold_single(bb, r)
