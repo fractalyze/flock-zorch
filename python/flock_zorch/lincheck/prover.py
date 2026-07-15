@@ -53,16 +53,16 @@ def _mat_fold(mat_dense, eq):
 
     mat_dense: uint64 [k, k] (0/1, indexed [row, col]); eq: [k, 2] -> [k, 2]."""
     sel = mat_dense[:, :, None] * eq[:, None, :]              # M[r,c]·eq[r]  (0/1 select)
-    return field.from_ghash(jnp.sum(field.to_ghash(sel), axis=0))  # XOR over rows -> [c, 2]
+    return jnp.sum(field.to_ghash(sel), axis=0)  # ghash [c]
 
 
 def fold_alpha_batched(alpha, a_dense, b_dense, eq_inner):
     """comb[c] = α·(A₀ᵀ·eq_inner)[c] ⊕ (B₀ᵀ·eq_inner)[c] (flock
     `sparse_row_fold_alpha_batched`)."""
-    ae = field.to_ghash(_mat_fold(a_dense, eq_inner))
-    be = field.to_ghash(_mat_fold(b_dense, eq_inner))
+    ae = _mat_fold(a_dense, eq_inner)  # ghash
+    be = _mat_fold(b_dense, eq_inner)
     alpha_g = field.to_ghash(jnp.asarray(alpha))
-    return field.from_ghash(alpha_g * ae + be)
+    return alpha_g * ae + be  # ghash [c]
 
 
 class CscCircuit:
@@ -89,7 +89,7 @@ class CscCircuit:
         out_a = _seg_xor_fold(eq, *self._a_seg, self.k) if self._a_seg else zero
         out_b = _seg_xor_fold(eq, *self._b_seg, self.k) if self._b_seg else zero
         alpha_g = field.to_ghash(jnp.asarray(alpha))
-        return field.from_ghash(alpha_g * field.to_ghash(out_a) + field.to_ghash(out_b))
+        return alpha_g * field.to_ghash(out_a) + field.to_ghash(out_b)  # ghash [k]
 
 
 def partial_fold_packed_z(z_packed_bytes: bytes, m: int, k_log: int, eq_outer):
@@ -213,12 +213,11 @@ class _CombRound(Round):
         alpha = jnp.asarray(transcript.sample_f128())
         eq_inner = build_quirky_eq_table(_to_int(x_ab.z_skip), x_ab.x_inner_rest, k_skip)
         if circuit is not None:
-            comb = jnp.asarray(circuit.fold_alpha_batched(alpha, eq_inner))
+            comb = circuit.fold_alpha_batched(alpha, eq_inner)  # ghash
             if circuit.const_pin is not None:
                 beta = jnp.asarray(transcript.sample_f128())   # sampled AFTER alpha (flock order)
                 col = circuit.const_pin
-                comb = comb.at[col].set(
-                    field.from_ghash(field.to_ghash(comb[col]) + field.to_ghash(beta)))
+                comb = comb.at[col].set(comb[col] + field.to_ghash(beta))
         else:
             comb = fold_alpha_batched(alpha, jnp.asarray(carry.a_dense),
                                       jnp.asarray(carry.b_dense), eq_inner)
@@ -242,8 +241,7 @@ class _SumcheckRound(Round):
 
         rounds, r_rounds = [], []
         if inner_rest > 0:
-            stacked = jnp.stack([field.to_ghash(jnp.asarray(comb)),
-                                 field.to_ghash(z_vec)])
+            stacked = jnp.stack([comb, field.to_ghash(z_vec)])  # comb native ghash
             stacked, transcript._t, msgs = prove_inf_product(
                 stacked, transcript._t, inner_rest)
             # Messages ride ghash out of the fused rounds; one host materialization.
