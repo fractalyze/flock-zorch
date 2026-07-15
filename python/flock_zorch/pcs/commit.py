@@ -33,19 +33,6 @@ from flock_zorch.hash import merkle
 LOG_PACKING = field.LOG_PACKING
 
 
-def pack_witness(z_bits: np.ndarray, m: int) -> np.ndarray:
-    """Pack a Boolean witness (uint8/bool [2^m]) into F128 [2^(m-7), 2] uint64.
-
-    bit r of out[i] = z[i*128 + r] (little-endian within the 128-bit element),
-    matching flock's `pack::pack_witness`.
-    """
-    z = np.asarray(z_bits, dtype=np.uint64).reshape(-1, 128)  # [n_packed, 128]
-    weights = (np.uint64(1) << np.arange(64, dtype=np.uint64))  # [64]
-    lo = (z[:, :64] * weights).sum(axis=1, dtype=np.uint64)
-    hi = (z[:, 64:] * weights).sum(axis=1, dtype=np.uint64)
-    return np.stack([lo, hi], axis=1)  # [n_packed, 2]
-
-
 def _encode_codeword(z_packed, m: int, log_inv_rate: int, log_batch_size: int):
     """z_packed -> (codeword uint64 [2^k_code · num_ntts, 2], n_pos_code, num_ntts).
     RS-encode each row-batch lane with zorch's `coding.AdditiveReedSolomon` over
@@ -61,9 +48,8 @@ def _encode_codeword(z_packed, m: int, log_inv_rate: int, log_batch_size: int):
 
     # z_packed is SoA position-major with num_ntts interleaved lanes
     # (z_packed[pos*num_ntts + lane]): reinterpret to ghash, RS-encode each lane,
-    # then transpose back to the SoA layout. field.{to,from}_ghash route the
-    # ghash<->uint64 bitcasts through uint32 lanes, so the codeword stays
-    # device-resident (the direct ghash->uint64 bitcast returns zeros, zorch#399).
+    # then transpose back to the SoA layout. The bitcasts are pure reinterprets, so
+    # the codeword stays device-resident.
     code = AdditiveReedSolomon(n_pos_msg, 1 << log_inv_rate, jnp.binary_field_ghash)
     msg = field.to_ghash(jnp.asarray(z_packed).reshape(n_pos_msg, num_ntts, 2))
     cw = code.encode(msg.T)  # [num_ntts, n_pos_code]
