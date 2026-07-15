@@ -165,7 +165,7 @@ def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_s
         else:
             if cw_g is None:
                 cw_g = field.to_ghash(cw_active)      # enter the additive-RS fold domain
-            cw_g = fold_fn(cw_g, field.to_ghash(r.reshape(1, 2)))
+            cw_g = fold_fn(cw_g, r_g.reshape(1))      # r_g already native ghash
             rounds_in_epoch += 1
             if rounds_in_epoch == arities[current_epoch]:
                 if current_epoch + 1 < num_epochs:
