@@ -15,6 +15,7 @@ from typing import Any
 import numpy as np
 import frx
 import frx.numpy as jnp
+from frx import Array
 
 from flock_zorch import field, zerocheck, lincheck
 from flock_zorch.pcs import ring_switch, basefold, fri, ligerito as zorch_ligerito
@@ -159,15 +160,15 @@ class _ProveCarry:
     instances, per zorch's `Round`-interface convention (cf. sp1-zorch ShardCarry).
     The `None` fields are the per-stage outputs, written via `replace`."""
 
-    z_packed: Any             # witness ẑ, device-resident across stages
-    statement_digest: Any     # R1CS instance digest (bound by _CommitStage)
-    z_lincheck: Any           # lincheck witness bytes
-    a0: Any                   # lincheck A matrix (dense)
-    b0: Any                   # lincheck B matrix (dense)
-    codeword: Any = None      # ← _CommitStage; read by _PcsOpenStage
-    tree: Any = None          # ← _CommitStage; read by _PcsOpenStage
-    zc: dict | None = None    # ← _ZerocheckStage; read by lincheck + open + assembly
-    lc_claim: dict | None = None  # ← _LincheckStage; read by open + assembly
+    z_packed: Array           # witness ẑ, device-resident across stages
+    statement_digest: bytes   # R1CS instance digest (bound by _CommitStage)
+    z_lincheck: bytes         # lincheck witness bytes
+    a0: Array                 # lincheck A matrix (dense)
+    b0: Array                 # lincheck B matrix (dense)
+    codeword: np.ndarray | None = None  # ← _CommitStage; read by _PcsOpenStage
+    tree: np.ndarray | None = None      # ← _CommitStage; read by _PcsOpenStage
+    zc: zerocheck.ZerocheckProof | None = None    # ← _ZerocheckStage; read by lincheck + open + assembly
+    lc_claim: lincheck.LincheckClaim | None = None  # ← _LincheckStage; read by open + assembly
 
 
 class _CommitStage(Stage):
@@ -246,8 +247,10 @@ class _PcsOpenStage(Stage):
         return carry, transcript, pcs_open_proof
 
 
-def prove_fast(z_packed, m, k_log, k_skip, useful_bits, a0, b0, z_lincheck, statement_digest,
-               log_inv_rate=1, log_batch_size=5, domain=b"flock-test-v0") -> ProveFastResult:
+def prove_fast(z_packed: Array, m: int, k_log: int, k_skip: int, useful_bits: int,
+               a0: Array, b0: Array, z_lincheck: bytes, statement_digest: bytes,
+               log_inv_rate: int = 1, log_batch_size: int = 5,
+               domain: bytes = b"flock-test-v0") -> ProveFastResult:
     """Fused single-call R1CS prover (identity-C path: c = z), byte-identical to
     flock `prover::prove`. A zorch `ProveChain` of Stages threading one shared
     challenger + a `_ProveCarry` (no per-phase host re-transfer): commit+bind →
