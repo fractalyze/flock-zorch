@@ -113,28 +113,28 @@ def run():
     for i in range(len(g["rs"])):
         _eq(f"open ring_switch[{i}]", out.ring_switches[i], g["rs"][i], results)
     bf = out.basefold; gbf = g["bf"]
-    got_rm = np.array([np.concatenate([a, b]) for a, b in bf["round_messages"]])
+    got_rm = np.array([np.concatenate([a, b]) for a, b in bf.round_messages])
     want_rm = np.array([np.concatenate([a, b]) for a, b in gbf["rm"]])
     _eq("open bf round_messages", got_rm, want_rm, results)
-    _eq("open bf post_rb_commit", bf["post_row_batch_commit"], gbf["post_rb_root"], results)
-    rc = np.stack(bf["round_commitments"]) if len(bf["round_commitments"]) else np.zeros((0, 32), np.uint8)
+    _eq("open bf post_rb_commit", bf.post_row_batch_commit, gbf["post_rb_root"], results)
+    rc = np.stack(bf.round_commitments) if len(bf.round_commitments) else np.zeros((0, 32), np.uint8)
     results.append(("open bf round_commitments", rc.shape == gbf["rc"].shape and np.array_equal(rc, gbf["rc"])))
-    _eq("open bf final_a", bf["final_a"], gbf["fa"], results)
-    _eq("open bf final_b", bf["final_b"], gbf["fb"], results)
-    _eq("open bf final_codeword", bf["final_codeword"], gbf["fcw"], results)
-    q_ok = len(bf["queries"]) == len(gbf["queries"])
-    for (gp, gil, gprl, gel), (pos, il, prl, el) in zip(gbf["queries"], bf["queries"]):
+    _eq("open bf final_a", bf.final_a, gbf["fa"], results)
+    _eq("open bf final_b", bf.final_b, gbf["fb"], results)
+    _eq("open bf final_codeword", bf.final_codeword, gbf["fcw"], results)
+    q_ok = len(bf.queries) == len(gbf["queries"])
+    for (gp, gil, gprl, gel), (pos, il, prl, el) in zip(gbf["queries"], bf.queries):
         q_ok = q_ok and pos == gp and np.array_equal(np.asarray(il, np.uint64).reshape(-1, 2), gil)
         q_ok = q_ok and np.array_equal(np.asarray(prl, np.uint64).reshape(-1, 2), gprl)
         q_ok = q_ok and len(el) == len(gel) and \
             all(np.array_equal(np.asarray(a, np.uint64).reshape(-1, 2), b) for a, b in zip(el, gel))
     results.append(("open bf queries", q_ok))
     results.append(("open bf initial_multi_proof",
-                    np.array_equal(np.asarray(bf["initial_multi_proof"]), gbf["imp"])))
+                    np.array_equal(np.asarray(bf.initial_multi_proof), gbf["imp"])))
     results.append(("open bf post_rb_multi_proof",
-                    np.array_equal(np.asarray(bf["post_row_batch_multi_proof"]), gbf["prmp"])))
-    emp_ok = len(bf["epoch_multi_proofs"]) == len(gbf["emp"]) and \
-        all(np.array_equal(np.asarray(a), b) for a, b in zip(bf["epoch_multi_proofs"], gbf["emp"]))
+                    np.array_equal(np.asarray(bf.post_row_batch_multi_proof), gbf["prmp"])))
+    emp_ok = len(bf.epoch_multi_proofs) == len(gbf["emp"]) and \
+        all(np.array_equal(np.asarray(a), b) for a, b in zip(bf.epoch_multi_proofs, gbf["emp"]))
     results.append(("open bf epoch_multi_proofs", emp_ok))
 
     # Stage W: the M1 walker port — KeccakLincheckCircuit.fold_alpha_batched (standalone)

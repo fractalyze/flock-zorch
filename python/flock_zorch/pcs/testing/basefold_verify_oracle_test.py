@@ -9,6 +9,7 @@ on CPU (bazel `//python:all`) or GPU (venv, `JAX_PLATFORMS=cuda`).
 from __future__ import annotations
 
 import copy
+import dataclasses
 import sys
 from pathlib import Path
 
@@ -90,12 +91,12 @@ def _check_golden(path):
     imp, prmp = rd.hv(), rd.hv()
     n_emp = rd.u(); emp = [rd.hv() for _ in range(n_emp)]
 
-    proof = {
-        "round_messages": rm, "post_row_batch_commit": post_root,
-        "round_commitments": list(rc), "final_a": fa, "final_b": fb,
-        "final_codeword": fcw, "queries": queries, "initial_multi_proof": imp,
-        "post_row_batch_multi_proof": prmp, "epoch_multi_proofs": emp,
-    }
+    proof = basefold.BasefoldProof(
+        round_messages=rm, post_row_batch_commit=post_root,
+        round_commitments=list(rc), final_a=fa, final_b=fb,
+        final_codeword=fcw, queries=queries, initial_multi_proof=imp,
+        post_row_batch_multi_proof=prmp, epoch_multi_proofs=emp,
+    )
     k_code = (m - field.LOG_PACKING - lbs) + lir
     num_ntts = 1 << lbs
     n_leaves = 1 << k_code
@@ -171,12 +172,16 @@ def main() -> int:
     print("tamper (2-epoch base):")
 
     def t_msg(p, t, r):
-        p["round_messages"][0] = (p["round_messages"][0][0] ^ np.uint64(1), p["round_messages"][0][1])
+        new_msgs = list(p.round_messages)
+        new_msgs[0] = (new_msgs[0][0] ^ np.uint64(1), new_msgs[0][1])
+        return dataclasses.replace(p, round_messages=new_msgs), t, r
     def t_leaf(p, t, r):
-        q0 = list(p["queries"][0]); leaf = q0[1].copy(); leaf[0, 0] ^= np.uint64(1); q0[1] = leaf
-        p["queries"][0] = tuple(q0)
+        new_queries = list(p.queries)
+        q0 = list(new_queries[0]); leaf = q0[1].copy(); leaf[0, 0] ^= np.uint64(1); q0[1] = leaf
+        new_queries[0] = tuple(q0)
+        return dataclasses.replace(p, queries=new_queries), t, r
     def t_final(p, t, r):
-        p["final_a"] = p["final_a"] ^ np.uint64(1)
+        return dataclasses.replace(p, final_a=p.final_a ^ np.uint64(1)), t, r
     def t_root(p, t, r):
         return p, t, (np.asarray(r).copy() ^ np.uint8(1))
 
