@@ -52,8 +52,7 @@ class ProveFastResult:
 def _unpack_bits_dev(z_packed):
     """Packed F128 witness [2^(m-7),2] -> device bit witness [2^m] uint8 (LSB-first
     within each 128-bit element), on device so a=b=c=z stays device-resident. The
-    inverse of pcs_commit.pack_witness (flock reads the packed ẑ back to bits the
-    same way)."""
+    frx analogue of flock's `pcs::pack::unpack_witness`."""
     bitidx = jnp.arange(64, dtype=jnp.uint64)
     lo = ((z_packed[:, 0:1] >> bitidx) & jnp.uint64(1)).astype(jnp.uint8)
     hi = ((z_packed[:, 1:2] >> bitidx) & jnp.uint64(1)).astype(jnp.uint8)

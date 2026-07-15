@@ -10,10 +10,7 @@ batched gamma combination, and the uint64-lane serialization the byte-gate reads
 
 flock's F128 is `uint64 [.., 2] = [lo, hi]` with bit i = coefficient of x^i — the
 little-endian storage of `binary_field_ghash` (same GHASH basis, verified
-`2*2 = 4`), so the boundary is a bitcast, never `astype`. It is routed through
-uint32 lanes: the direct `uint64[..,2] <-> ghash` bitcast silently miscompiles on
-the CPU PJRT path (a fractalyze/xla BitcastConvertType bug), while `uint32[..,4]`
-is correct on CPU and GPU and is the lane width zorch's kernels use natively.
+`2*2 = 4`), so the boundary is a direct bitcast, never `astype`.
 Requires `jax_enable_x64`.
 """
 from __future__ import annotations
