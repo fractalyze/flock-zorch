@@ -36,7 +36,7 @@ def _reduce_one(packed, x_outer, ch: Challenger):
     the caller turns eq_r_dprime into rs_eq_ind (with or without a gamma scale)."""
     ch.observe_label(LABEL)
     suffix = jnp.asarray(np.asarray(x_outer)[1:])             # x_outer[1:], length L
-    suffix_tensor = field.to_ghash(sumcheck.build_eq_fused(suffix))
+    suffix_tensor = sumcheck.build_eq_fused_g(suffix)
     s_hat_v = zrs.bit_slice_evals(packed, suffix_tensor)     # (128,) ghash
     s_hat_v_lanes = field.from_ghash_host(s_hat_v)                     # [128,2]
     ch.observe_f128_slice(s_hat_v_lanes)

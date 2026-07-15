@@ -26,7 +26,7 @@ import frx
 import frx.numpy as jnp
 
 from flock_zorch import field
-from flock_zorch.sumcheck import build_eq_fused, ONE
+from flock_zorch.sumcheck import build_eq_fused, build_eq_fused_g, ONE
 from flock_zorch.zerocheck import _lagrange_weights, ZerocheckProof
 from flock_zorch.field import _to_int, _to_lohi
 from flock_zorch.challenger import Challenger
@@ -43,7 +43,7 @@ def build_quirky_eq_table(z_skip_int: int, x_inner_rest, k_skip: int):
     (flock `build_quirky_eq_table`; i_skip in the LOW bits)."""
     lam = _lagrange_weights(k_skip, z_skip_int, 0)             # S-domain, len 2^k_skip
     lam = field.to_ghash(jnp.asarray(np.stack([_to_lohi(x) for x in lam])))  # [ell_skip]
-    eq_rest = field.to_ghash(build_eq_fused(jnp.asarray(x_inner_rest)))  # [ell_rest] — fused (avoids per-layer eager dispatch)
+    eq_rest = build_eq_fused_g(jnp.asarray(x_inner_rest))  # [ell_rest] — fused ghash
     prod = eq_rest[:, None] * lam[None, :]                    # [ell_rest, ell_skip]
     return field.from_ghash(prod.reshape(-1))                 # [ell_rest·ell_skip, 2]
 

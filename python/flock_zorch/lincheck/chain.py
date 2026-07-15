@@ -24,7 +24,7 @@ import numpy as np
 import frx.numpy as jnp
 
 from flock_zorch import field
-from flock_zorch.sumcheck import build_eq
+from flock_zorch.sumcheck import build_eq, build_eq_g
 from flock_zorch.sumcheck.inf_product import prove_inf_product
 
 
@@ -117,7 +117,7 @@ def fold_in_out(packed, k_log, tau_pos, input_byte_off, output_byte_off):
     out_base = (output_byte_off * 8) >> LOG_PACKING
     assert packed.shape[0] % block_packed == 0
     n_inst = packed.shape[0] // block_packed
-    eq_tau = field.to_ghash(build_eq(jnp.asarray(tau_pos)))  # (n_packed,)
+    eq_tau = build_eq_g(field.to_ghash(jnp.asarray(tau_pos)))  # (n_packed,)
 
     pk = field.to_ghash(jnp.asarray(packed).reshape(n_inst, block_packed, 2))  # (n_inst, block_packed)
     in_reg = pk[:, in_base:in_base + n_packed]                   # (n_inst, n_packed)

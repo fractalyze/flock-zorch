@@ -19,7 +19,7 @@ from frx import Array
 
 from flock_zorch import field, zerocheck, lincheck
 from flock_zorch.pcs import ring_switch, basefold, fri, ligerito as zorch_ligerito
-from flock_zorch.sumcheck import build_eq
+from flock_zorch.sumcheck import build_eq_g
 from flock_zorch.challenger import Challenger  # noqa: F401  (re-exported for callers)
 from flock_zorch.pcs import FlockPcsProver
 from zorch.round import ProveChain, Stage
@@ -89,7 +89,7 @@ def _combine_claims(rs_eq_inds, gammas, sumcheck_claims, packed_direct=(), gamma
     for g, sc in zip(gammas, sumcheck_claims):
         target = target + field.to_ghash(jnp.asarray(g)) * field.to_ghash(jnp.asarray(sc))
     for pd, g in zip(packed_direct, gammas_pd):
-        eq_pd = field.to_ghash(build_eq(jnp.asarray(pd.point)))   # length L = 2^(m-7)
+        eq_pd = build_eq_g(field.to_ghash(jnp.asarray(pd.point)))   # length L = 2^(m-7)
         gj = field.to_ghash(jnp.asarray(g))
         b_combined = b_combined + gj * eq_pd
         target = target + gj * field.to_ghash(jnp.asarray(pd.value))

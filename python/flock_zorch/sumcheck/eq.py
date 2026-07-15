@@ -72,6 +72,15 @@ def build_eq_fused(r):
     return _BUILD_EQ_FUSED(jnp.asarray(r))
 
 
+_BUILD_EQ_FUSED_G = frx.jit(lambda r: build_eq_g(field.to_ghash(r)))
+
+
+def build_eq_fused_g(r):
+    """`build_eq_fused` returning native ghash — for ghash-consuming callers that
+    would otherwise bitcast the uint64 result straight back with `to_ghash`."""
+    return _BUILD_EQ_FUSED_G(jnp.asarray(r, U64))
+
+
 def fold_single(a, challenge):
     """Bind the low variable of one multilinear at `challenge` (flock
     `fold_in_place_single`): `out[x] = a[2x] + challenge·(a[2x+1] + a[2x])` — zorch's
