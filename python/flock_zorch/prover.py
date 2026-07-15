@@ -77,11 +77,12 @@ def bind_statement(ch, statement_digest, root) -> None:
 
 def _combine_claims(rs_eq_inds, gammas, sumcheck_claims, packed_direct=(), gammas_pd=()):
     """γ-combine the batched ring-switch claims (+ optional packed-direct claims) into
-    the single (b_combined, target) the BaseFold/Ligerito open runs against. The
-    ring-switch γ's are already baked into each rs_eq_ind by prove_batched, so b is
-    their XOR-sum; target = Σ γ_i·sumcheck_claim_i. Packed-direct claims add
-    γ_pd_j·eq(point_j) to b and γ_pd_j·value_j to target. NB: all observe/sample stay
-    at the call sites — this is pure arithmetic, so it cannot perturb the transcript."""
+    the single (b_combined, target) the BaseFold/Ligerito open runs against, both
+    native ghash — BaseFold lanes-converts b at its boundary, Ligerito consumes ghash
+    directly. The ring-switch γ's are already baked into each rs_eq_ind by
+    prove_batched, so b is their XOR-sum; target = Σ γ_i·sumcheck_claim_i. Packed-direct
+    claims add γ_pd_j·eq(point_j) to b and γ_pd_j·value_j to target. NB: all
+    observe/sample stay at the call sites — pure arithmetic, cannot perturb the transcript."""
     b_combined = rs_eq_inds[0]                                     # native ghash [2^L]
     for r in rs_eq_inds[1:]:
         b_combined = b_combined + r                                # γ_rs already baked in
@@ -93,7 +94,7 @@ def _combine_claims(rs_eq_inds, gammas, sumcheck_claims, packed_direct=(), gamma
         gj = g
         b_combined = b_combined + gj * eq_pd
         target = target + gj * field.to_ghash(jnp.asarray(pd.value))
-    return field.from_ghash(b_combined), field.from_ghash(target)
+    return b_combined, target  # native ghash: [2^L], scalar
 
 
 def open_batch(z_packed, codeword, init_tree, x_outers, k_code, log_inv_rate,
@@ -108,7 +109,7 @@ def open_batch(z_packed, codeword, init_tree, x_outers, k_code, log_inv_rate,
     ch.observe_label(b"flock-pcs-open-batch-v0")
     s_hat_vs, rs_eq_inds, sumcheck_claims, gammas = ring_switch.prove_batched(z_packed, x_outers, ch)
     b_combined, _target = _combine_claims(rs_eq_inds, gammas, sumcheck_claims)  # BaseFold ignores target
-    b_combined = np.asarray(b_combined)
+    b_combined = field.from_ghash_host(b_combined)  # BaseFold b is uint64 lanes
     n_queries = fri.default_fri_queries(log_inv_rate)
     bf = basefold.prove(z_packed, b_combined, codeword, init_tree, k_code,
                         log_inv_rate, log_batch_size, n_queries, ch)
