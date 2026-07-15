@@ -45,13 +45,29 @@ class Challenger:
     def observe_f128(self, v) -> None:
         self._t = fs.observe_scalar(self._t, field.to_ghash(jnp.asarray(v)))
 
+    def observe_f128_g(self, g) -> None:
+        """Observe a native `binary_field_ghash` scalar — no host lift (for values
+        already device-resident as ghash, e.g. a Merkle-free reduction output)."""
+        self._t = fs.observe_scalar(self._t, g)
+
     def observe_f128_slice(self, vs) -> None:
         vs = jnp.asarray(np.asarray(vs, np.uint64).reshape(-1, 2))
         self._t = fs.observe_slice(self._t, field.to_ghash(vs))
 
+    def observe_f128_slice_g(self, gs) -> None:
+        """Observe a native `binary_field_ghash` slice — no host lift. The caller
+        keeps any lanes it needs for the proof; the transcript never leaves device."""
+        self._t = fs.observe_slice(self._t, gs)
+
     def sample_f128(self) -> np.ndarray:
         self._t, g = fs.sample_scalar(self._t)
         return field.from_ghash_host(g)
+
+    def sample_f128_g(self):
+        """Sample one F128 as a native `binary_field_ghash` scalar — no host
+        round-trip, for device consumers that would otherwise re-lift the lanes."""
+        self._t, g = fs.sample_scalar(self._t)
+        return g
 
     def sample_f128_vec(self, n: int) -> np.ndarray:
         self._t, g = fs.sample_slice(self._t, n)
