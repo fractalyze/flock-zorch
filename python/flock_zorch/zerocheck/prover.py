@@ -198,15 +198,24 @@ class _MultilinearRound(Round):
         # All rounds' eq suffix tables in one program (round i reads
         # eq(r[k_skip+1+i:])); r[0] of every round's message is fixed to one.
         eq_tables = _EQ_TABLES(r_g[k_skip + 1:])
-        rounds, rhos = [], []
+        # Per-round jitted `_mlv_round` in an eager loop — NOT whole-loop jitted:
+        # the fold halves the array each round, so the rounds can't `lax.scan`
+        # (non-uniform carry) and the unrolled graph compiles for minutes. Keep
+        # each round's message on ghash and materialize once after the loop, so no
+        # round pays a D2H sync.
+        m1s_g, minfs_g, rhos = [], [], []
         for i in range(n_mlv):
             a_g, b_g, t, m1, minf, rho = _mlv_round(
                 a_g, b_g, eq_tables[i], sumcheck.eq._ONE_G, t)
-            rounds.append((field.from_ghash_host(m1), field.from_ghash_host(minf)))
+            m1s_g.append(m1)
+            minfs_g.append(minf)
             rhos.append(rho)
         final_a, final_b = a_g[0], b_g[0]
         transcript._t = _observe_finals(t, final_a, final_b)
 
+        m1s = field.from_ghash_host(jnp.stack(m1s_g))
+        minfs = field.from_ghash_host(jnp.stack(minfs_g))
+        rounds = list(zip(m1s, minfs))
         final_a_eval = field.from_ghash_host(final_a)
         final_b_eval = field.from_ghash_host(final_b)
         carry = replace(carry, multilinear_rounds=rounds, final_a_eval=final_a_eval,

@@ -69,9 +69,12 @@ def prove_chain_shift(in_vals, out_vals, ch):
     stacked = jnp.stack([field.to_ghash(jnp.asarray(wt)),
                          field.to_ghash(jnp.asarray(g))])
     stacked, ch._t, msgs = prove_inf_product(stacked, ch._t, n + 1)
-    rounds = [(field.from_ghash_host(e1), field.from_ghash_host(einf))
-              for e1, einf, _ in msgs]
-    r_pts = [field.from_ghash_host(r).reshape(2) for _, _, r in msgs]
+    # Messages ride ghash out of the fused rounds; one host materialization.
+    e1s_g, einfs_g, r_g = zip(*msgs)
+    e1s = field.from_ghash_host(jnp.stack(e1s_g))
+    einfs = field.from_ghash_host(jnp.stack(einfs_g))
+    r_pts = list(field.from_ghash_host(jnp.stack(r_g)).reshape(-1, 2))
+    rounds = list(zip(e1s, einfs))
 
     # After n+1 folds g[0] = g(τ',s₀*). Build the point: full[d-1-k]=r_pts[k]
     # (bit d-1 = s₀, the HIGH bit); τ' = full[:n], s₀* = full[n].

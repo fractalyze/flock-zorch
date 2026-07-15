@@ -246,9 +246,12 @@ class _SumcheckRound(Round):
                                  field.to_ghash(z_vec)])
             stacked, transcript._t, msgs = prove_inf_product(
                 stacked, transcript._t, inner_rest)
-            for e1, einf, r in msgs:
-                rounds.append((field.from_ghash_host(e1), field.from_ghash_host(einf)))
-                r_rounds.append(field.from_ghash_host(r))
+            # Messages ride ghash out of the fused rounds; one host materialization.
+            e1s_g, einfs_g, r_g = zip(*msgs)
+            e1s = field.from_ghash_host(jnp.stack(e1s_g))
+            einfs = field.from_ghash_host(jnp.stack(einfs_g))
+            r_rounds = list(field.from_ghash_host(jnp.stack(r_g)))
+            rounds = list(zip(e1s, einfs))
             z_partial = field.from_ghash_host(stacked[1])
         else:
             z_partial = np.asarray(z_vec)
