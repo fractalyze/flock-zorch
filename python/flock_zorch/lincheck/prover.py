@@ -112,7 +112,7 @@ def _partial_fold_dev(zp, eq_outer, n_outer):
     bits = ((zp[:, None, :] >> jnp.arange(8, dtype=jnp.uint8)[None, :, None]) & 1)  # [nb,8,k]
     bits = bits.reshape(n_outer, zp.shape[1]).astype(jnp.uint64)                    # i_outer=byte·8+r
     sel = bits[:, :, None] * eq_outer[:, None, :]                                   # 0/1 select, [n_outer,k,2]
-    return field.from_ghash(jnp.sum(field.to_ghash(sel), axis=0))                 # [k, 2]
+    return jnp.sum(field.to_ghash(sel), axis=0)                 # ghash [k]
 
 
 @runtime_checkable
@@ -236,12 +236,12 @@ class _SumcheckRound(Round):
         inner_rest = k_log - k_skip
         comb = carry.comb
         eq_outer = build_eq_fused(jnp.asarray(carry.x_ab.x_outer))
-        z_vec = partial_fold_packed_z(carry.z_packed_bytes, m, k_log, eq_outer)
-        z_vec_pre = np.asarray(z_vec) if self._capture else None  # pre-sumcheck (PCS open reuse)
+        z_vec = partial_fold_packed_z(carry.z_packed_bytes, m, k_log, eq_outer)  # ghash
+        z_vec_pre = field.from_ghash_host(z_vec) if self._capture else None  # pre-sumcheck (PCS open reuse)
 
         rounds, r_rounds = [], []
         if inner_rest > 0:
-            stacked = jnp.stack([comb, field.to_ghash(z_vec)])  # comb native ghash
+            stacked = jnp.stack([comb, z_vec])  # both native ghash
             stacked, transcript._t, msgs = prove_inf_product(
                 stacked, transcript._t, inner_rest)
             # Messages ride ghash out of the fused rounds; one host materialization.
@@ -252,7 +252,7 @@ class _SumcheckRound(Round):
             rounds = list(zip(e1s, einfs))
             z_partial = field.from_ghash_host(stacked[1])
         else:
-            z_partial = np.asarray(z_vec)
+            z_partial = field.from_ghash_host(z_vec)
         carry = replace(carry, rounds=rounds, r_rounds=r_rounds, z_partial=z_partial,
                         z_vec_pre=z_vec_pre)
         return carry, transcript, (rounds, z_partial)
