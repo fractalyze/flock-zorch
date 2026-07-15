@@ -69,9 +69,21 @@ def _bf_ops():
     return _BF_OPS
 
 
-def _leaf_bytes(codeword_np, n_leaves, leaf_f128):
-    """codeword uint64 [.,2] -> uint8 [n_leaves, leaf_f128*16] (LE F128 bytes)."""
-    return codeword_np.reshape(n_leaves, leaf_f128 * 2).view(np.uint8)
+def _leaf_bytes_dev(cw, n_leaves, leaf_f128):
+    """Device codeword uint64 [.,2] -> device uint8 [n_leaves, leaf_f128*16] (LE F128
+    bytes). Device bitcast so the Merkle build feeds off the resident codeword — no
+    host copy (mirrors commit._codeword_leaves)."""
+    return frx.lax.bitcast_convert_type(
+        cw.reshape(n_leaves, leaf_f128 * 2), jnp.uint8).reshape(n_leaves, leaf_f128 * 16)
+
+
+def _gather_leaves_dev(cw, leaf_idx, leaf_f128):
+    """Gather each query's leaf off the device codeword: cw uint64 [.,2],
+    leaf_idx device [Q] -> device [Q, leaf_f128, 2]. leaf = the leaf_f128 consecutive
+    F128 at leaf_idx·leaf_f128 (SoA position-major)."""
+    idx = (leaf_idx[:, None] * leaf_f128
+           + jnp.arange(leaf_f128, dtype=leaf_idx.dtype)[None, :]).reshape(-1)
+    return cw[idx].reshape(-1, leaf_f128, 2)
 
 
 def _root_f128(root):
@@ -155,12 +167,11 @@ def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_s
             if rnd + 1 == log_batch_size:
                 cw_active = row_batch(cw_full, jnp.stack(rb_challenges))
                 if arities:
-                    cw_np = np.asarray(cw_active)
-                    n_leaves = cw_np.shape[0] // post_rb_leaf_f128
-                    post_rb_tree = merkle.merkle_tree(_leaf_bytes(cw_np, n_leaves, post_rb_leaf_f128))
+                    n_leaves = cw_active.shape[0] // post_rb_leaf_f128
+                    post_rb_tree = merkle.merkle_tree(_leaf_bytes_dev(cw_active, n_leaves, post_rb_leaf_f128))
                     post_rb_root = post_rb_tree[-1]
                     ch.observe_f128(_root_f128(post_rb_root))
-                    post_rb_codeword = cw_np
+                    post_rb_codeword = cw_active  # device-resident, gathered per query below
         else:
             if cw_g is None:
                 cw_g = field.to_ghash(cw_active)      # enter the additive-RS fold domain
@@ -169,12 +180,12 @@ def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_s
             if rounds_in_epoch == arities[current_epoch]:
                 if current_epoch + 1 < num_epochs:
                     leaf_f128 = 1 << arities[current_epoch + 1]
-                    cw_np = field.from_ghash_host(cw_g)
-                    n_leaves = cw_np.shape[0] // leaf_f128
-                    tree = merkle.merkle_tree(_leaf_bytes(cw_np, n_leaves, leaf_f128))
+                    cw_epoch = field.from_ghash(cw_g)  # device uint64 lanes (not host)
+                    n_leaves = cw_epoch.shape[0] // leaf_f128
+                    tree = merkle.merkle_tree(_leaf_bytes_dev(cw_epoch, n_leaves, leaf_f128))
                     ch.observe_f128(_root_f128(tree[-1]))
                     round_commitments.append(tree[-1])
-                    epoch_codewords.append(cw_np)
+                    epoch_codewords.append(cw_epoch)
                     epoch_trees.append(tree)
                     epoch_leaf_f128s.append(leaf_f128)
                 rounds_in_epoch = 0
@@ -184,32 +195,36 @@ def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_s
     final_b = field.from_ghash_host(bb)[0]
     final_codeword = field.from_ghash_host(cw_g) if cw_g is not None else np.asarray(cw_active)
 
-    # ---- query openings: sample positions, gather each layer's leaf, Merkle multi-proofs ----
-    cw_full_np = np.asarray(cw_full)
-    queries, init_pos, post_rb_pos = [], [], []
-    epoch_pos = [[] for _ in range(num_fri_commits)]
+    # ---- query openings: sample positions, gather each layer's leaf ON DEVICE off the
+    # resident codeword; only the (small) gathered leaves + positions cross to host.
     ch._t, pos_g = fs.sample_chain(ch._t, n_queries)
-    raw_positions = field.from_ghash_host(pos_g)[:, 0]
-    for qi in range(n_queries):
-        position = int(raw_positions[qi]) & ((1 << k_code) - 1)
-        init_leaf = cw_full_np[position * num_ntts:(position + 1) * num_ntts]
-        init_pos.append(position)
-        if arities:
-            li = position >> arity_0
-            post_rb_pos.append(li)
-            post_rb_leaf = post_rb_codeword[li * post_rb_leaf_f128:(li + 1) * post_rb_leaf_f128]
-        else:
-            post_rb_leaf = np.zeros((0, 2), np.uint64)
-        epoch_leaves, cum = [], arity_0
-        for i in range(num_fri_commits):
-            lf = epoch_leaf_f128s[i]
-            li = (position >> cum) // lf
-            epoch_leaves.append(epoch_codewords[i][li * lf:(li + 1) * lf])
-            epoch_pos[i].append(li)
-            cum += arities[i + 1]
-        queries.append((position, init_leaf, post_rb_leaf, epoch_leaves))
+    pos_dev = field.from_ghash(pos_g)[:, 0] & ((1 << k_code) - 1)   # device [Q]
+    init_pos = [int(p) for p in np.asarray(pos_dev)]                # host ints for the octopus proofs
+    init_leaves = np.asarray(_gather_leaves_dev(cw_full, pos_dev, num_ntts))  # [Q, num_ntts, 2]
 
-    n_init_leaves = cw_full_np.shape[0] // num_ntts
+    if arities:
+        post_rb_idx = pos_dev >> arity_0
+        post_rb_pos = [int(p) for p in np.asarray(post_rb_idx)]
+        post_rb_leaves = np.asarray(_gather_leaves_dev(post_rb_codeword, post_rb_idx, post_rb_leaf_f128))
+    else:
+        post_rb_pos, post_rb_leaves = [], None
+
+    epoch_pos = [[] for _ in range(num_fri_commits)]
+    epoch_leaves_all, cum = [], arity_0
+    for i in range(num_fri_commits):
+        lf = epoch_leaf_f128s[i]
+        li_dev = (pos_dev >> cum) // lf
+        epoch_pos[i] = [int(p) for p in np.asarray(li_dev)]
+        epoch_leaves_all.append(np.asarray(_gather_leaves_dev(epoch_codewords[i], li_dev, lf)))
+        cum += arities[i + 1]
+
+    queries = []
+    for qi in range(n_queries):
+        post_rb_leaf = post_rb_leaves[qi] if arities else np.zeros((0, 2), np.uint64)
+        epoch_leaves = [epoch_leaves_all[i][qi] for i in range(num_fri_commits)]
+        queries.append((init_pos[qi], init_leaves[qi], post_rb_leaf, epoch_leaves))
+
+    n_init_leaves = cw_full.shape[0] // num_ntts
     init_mp = merkle.merkle_multi_proof(initial_tree, n_init_leaves, init_pos)
     if arities:
         n_lv = post_rb_codeword.shape[0] // post_rb_leaf_f128

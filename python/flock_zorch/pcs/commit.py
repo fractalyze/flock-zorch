@@ -83,14 +83,14 @@ def _codeword_leaves(codeword, n_pos_code: int, num_ntts: int):
 
 
 def commit(z_packed, m: int, log_inv_rate: int, log_batch_size: int):
-    """Full PCS commit: returns (root uint8[32], codeword uint64[.,2], tree uint8[2n-1,32]).
-    The codeword + tree are the prover_data the PCS open consumes. Byte-identical
-    to flock `pcs::commit` (root) + its ProverData (codeword, merkle_tree). Encode
-    + Merkle leaves stay device-resident; only the returned codeword (consumed by
-    the host-side opening) and the tree cross to host."""
+    """Full PCS commit: returns (root uint8[32], codeword uint64[.,2] device, tree
+    uint8[2n-1,32]). The codeword + tree are the prover_data the PCS open consumes.
+    Byte-identical to flock `pcs::commit` (root) + its ProverData (codeword,
+    merkle_tree). Encode + Merkle leaves stay device-resident; the codeword stays on
+    device (BaseFold folds and gathers it there), only the 32-byte tree crosses to host."""
     codeword, n_pos_code, num_ntts = _encode_codeword(z_packed, m, log_inv_rate, log_batch_size)
     tree = merkle.merkle_tree(_codeword_leaves(codeword, n_pos_code, num_ntts))
-    return tree[-1], np.asarray(codeword), tree
+    return tree[-1], codeword, tree
 
 
 def commit_root(z_packed, m: int, log_inv_rate: int, log_batch_size: int) -> np.ndarray:
