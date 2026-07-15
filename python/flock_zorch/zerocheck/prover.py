@@ -20,8 +20,8 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
-import jax
-import jax.numpy as jnp
+import frx
+import frx.numpy as jnp
 
 from flock_zorch import field, sumcheck
 from flock_zorch.zerocheck import _urm
@@ -95,7 +95,7 @@ def medium_challenges() -> list[int]:
     return out
 
 
-@jax.jit
+@frx.jit
 def _mlv_round(a_g, b_g, eq_g, r0_g, t):
     """ONE multilinear round as one device program: the eq-weighted message pair
     (r[0]·G(1), G(∞)) over a precomputed suffix table, two scalar-framed
@@ -113,12 +113,12 @@ def _mlv_round(a_g, b_g, eq_g, r0_g, t):
         t, m1, minf, rho
 
 
-@jax.jit
+@frx.jit
 def _observe_finals(t, final_a, final_b):
     return t.observe_scalar(final_a).observe_scalar(final_b)
 
 
-_EQ_TABLES = jax.jit(sumcheck.build_eq_suffix_tables_g)
+_EQ_TABLES = frx.jit(sumcheck.build_eq_suffix_tables_g)
 
 
 class _SetupRound(Round):

@@ -2,7 +2,7 @@
 
 GPU port of [succinctlabs/flock](https://github.com/succinctlabs/flock) (an
 R1CS-over-GF(2) PIOP prover: zerocheck + lincheck, Ligerito/BaseFold PCS over
-F₂¹²⁸) onto Fractalyze's zorch / zkx compiler stack, in the style of
+F₂¹²⁸) onto Fractalyze's zorch / frx compiler stack, in the style of
 `bellman-zorch` and `accumulation-zorch`. Upstream lives at `third_party/flock` —
 it is the byte-compare baseline.
 
@@ -18,7 +18,7 @@ self-evident code beats a paragraph. Drop a comment rather than pad it.
 
 ## Non-negotiable: byte-identical oracle gates are mandatory
 
-Every layer ships with a byte-match against **unmodified** flock. The jax port's
+Every layer ships with a byte-match against **unmodified** flock. The frx port's
 serialized output must equal flock-core's reference bytes, anchored bottom-up:
 **field → additive-NTT → Merkle → zerocheck → lincheck → PCS → e2e proof.**
 A layer is not "done" until its `*_oracle_test` is green on GPU. Fixtures are

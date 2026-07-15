@@ -1,4 +1,4 @@
-"""Full single-claim PCS opening, authored in jax — byte-identical to flock-core
+"""Full single-claim PCS opening, authored in frx — byte-identical to flock-core
 `pcs::open`: observe `flock-pcs-open-v0` → ring-switch (s_hat_v + rs_eq_ind=b +
 target) → BaseFold. The entry point is `open()`; the FRI helpers it drives
 (`row_batch_fold_all` / `compute_fri_arities` / `default_fri_queries`) live in

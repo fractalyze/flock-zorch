@@ -5,13 +5,13 @@ flock-zorch is the GPU port; it depends on two pinned sibling repos:
 | dep | repo | pin | how |
 |---|---|---|---|
 | `third_party/flock` | `succinctlabs/flock` (public) | `main` @ `73f7202` | git **submodule** — the **byte-compare oracle**: Cargo path-deps `flock-core`/`flock-prover`; `examples/dump_*.rs` dump the golden fixtures from it |
-| `zorch` | `fractalyze/zorch` (private) | `flock-byte-fiat-shamir` @ `e2d28dc` | bazel **`git_override`** in `MODULE.bazel` — the **scheme-agnostic spine**: `zorch.hash.sha256`, `zorch.byte_transcript` (FS duplex) |
+| `zorch` | `fractalyze/zorch` (private) | `main` @ `ccc7006` | bazel **`git_override`** in `MODULE.bazel` — the **scheme-agnostic spine**: `zorch.hash.sha256`, `zorch.byte_transcript` (FS duplex), the `Stage`/`Bridge`/`Round` chain roles |
 
-> The zorch pin is the `flock-byte-fiat-shamir` branch, not `main` — it carries the
-> byte-SHA256 transcript + the ByteHash seam flock-zorch reuses. Bump it by editing
-> the `git_override` commit in `MODULE.bazel` (no submodule to move); keep the
-> `requirements.in` wheel set in lockstep (the zkx binary-field GPU contract is a
-> hard cut; CPU-only CI can't catch a desync). `bazel test` resolves zorch from the
+> The zorch pin tracks `main` (frx-migrated). Bump it by editing the `git_override`
+> commit in `MODULE.bazel` (no submodule to move); keep the `requirements.in`
+> `frx`/`frxlib`/`frx-cuda12` wheels on the SAME version as zorch's own
+> `requirements.in` in lockstep — the binary-field GPU kernels must be byte-identical,
+> and CPU-only CI can't catch a desync. `bazel test` resolves zorch from the
 > git_override; the heavy/venv gates resolve the same copy via
 > `scripts/zorch_pythonpath.sh`.
 
@@ -23,7 +23,7 @@ flock-zorch is the GPU port; it depends on two pinned sibling repos:
 - **Python 3.11**.
 - **SSH access to `fractalyze/zorch`** (bazel's `git_override` clones it).
 - Optional, for the GPU fast path: a **CUDA 13.3 `ptxas`** at `~/.local/cuda13/bin`.
-  With it on `PATH` the pinned jax wheel's compiler emits the hardware `clmad`
+  With it on `PATH` the pinned frx wheel's compiler emits the hardware `clmad`
   GF(2¹²⁸) multiply; without it everything still runs on the software
   `binary_field_ghash` multiply — byte-identical, just slower. See "clmad GPU
   acceleration" below.
@@ -92,7 +92,7 @@ Two gates sweep configs with their own runners instead of a single default golde
 ## Optional: clmad GPU acceleration
 
 The carryless GF(2¹²⁸) `binary_field_ghash` multiply's fast path is the hardware
-PTX `clmad` (carryless multiply-add) instruction, which the pinned jax wheel's
+PTX `clmad` (carryless multiply-add) instruction, which the pinned frx wheel's
 compiler emits directly — nothing to build. Emission is gated on the runtime
 `ptxas` being ≥ 13.3 (sm_120 requires it), so just put a CUDA 13.3 toolkit's
 `ptxas` on `PATH`:
@@ -149,7 +149,7 @@ scripts/dump_goldens.sh core && bazel test //python:all
 ## Troubleshooting
 
 - **`CUDA_ERROR_OUT_OF_MEMORY` on a shared GPU** — set
-  `XLA_PYTHON_CLIENT_PREALLOCATE=false` (above); jax otherwise grabs ~75% of VRAM up
+  `XLA_PYTHON_CLIENT_PREALLOCATE=false` (above); frx otherwise grabs ~75% of VRAM up
   front and collides with other processes.
 - **`ModuleNotFoundError: zorch...` or missing `zorch.hash.sha256` /
   `zorch.byte_transcript`** — the zorch submodule is on the wrong commit. It must be

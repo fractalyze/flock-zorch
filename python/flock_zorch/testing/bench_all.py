@@ -7,10 +7,10 @@ import gc
 import time
 
 import numpy as np
-import jax
+import frx
 
-jax.config.update("jax_enable_x64", True)
-import jax.numpy as jnp  # noqa: E402
+frx.config.update("jax_enable_x64", True)
+import frx.numpy as jnp  # noqa: E402
 
 from zorch.coding.additive_reed_solomon import AdditiveReedSolomon  # noqa: E402
 
@@ -23,11 +23,11 @@ def _rand(n, seed):
 
 def _bench(fn, args, iters):
     r = fn(*args)
-    jax.block_until_ready(r)
+    frx.block_until_ready(r)
     t0 = time.perf_counter()
     for _ in range(iters):
         r = fn(*args)
-    jax.block_until_ready(r)
+    frx.block_until_ready(r)
     return (time.perf_counter() - t0) / iters
 
 
@@ -36,14 +36,14 @@ def _oom(e):
 
 
 def main():
-    print("device:", jax.devices()[0], "| backend:", jax.default_backend())
+    print("device:", frx.devices()[0], "| backend:", frx.default_backend())
 
     print("\n[additive NTT]  AdditiveReedSolomon.encode (blowup=1, ghash)")
     for log in (16, 18, 20):
         n = 1 << log
         d = _rand(n, 3)
         code = AdditiveReedSolomon(n, 1, jnp.binary_field_ghash)
-        fn = jax.jit(lambda dd, c=code: c.encode(field.to_ghash(dd)))
+        fn = frx.jit(lambda dd, c=code: c.encode(field.to_ghash(dd)))
         try:
             dt = _bench(fn, (d,), 20)
             print(f"  log_d={log:<2} {dt*1e3:8.2f} ms/transform  {n/dt/1e9:6.3f} G elem/s")
@@ -57,9 +57,9 @@ def main():
         n = 1 << log
         r = _rand(log, 5)
         a, b = _rand(n, 6), _rand(n, 7)
-        eq_fn = jax.jit(lambda rr, ln=log: sumcheck.build_eq(rr))
-        rp_fn = jax.jit(lambda aa, bb, rr: sumcheck.round_pair(aa, bb, rr))
-        fs_fn = jax.jit(lambda aa: sumcheck.fold_single(aa, r[0]))
+        eq_fn = frx.jit(lambda rr, ln=log: sumcheck.build_eq(rr))
+        rp_fn = frx.jit(lambda aa, bb, rr: sumcheck.round_pair(aa, bb, rr))
+        fs_fn = frx.jit(lambda aa: sumcheck.fold_single(aa, r[0]))
         eq_ms = _bench(eq_fn, (r,), 30) * 1e3
         rp_ms = _bench(rp_fn, (a, b, r), 30) * 1e3
         fs_ms = _bench(fs_fn, (a,), 30) * 1e3
@@ -69,7 +69,7 @@ def main():
         gc.collect()
 
     print("\n[XOR add]  bandwidth ceiling")
-    add = jax.jit(lambda a, b: a ^ b)
+    add = frx.jit(lambda a, b: a ^ b)
     n = 1 << 24
     a, b = _rand(n, 1), _rand(n, 2)
     dt = _bench(add, (a, b), 50)

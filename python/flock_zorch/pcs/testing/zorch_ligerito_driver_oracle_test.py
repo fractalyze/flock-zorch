@@ -23,12 +23,12 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import jax
+import frx
 
-jax.config.update("jax_enable_x64", True)
+frx.config.update("jax_enable_x64", True)
 
-import jax.numpy as jnp  # noqa: E402
-from jax import lax  # noqa: E402
+import frx.numpy as jnp  # noqa: E402
+from frx import lax  # noqa: E402
 
 from zorch.coding.reed_solomon import ReedSolomon  # noqa: E402
 from zorch.pcs.ligerito.prover import LigeritoProver  # noqa: E402
@@ -116,7 +116,7 @@ def main() -> int:
     g = load()
     cfg = g["cfg"]
     config, chor = flock_ligerito_config(cfg, g["log_n"])
-    print(f"device {jax.devices()[0]} | log_n={g['log_n']} fold_ks={config.fold_ks} "
+    print(f"device {frx.devices()[0]} | log_n={g['log_n']} fold_ks={config.fold_ks} "
           f"queries={config.queries} ood={config.ood_samples}")
 
     def make_code(message_len: int, log_inv_rate: int) -> ReedSolomon:

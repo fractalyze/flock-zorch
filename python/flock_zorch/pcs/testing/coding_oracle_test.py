@@ -17,10 +17,10 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import jax
+import frx
 
-jax.config.update("jax_enable_x64", True)
-import jax.numpy as jnp  # noqa: E402
+frx.config.update("jax_enable_x64", True)
+import frx.numpy as jnp  # noqa: E402
 from zorch.coding.additive_reed_solomon import (  # noqa: E402
     AdditiveReedSolomon,
     additive_ntt_twiddles,
@@ -67,7 +67,7 @@ def _soa(g):
 
 
 def main() -> int:
-    print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()}")
+    print(f"device: {frx.devices()[0]} | backend: {frx.default_backend()}")
 
     log_d, inp, tw, out = _load_ntt()
     ok = np.array_equal(
@@ -80,7 +80,7 @@ def main() -> int:
     # encode = zero-pad message to block_len + LCH NTT; the golden is a full-length
     # transform, so blowup=1 (message_len == block_len == n, no padding).
     code = AdditiveReedSolomon(1 << log_d, 1, jnp.binary_field_ghash)
-    got = _soa(jax.jit(code.encode)(_ghash(inp)))
+    got = _soa(frx.jit(code.encode)(_ghash(inp)))
     ok = np.array_equal(got, out)
     print(f"code.encode byte-match vs ntt golden (log_d={log_d}): "
           f"{'PASS' if ok else 'FAIL'}")
@@ -91,7 +91,7 @@ def main() -> int:
     # (2,)-uint64 bitcasts to a 0-d ghash scalar; keep the challenge (1,).
     code = AdditiveReedSolomon(1 << (k_code - 1), 2, jnp.binary_field_ghash)
     cw_g, beta = _ghash(cw), _ghash(chal.reshape(1, 2))
-    got = _soa(jax.jit(code.fold)(cw_g, beta))
+    got = _soa(frx.jit(code.fold)(cw_g, beta))
     ok = np.array_equal(got, folded)
     print(f"code.fold byte-match vs fri golden (k_code={k_code} layer={layer}): "
           f"{'PASS' if ok else 'FAIL'}")

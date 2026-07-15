@@ -1,4 +1,4 @@
-"""flock_zorch — jax port of succinctlabs/flock's R1CS-over-GF(2) PIOP prover.
+"""flock_zorch — frx port of succinctlabs/flock's R1CS-over-GF(2) PIOP prover.
 
 Built bottom-up, each layer gated by a byte-match against unmodified flock
 (see `testing/`): field -> additive-NTT -> Merkle -> zerocheck -> lincheck ->

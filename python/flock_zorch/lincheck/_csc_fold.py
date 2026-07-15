@@ -12,8 +12,8 @@ from __future__ import annotations
 import functools
 
 import numpy as np
-import jax
-import jax.numpy as jnp
+import frx
+import frx.numpy as jnp
 
 U64 = jnp.uint64
 
@@ -50,14 +50,14 @@ def _csc_segments(col, row):
     return jnp.asarray(row_s), jnp.asarray(seg_end), jnp.asarray(present)
 
 
-@functools.partial(jax.jit, static_argnums=(4,))
+@functools.partial(frx.jit, static_argnums=(4,))
 def _seg_xor_fold(eq, row_sorted, seg_end, present, k):
     """Device transposed binary matvec out[c] = XOR_{i:col[i]=c} eq[row[i]], via a
     sorted prefix-XOR scan. Inclusive prefix-XOR P over the column-sorted gathered
     values; each column's reduce = P[seg_end] XOR P[prev seg_end] (XOR is its own
     inverse), scattered (set, no duplicates) into the dense [k,2] output."""
     vals = eq[row_sorted]                                          # [nnz, 2]
-    pref = jax.lax.associative_scan(jnp.bitwise_xor, vals, axis=0)  # inclusive prefix XOR
+    pref = frx.lax.associative_scan(jnp.bitwise_xor, vals, axis=0)  # inclusive prefix XOR
     ends = pref[seg_end]                                           # cumulative through each run end
     prev = jnp.concatenate([jnp.zeros((1, 2), U64), ends[:-1]], axis=0)
     seg = jnp.bitwise_xor(ends, prev)                             # per-column XOR-reduce

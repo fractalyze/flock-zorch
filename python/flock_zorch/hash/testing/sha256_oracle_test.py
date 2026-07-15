@@ -1,7 +1,7 @@
 """SHA-256 byte-match gate + CPU-vs-GPU benchmark.
 
 (1) Loads flock's golden (`Sha256::digest` over N random messages) and asserts the
-    jax port reproduces every 32-byte digest bit-for-bit — the oracle gate.
+    frx port reproduces every 32-byte digest bit-for-bit — the oracle gate.
 (2) Benchmarks batched SHA-256: GPU (one data-parallel call over all messages) vs
     flock's CPU `merkle::hash_leaf` over the same N messages (rayon-parallel, the
     honest flock baseline), and reports the speedup.
@@ -16,8 +16,8 @@ import time
 from pathlib import Path
 
 import numpy as np
-import jax
-import jax.numpy as jnp
+import frx
+import frx.numpy as jnp
 
 from zorch.hash import sha256
 
@@ -58,7 +58,7 @@ def _cpu_hash_ms(n: int, l: int) -> float:
 
 def main() -> int:
     n, l = test_oracle()
-    print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()}")
+    print(f"device: {frx.devices()[0]} | backend: {frx.default_backend()}")
     print(f"SHA-256 byte-identity vs flock ({n} x {l}-byte msgs): PASS\n")
 
     inp = _load_golden()[2]

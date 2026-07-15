@@ -8,8 +8,8 @@ Requires jax_enable_x64.
 from __future__ import annotations
 
 import numpy as np
-import jax
-import jax.numpy as jnp
+import frx
+import frx.numpy as jnp
 
 from flock_zorch import field
 from flock_zorch.zerocheck import _urm
@@ -36,7 +36,7 @@ def _prod_axis1(mat):
     return mat[:, 0]
 
 
-@jax.jit
+@frx.jit
 def _lag_numden(s, zf):
     """num[i]=Π_{j≠i}(z+s_j), den[i]=Π_{j≠i}(s_i+s_j); diagonal terms set to 1."""
     sg = field.to_ghash(s)          # [ell]
@@ -48,12 +48,12 @@ def _lag_numden(s, zf):
     return field.from_ghash(_prod_axis1(num_mat)), field.from_ghash(_prod_axis1(den_mat))
 
 
-@jax.jit
+@frx.jit
 def _lag_w(num, inv_den):
     return field.from_ghash(field.to_ghash(num) * field.to_ghash(inv_den))
 
 
-@jax.jit
+@frx.jit
 def _batch_inv(a):
     """Batched GF(2^128) inverse a^(2^128-2) = Π_{k=1}^{127} a^(2^k), via 127
     square-and-multiply steps. Rolled into a `fori_loop`: the native ghash multiply
@@ -66,7 +66,7 @@ def _batch_inv(a):
         sq = sq * sq
         return sq, result * sq
 
-    _, result = jax.lax.fori_loop(0, 127, body, (ag, jnp.broadcast_to(_ONE_G, ag.shape)))
+    _, result = frx.lax.fori_loop(0, 127, body, (ag, jnp.broadcast_to(_ONE_G, ag.shape)))
     return field.from_ghash(result)
 
 
@@ -90,7 +90,7 @@ def _interpolate_at_z_on_lambda(values_int: list[int], k_skip: int, z: int) -> i
     return field._ghash_to_int(np.sum(prod))  # XOR-sum inner product
 
 
-@jax.jit
+@frx.jit
 def _fold_at_z_dev(rows, w):
     """a_mlv[x_rest] = Σ_s witness[x_rest·ell + s]·L_s(z) (flock `fold_at_z_naive`),
     on device. rows: uint8 [2^(m-k_skip), ell]; w: uint64 [ell, 2] -> [n_chunks, 2].

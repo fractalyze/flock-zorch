@@ -14,9 +14,9 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import jax
+import frx
 
-jax.config.update("jax_enable_x64", True)
+frx.config.update("jax_enable_x64", True)
 
 from flock_zorch import field, zerocheck, lincheck, prover  # noqa: E402
 from flock_zorch.pcs import commit as pcs_commit, ring_switch  # noqa: E402
@@ -174,7 +174,7 @@ def run():
 
 
 def main() -> int:
-    print(f"device {jax.devices()[0]}")
+    print(f"device {frx.devices()[0]}")
     m, results = run()
     allok = True
     for nm, ok in results:

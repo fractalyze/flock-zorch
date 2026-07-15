@@ -12,9 +12,9 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import jax
+import frx
 
-jax.config.update("jax_enable_x64", True)
+frx.config.update("jax_enable_x64", True)
 
 from flock_zorch.pcs import commit as pcs_commit, open as pcs_open  # noqa: E402
 from flock_zorch.pcs import FlockPcsProver  # noqa: E402
@@ -53,7 +53,7 @@ def _deep_eq(a, b) -> bool:
 
 
 def main() -> int:
-    print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()}")
+    print(f"device: {frx.devices()[0]} | backend: {frx.default_backend()}")
     m, lir, lbs, z_packed, x_outer, g_codeword = _read_golden_inputs()
     k_code = (m - 7 - lbs) + lir
 

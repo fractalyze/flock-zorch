@@ -4,7 +4,7 @@ data-parallel primitive of flock's multilinear sumcheck (iter 10).
 Anchors flock-zorch's GPU `build_eq` (clmad) against **unmodified succinct flock**
 on the SAME x86 box, byte-identical:
 
-  1. byte-identity: the jax `build_eq` reproduces flock's reference bytes on the
+  1. byte-identity: the frx `build_eq` reproduces flock's reference bytes on the
      dumped fixture (the oracle gate, reused from `sumcheck_oracle_test`);
   2. speed: for each size, time flock's CPU `build_eq` (via the
      `bench_sumcheck_cpu` example) and the GPU clmad `build_eq`, best-of-N each,
@@ -27,10 +27,10 @@ import time
 from pathlib import Path
 
 import numpy as np
-import jax
+import frx
 
-jax.config.update("jax_enable_x64", True)
-import jax.numpy as jnp  # noqa: E402
+frx.config.update("jax_enable_x64", True)
+import frx.numpy as jnp  # noqa: E402
 
 from flock_zorch import field, sumcheck  # noqa: E402
 from flock_zorch.sumcheck.testing import sumcheck_oracle_test as oracle  # noqa: E402
@@ -74,7 +74,7 @@ def _gpu_eq_ms(fn, r) -> float:
 
 
 def main() -> int:
-    print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()}")
+    print(f"device: {frx.devices()[0]} | backend: {frx.default_backend()}")
     print("CPU baseline: unmodified flock build_eq (x86 scalar; flock's NEON is "
           "aarch64-gated — see flock-baseline-needs-macbook)\n")
 
@@ -87,7 +87,7 @@ def main() -> int:
     worst = float("inf")
     for n in SIZES:
         r = jnp.asarray(np.random.default_rng(7).integers(0, 2**64, size=(n, 2), dtype=np.uint64))
-        fn = jax.jit(lambda rr: sumcheck.build_eq(rr))
+        fn = frx.jit(lambda rr: sumcheck.build_eq(rr))
         gpu = _gpu_eq_ms(fn, r)
         cpu = _cpu_eq_ms(n)
         spd = cpu / gpu

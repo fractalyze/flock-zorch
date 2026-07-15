@@ -19,9 +19,9 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import jax
+import frx
 
-jax.config.update("jax_enable_x64", True)
+frx.config.update("jax_enable_x64", True)
 
 from flock_zorch import field, zerocheck, lincheck, prover  # noqa: E402
 from flock_zorch.pcs import commit as pcs_commit  # noqa: E402
@@ -38,7 +38,7 @@ def main():
     meta = g["meta"]; m = meta["m"]; lir = meta["lir"]; lbs = meta["lbs"]
     k_log = meta["k_log"]; k_skip = meta["k_skip"]; ir = k_log - k_skip
     k_code = (m - 7 - lbs) + lir
-    print(f"device {jax.devices()[0]} | blake3 m={m}")
+    print(f"device {frx.devices()[0]} | blake3 m={m}")
 
     # setup (host witness-prep / circuit build — not the GPU prover, not timed)
     csc = lincheck.CscCircuit(g["a0_rows"], g["b0_rows"], 1 << k_log, const_pin=meta["const_pin"])

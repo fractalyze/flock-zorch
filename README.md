@@ -152,8 +152,8 @@ $VENV python/flock_zorch/testing/e2e_sha2_bench.py "${CPU%% ms}"             # G
 
 ## Toolchain
 
-- **GPU:** RTX 5090 (sm_120, Blackwell). JAX runtime is the **CUDA 12** stack
-  (jax_fork jax-cuda12 + `jax-cuda12-pjrt` + `zk_dtypes`), built into `.venv` by
+- **GPU:** RTX 5090 (sm_120, Blackwell). frx runtime is the **CUDA 12** stack
+  (frx jax-fork + `frx-cuda12-pjrt` + `zk_dtypes`), built into `.venv` by
   `scripts/setup.sh`; hardware `clmad` is compiler-emitted when a **ptxas ≥ 13.3**
   is on `PATH` (sm_120 requires it). `jax_enable_x64` is required for the uint64 field lanes.
 - **Rust:** standalone rustup in `~/.cargo` (flock is edition 2024). `flock-core`

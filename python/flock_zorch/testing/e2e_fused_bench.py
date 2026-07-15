@@ -16,10 +16,10 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import jax
+import frx
 
-jax.config.update("jax_enable_x64", True)
-import jax.numpy as jnp  # noqa: E402
+frx.config.update("jax_enable_x64", True)
+import frx.numpy as jnp  # noqa: E402
 
 from flock_zorch import field, prover  # noqa: E402
 
@@ -80,7 +80,7 @@ def bench(m, n=3):
 def main():
     ms = [int(x) for x in sys.argv[1:]] or [26]
     n = int(os.environ.get("FLOCK_BENCH_N", "3"))
-    print(f"device {jax.devices()[0]} | Merkle GPU SHA-256")
+    print(f"device {frx.devices()[0]} | Merkle GPU SHA-256")
     sanity_m13()
     for m in ms:
         cpu = CPU_IDENTITY.get(m)

@@ -1,4 +1,4 @@
-"""PCS commit, authored in jax — byte-identical to flock's `pcs::commit`.
+"""PCS commit, authored in frx — byte-identical to flock's `pcs::commit`.
 
 The first FULL sub-protocol with a byte-serializable output (a 32-byte Merkle
 root). Construction (flock `pcs/commit.rs`):
@@ -22,8 +22,8 @@ same codeword. The encode runs on the native `binary_field_ghash` dtype (its
 from __future__ import annotations
 
 import numpy as np
-import jax.numpy as jnp
-from jax import lax
+import frx.numpy as jnp
+from frx import lax
 
 from zorch.coding.additive_reed_solomon import AdditiveReedSolomon
 

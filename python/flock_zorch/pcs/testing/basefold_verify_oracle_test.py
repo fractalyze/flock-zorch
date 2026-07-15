@@ -13,10 +13,10 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import jax
-import jax.numpy as jnp
+import frx
+import frx.numpy as jnp
 
-jax.config.update("jax_enable_x64", True)
+frx.config.update("jax_enable_x64", True)
 
 from flock_zorch import field  # noqa: E402
 from flock_zorch.pcs import basefold, fri  # noqa: E402
@@ -154,7 +154,7 @@ def _check_reject(name, mutate, base):
 
 
 def main() -> int:
-    print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()}")
+    print(f"device: {frx.devices()[0]} | backend: {frx.default_backend()}")
     ok = True
 
     # Byte-anchor: accept unmodified flock's own proof, 1-epoch and multi-epoch.

@@ -11,52 +11,52 @@ from __future__ import annotations
 
 import functools
 
-import jax
+import frx
 
 
-@jax.jit
+@frx.jit
 def observe_scalar(t, x):
     """Scalar-framed observe — `x` 0-d for one op, `[n]` for n ops."""
     return t.observe_scalar(x)
 
 
-@jax.jit
+@frx.jit
 def observe_slice(t, xs):
     return t.observe(xs)
 
 
-@jax.jit
+@frx.jit
 def observe_bytes(t, data):
     return t.observe_bytes(data)
 
 
-@functools.partial(jax.jit, static_argnums=(1,))
+@functools.partial(frx.jit, static_argnums=(1,))
 def observe_label(t, label):
     return t.observe_label(label)
 
 
-@jax.jit
+@frx.jit
 def sample_scalar(t):
     return t.sample_scalar()
 
 
-@functools.partial(jax.jit, static_argnums=(1,))
+@functools.partial(frx.jit, static_argnums=(1,))
 def sample_slice(t, n):
     return t.sample(n)
 
 
-@functools.partial(jax.jit, static_argnums=(1,))
+@functools.partial(frx.jit, static_argnums=(1,))
 def grind(t, bits):
     """Device PoW grind — the transcript's windowed search as one program."""
     return t.grind(bits)
 
 
-@functools.partial(jax.jit, static_argnums=(2,))
+@functools.partial(frx.jit, static_argnums=(2,))
 def check_witness(t, witness, bits):
     return t.check_witness(witness, bits)
 
 
-@jax.jit
+@frx.jit
 def observe_pair_sample(t, x, y):
     """observe_scalar(x) → observe_scalar(y) → sample_scalar(): the
     (message, challenge) hop every sumcheck round makes, as one device program."""
@@ -64,9 +64,9 @@ def observe_pair_sample(t, x, y):
     return t.sample_scalar()
 
 
-@functools.partial(jax.jit, static_argnums=(1,))
+@functools.partial(frx.jit, static_argnums=(1,))
 def sample_chain(t, n):
     """n successive scalar-framed squeezes as one device program. Each squeeze
     re-absorbs, so the chain is sequential — but shape-uniform per step, so it
     scans (O(1) compile) rather than unrolling."""
-    return jax.lax.scan(lambda t, _: t.sample_scalar(), t, None, length=n)
+    return frx.lax.scan(lambda t, _: t.sample_scalar(), t, None, length=n)

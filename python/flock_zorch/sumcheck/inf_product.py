@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import functools
 
-import jax
+import frx
 
 from zorch.prove import fold_rounds
 from zorch.round import Round
@@ -36,7 +36,7 @@ class InfProductRound(Round):
         return fold(folded, r), transcript, (msg[0], msg[1], r)
 
 
-@functools.partial(jax.jit, static_argnums=(2,))
+@functools.partial(frx.jit, static_argnums=(2,))
 def prove_inf_product(stacked, transcript, rounds):
     """`rounds` ∞-product rounds as ONE device program:
     ([2, N], transcript) -> ([2, N/2^rounds], transcript, [(e1, einf, r), ...])."""

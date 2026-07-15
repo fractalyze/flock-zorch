@@ -1,5 +1,5 @@
 """flock's fused R1CS prover (`prover::prove` / `prove_fast_core`), authored in
-jax — byte-identical to flock-core. A zorch `ProveChain` of Stages threading ONE
+frx — byte-identical to flock-core. A zorch `ProveChain` of Stages threading ONE
 shared SHA-256 challenger with device-resident state (no per-phase host
 re-transfer): commit+bind → zerocheck → lincheck → batched PCS open (see
 `prove_fast`).
@@ -13,15 +13,15 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
-import jax
-import jax.numpy as jnp
+import frx
+import frx.numpy as jnp
 
 from flock_zorch import field, zerocheck, lincheck
 from flock_zorch.pcs import ring_switch, basefold, fri, ligerito as zorch_ligerito
 from flock_zorch.sumcheck import build_eq
 from flock_zorch.challenger import Challenger  # noqa: F401  (re-exported for callers)
 from flock_zorch.pcs import FlockPcsProver
-from zorch.round import ProveChain, Round
+from zorch.round import ProveChain, Stage
 
 
 @dataclass(frozen=True)
@@ -47,7 +47,7 @@ class ProveFastResult:
     claim_c_value: Any
 
 
-@jax.jit
+@frx.jit
 def _unpack_bits_dev(z_packed):
     """Packed F128 witness [2^(m-7),2] -> device bit witness [2^m] uint8 (LSB-first
     within each 128-bit element), on device so a=b=c=z stays device-resident. The
@@ -170,7 +170,7 @@ class _ProveCarry:
     lc_claim: dict | None = None  # ← _LincheckStage; read by open + assembly
 
 
-class _CommitStage(Round):
+class _CommitStage(Stage):
     """Commit ẑ through the `FlockPcsProver` seam, then bind the transcript to the
     statement (flock `bind_statement`): the trace-commit Stage (commit + preamble
     absorb). Message = the root."""
@@ -184,7 +184,7 @@ class _CommitStage(Round):
         return replace(carry, codeword=data.codeword, tree=data.tree), transcript, root
 
 
-class _ZerocheckStage(Round):
+class _ZerocheckStage(Stage):
     """R1CS zerocheck on the identity witness (a = b = c = ẑ). Message = the
     zerocheck proof/claim dict, also threaded onto the carry for later stages."""
 
@@ -197,7 +197,7 @@ class _ZerocheckStage(Round):
         return replace(carry, zc=zc), transcript, zc
 
 
-class _LincheckStage(Round):
+class _LincheckStage(Stage):
     """Lincheck reducing a = A·z, b = B·z to the ab evaluation claim at the
     zerocheck challenge point. Message = (rounds, z_partial); writes the ab claim
     onto the carry."""
@@ -218,7 +218,7 @@ class _LincheckStage(Round):
         return replace(carry, lc_claim=lp.claim), transcript, (lp.rounds, lp.z_partial)
 
 
-class _PcsOpenStage(Round):
+class _PcsOpenStage(Stage):
     """Batched dual-claim PCS open of the ab + c claims — the final stage. ab
     point = lincheck r_inner_rest ++ zerocheck x_outer; c point = the zerocheck
     r_rest. Message = the BatchOpeningProof dict."""

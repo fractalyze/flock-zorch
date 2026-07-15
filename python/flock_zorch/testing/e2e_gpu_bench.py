@@ -15,12 +15,12 @@ Run:
 import sys
 
 import numpy as np
-import jax
+import frx
 
-jax.config.update("jax_enable_x64", True)
-import jax.numpy as jnp  # noqa: E402
+frx.config.update("jax_enable_x64", True)
+import frx.numpy as jnp  # noqa: E402
 
-from jax import lax  # noqa: E402
+from frx import lax  # noqa: E402
 from zorch.coding.additive_reed_solomon import AdditiveReedSolomon  # noqa: E402
 
 from flock_zorch import field, zerocheck, lincheck  # noqa: E402
@@ -45,7 +45,7 @@ def bench(m):
     # --- commit (RS encode + merkle) ---
     n_pos_msg, n_pos_code = 1 << (log_msg - LBS), 1 << k_code
     code = AdditiveReedSolomon(n_pos_msg, 1 << LIR, jnp.binary_field_ghash)
-    enc = jax.jit(lambda z: code.encode(lax.bitcast_convert_type(
+    enc = frx.jit(lambda z: code.encode(lax.bitcast_convert_type(
         z.reshape(n_pos_msg, num_ntts, 2), jnp.binary_field_ghash).T))  # [num_ntts, n_pos_code]
     cw = enc(z_packed); cw.block_until_ready()
     t_commit = best(lambda: enc(z_packed), n=4)
@@ -92,7 +92,7 @@ def bench(m):
 
 def main():
     ms = [int(x) for x in sys.argv[1:]] or [22, 26]
-    print(f"device: {jax.devices()[0]} | Merkle: GPU SHA-256")
+    print(f"device: {frx.devices()[0]} | Merkle: GPU SHA-256")
     for m in ms:
         bench(m)
 

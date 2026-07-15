@@ -1,4 +1,4 @@
-"""flock's BaseFold PCS open prover (`pcs::basefold::prove`), authored in jax —
+"""flock's BaseFold PCS open prover (`pcs::basefold::prove`), authored in frx —
 byte-identical to flock-core. The keystone of the PCS open: a sumcheck over
 (a_init, b) interleaved with codeword folding (deferred row-batch over the first
 `log_batch_size` rounds, then per-round FRI folds), per-epoch Merkle commits, and
@@ -21,8 +21,8 @@ from __future__ import annotations
 import functools
 
 import numpy as np
-import jax
-import jax.numpy as jnp
+import frx
+import frx.numpy as jnp
 
 from zorch.coding.additive_reed_solomon import AdditiveReedSolomon
 
@@ -63,9 +63,9 @@ def _bf_ops():
     global _BF_OPS
     if _BF_OPS is None:
         _BF_OPS = (
-            jax.jit(lambda a, b: _round_message(a, b)),
-            jax.jit(lambda a, r: sumcheck.fold_single(a, r)),
-            jax.jit(lambda cw, ch: fri.row_batch_fold_all(cw, ch)),
+            frx.jit(lambda a, b: _round_message(a, b)),
+            frx.jit(lambda a, r: sumcheck.fold_single(a, r)),
+            frx.jit(lambda cw, ch: fri.row_batch_fold_all(cw, ch)),
         )
     return _BF_OPS
 
@@ -80,7 +80,7 @@ def _root_f128(root):
     return root[:16].view(np.uint64)
 
 
-@functools.partial(jax.jit, static_argnums=(4, 5, 6))
+@functools.partial(frx.jit, static_argnums=(4, 5, 6))
 def _replay_round_fs(t, msgs_g, post_rb_g, commits_g, log_batch_size, arities,
                      num_epochs):
     """The verify sumcheck's Fiat-Shamir replay as ONE device program: per round
@@ -124,7 +124,7 @@ def prove(z_packed, b, codeword, initial_tree, k_code, log_inv_rate, log_batch_s
     # smaller code's codeword — every round must go through this instance.
     code = AdditiveReedSolomon(1 << log_dim, 1 << log_inv_rate,
                                jnp.binary_field_ghash) if log_dim > 0 else None
-    fold_fn = jax.jit(code.fold) if code is not None else None
+    fold_fn = frx.jit(code.fold) if code is not None else None
 
     ch.observe_label(LABEL)
     round_message, fold_single, row_batch = _bf_ops()
@@ -270,7 +270,7 @@ def _fold_coset(code, buf_g, betas, input_layer, coset_idx, k_code):
 
 def verify(target, proof, initial_codeword_root, k_code, log_inv_rate,
            log_batch_size, ch) -> tuple[bool, dict]:
-    """flock's BaseFold verifier (`pcs::basefold::verify`), authored in jax. Replays
+    """flock's BaseFold verifier (`pcs::basefold::verify`), authored in frx. Replays
     the sumcheck + multi-arity FRI consistency on the shared challenger `ch`, then
     batch-verifies the three Merkle categories through zorch's
     `pcs.fold.verify_openings` (fed per-query `Opening`s expanded from flock's

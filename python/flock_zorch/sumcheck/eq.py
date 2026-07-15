@@ -1,4 +1,4 @@
-"""Multilinear-sumcheck arithmetic core, authored in jax — byte-identical to
+"""Multilinear-sumcheck arithmetic core, authored in frx — byte-identical to
 flock's `zerocheck::{univariate_skip,multilinear}` primitives.
 
 These are the reusable kernels shared by BOTH sumchecks in flock's PIOP
@@ -24,8 +24,8 @@ Requires `jax_enable_x64`.
 """
 from __future__ import annotations
 
-import jax
-import jax.numpy as jnp
+import frx
+import frx.numpy as jnp
 
 from zorch.poly.eq import expand_eq_to_hypercube
 from zorch.sumcheck.domain import compressed_domain, fold, summand_evals
@@ -60,7 +60,7 @@ def build_eq(r):
     return field.from_ghash(build_eq_g(field.to_ghash(r)))
 
 
-_BUILD_EQ_FUSED = jax.jit(build_eq)
+_BUILD_EQ_FUSED = frx.jit(build_eq)
 
 
 def build_eq_fused(r):

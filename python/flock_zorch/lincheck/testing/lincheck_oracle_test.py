@@ -1,6 +1,6 @@
 """lincheck byte-match gate vs unmodified flock `lincheck::prove`.
 
-Loads the golden (inputs + flock's LincheckProof), runs the jax port, and asserts
+Loads the golden (inputs + flock's LincheckProof), runs the frx port, and asserts
 rounds + z_partial match byte-for-byte (identical under software and `clmad` mul).
 
 Run:
@@ -12,9 +12,9 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import jax
+import frx
 
-jax.config.update("jax_enable_x64", True)
+frx.config.update("jax_enable_x64", True)
 
 from flock_zorch import field, lincheck  # noqa: E402
 
@@ -75,7 +75,7 @@ def main() -> int:
     if not paths:
         print("no lincheck golden — run: cargo run --release --example dump_lincheck")
         return 1
-    print(f"device: {jax.devices()[0]} | backend: {jax.default_backend()}")
+    print(f"device: {frx.devices()[0]} | backend: {frx.default_backend()}")
     cfgs = [_check(p, "native") for p in paths]
     print(f"lincheck prove byte-match vs flock: PASS  cfgs(m,k_log,k_skip)={cfgs}")
     return 0

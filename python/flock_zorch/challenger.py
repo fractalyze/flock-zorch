@@ -19,7 +19,7 @@ Requires `zorch` on PYTHONPATH (run gates with `PYTHONPATH=python:../zorch`).
 from __future__ import annotations
 
 import numpy as np
-import jax.numpy as jnp
+import frx.numpy as jnp
 
 from zorch.sha256_field_transcript import Sha256FieldTranscript
 

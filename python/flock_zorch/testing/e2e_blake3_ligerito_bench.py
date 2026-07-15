@@ -1,8 +1,8 @@
 """GPU BLAKE3 LIGERITO prover timing — mirrors e2e_sha2_ligerito_bench with the
 blake3_ligerito loader (byte-identity pinned by blake3_ligerito_oracle_test)."""
 import sys
-import numpy as np, jax
-jax.config.update("jax_enable_x64", True)
+import numpy as np, frx
+frx.config.update("jax_enable_x64", True)
 from flock_zorch import zerocheck, lincheck, prover  # noqa: E402
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
@@ -17,7 +17,7 @@ def main():
     csc = lincheck.CscCircuit(g["a0_rows"], g["b0_rows"], 1 << k_log, const_pin=meta["const_pin"])
     a_bits, b_bits, c_bits = g["a"], g["b"], g["z"]  # packed F128 — witness_to_rows unpacks on device
     z, stmt = g["z"], g["stmt"]
-    print(f"device {jax.devices()[0]} | blake3-ligerito m={m}")
+    print(f"device {frx.devices()[0]} | blake3-ligerito m={m}")
 
     def prove_once():
         root, pdata = zorch_ligerito.commit_flock_ligerito(cfg, z)

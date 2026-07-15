@@ -22,8 +22,8 @@ from dataclasses import dataclass, replace
 from typing import Any, NamedTuple, Protocol, runtime_checkable
 
 import numpy as np
-import jax
-import jax.numpy as jnp
+import frx
+import frx.numpy as jnp
 
 from flock_zorch import field
 from flock_zorch.sumcheck import build_eq_fused, ONE
@@ -105,7 +105,7 @@ def partial_fold_packed_z(z_packed_bytes: bytes, m: int, k_log: int, eq_outer):
     return _partial_fold_dev(zp, eq_outer, n_outer)         # device + jit (keeps the intermediate off HBM)
 
 
-@functools.partial(jax.jit, static_argnums=(2,))
+@functools.partial(frx.jit, static_argnums=(2,))
 def _partial_fold_dev(zp, eq_outer, n_outer):
     """z_vec[i_inner] = Σ_{i_outer} bit·eq_outer[i_outer], device+jit so the large
     [n_outer,k,2] intermediate stays fused on device and never lands in HBM."""

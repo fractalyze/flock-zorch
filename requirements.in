@@ -8,17 +8,17 @@
 # itself arrives as a Bazel module (see MODULE.bazel), not a pip dep.
 absl-py
 numpy
-# Lockstep with the zorch git_override pin in MODULE.bazel (flock-byte-fiat-shamir).
-# That branch migrated onto the jax_fork jax-cuda12 stack (zorch#194), so this MUST
-# mirror zorch's own requirements.in. The pre-migration zkx-cuda-pjrt / 0.0.5.dev
-# wheels lack the interior-padding lowering lincheck's `_seg_xor_fold`
-# (jax.lax.associative_scan) needs — the sha2/blake3 GPU gates raise
-# NotImplementedError on them. Bump these together with the submodule pin.
-jax==0.10.0.dev20260714051543
-jaxlib==0.10.0.dev20260714051543
-jax-cuda12-plugin==0.10.0.dev20260714051543
-jax-cuda12-pjrt==0.10.0.dev20260714051543
-# zk_dtypes ships the native field dtypes jax lowers; arrives transitively via
-# jax but the resolver lags, so pin it so the lock tracks the jax wheel.
+# Lockstep with the zorch git_override pin in MODULE.bazel. frx/frxlib are the
+# Fractalyze jax_fork rebrand; this MUST mirror zorch's own requirements.in and
+# stay on the same version so the GPU kernels are byte-identical. The stack
+# carries the interior-padding lowering lincheck's `_seg_xor_fold`
+# (frx.lax.associative_scan) needs — older wheels raise NotImplementedError on
+# the sha2/blake3 GPU gates. Bump these together with the submodule pin.
+frx==0.10.0.dev20260715063133
+frxlib==0.10.0.dev20260715063133
+frx-cuda12-plugin==0.10.0.dev20260715063133
+frx-cuda12-pjrt==0.10.0.dev20260715063133
+# zk_dtypes ships the native field dtypes frx lowers; arrives transitively via
+# frx but the resolver lags, so pin it so the lock tracks the frx wheel.
 # 0.0.10 adds the flat AES-basis binary_field_gf8_aes dtype (zk_dtypes#157).
 zk-dtypes==0.0.10
