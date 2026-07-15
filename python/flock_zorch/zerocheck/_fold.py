@@ -45,12 +45,12 @@ def _lag_numden(s, zf):
     eye = jnp.eye(ell, dtype=bool)
     num_mat = jnp.where(eye, _ONE_G, jnp.broadcast_to((zg + sg)[None, :], (ell, ell)))
     den_mat = jnp.where(eye, _ONE_G, sg[:, None] + sg[None, :])
-    return field.from_ghash(_prod_axis1(num_mat)), field.from_ghash(_prod_axis1(den_mat))
+    return _prod_axis1(num_mat), _prod_axis1(den_mat)  # ghash
 
 
 @frx.jit
 def _lag_w(num, inv_den):
-    return field.from_ghash(field.to_ghash(num) * field.to_ghash(inv_den))
+    return num * inv_den  # ghash
 
 
 @frx.jit
@@ -59,7 +59,7 @@ def _batch_inv(a):
     square-and-multiply steps. Rolled into a `fori_loop`: the native ghash multiply
     unrolled 127x compiles pathologically slowly on the CPU backend (minutes),
     whereas one rolled body is O(1) to compile."""
-    ag = field.to_ghash(a)
+    ag = a  # ghash in
 
     def body(_, carry):
         sq, result = carry
@@ -67,7 +67,7 @@ def _batch_inv(a):
         return sq, result * sq
 
     _, result = frx.lax.fori_loop(0, 127, body, (ag, jnp.broadcast_to(_ONE_G, ag.shape)))
-    return field.from_ghash(result)
+    return result  # ghash
 
 
 def _lagrange_weights(k_skip: int, z: int, offset: int) -> list[int]:
@@ -80,7 +80,7 @@ def _lagrange_weights(k_skip: int, z: int, offset: int) -> list[int]:
     ell = 1 << k_skip
     s = jnp.asarray(np.stack([_to_lohi(_phi_int(offset + i)) for i in range(ell)]))  # [ell,2]
     num, den = _lag_numden(s, jnp.asarray(_to_lohi(z)))
-    return [_to_int(x) for x in np.asarray(_lag_w(num, _batch_inv(den)))]
+    return [_to_int(x) for x in np.asarray(field.from_ghash(_lag_w(num, _batch_inv(den))))]
 
 
 def _interpolate_at_z_on_lambda(values_int: list[int], k_skip: int, z: int) -> int:
