@@ -44,8 +44,7 @@ def build_eq_g(rg):
     """`build_eq` on native ghash: `[n]` challenges -> `[2^n]` eq table, via zorch's
     `expand_eq_to_hypercube` (msb=True places r_i at bit i; its `(1−r_i)` share
     equals flock's `(1+r_i)` over char 2). Ghash-native so a jitted caller keeps its
-    whole trace on the dtype — chaining lane bitcasts inside a trace trips the XLA
-    simplifier mis-fold (xla#256)."""
+    whole trace on the dtype, with no in-trace lane bitcasts to fuse around."""
     return expand_eq_to_hypercube(rg, _ONE_G, msb=True)
 
 
