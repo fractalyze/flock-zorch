@@ -32,40 +32,36 @@ def _prod_axis1(mat):
 
 
 @frx.jit
-def _lag_numden(s, zf):
+def _lag_numden(sg, zg):
     """num[i]=Π_{j≠i}(z+s_j), den[i]=Π_{j≠i}(s_i+s_j); diagonal terms set to 1."""
-    sg = field.to_ghash(s)          # [ell]
-    zg = field.to_ghash(zf)         # scalar
     ell = sg.shape[0]
     eye = jnp.eye(ell, dtype=bool)
     num_mat = jnp.where(eye, _ONE_G, jnp.broadcast_to((zg + sg)[None, :], (ell, ell)))
     den_mat = jnp.where(eye, _ONE_G, sg[:, None] + sg[None, :])
-    return field.from_ghash(_prod_axis1(num_mat)), field.from_ghash(_prod_axis1(den_mat))
+    return _prod_axis1(num_mat), _prod_axis1(den_mat)
 
 
 @frx.jit
 def _lag_w(num, inv_den):
-    return field.from_ghash(field.to_ghash(num) * field.to_ghash(inv_den))
+    return num * inv_den
 
 
 @frx.jit
-def _batch_inv(a):
+def _batch_inv(ag):
     """Batched GF(2^128) inverse a^(2^128-2) = Π_{k=1}^{127} a^(2^k), via 127
     square-and-multiply steps. Rolled into a `fori_loop`: the native ghash multiply
     unrolled 127x compiles pathologically slowly on the CPU backend (minutes),
     whereas one rolled body is O(1) to compile."""
-    ag = field.to_ghash(a)
-
     def body(_, carry):
         sq, result = carry
         sq = sq * sq
         return sq, result * sq
 
     _, result = frx.lax.fori_loop(0, 127, body, (ag, jnp.broadcast_to(_ONE_G, ag.shape)))
-    return field.from_ghash(result)
+    return result
 
 
-def _lagrange_weights(k_skip: int, z, offset: int) -> np.ndarray:
+def _lagrange_weights(k_skip: int, z, offset: int):
     """L_i(z) over the φ₈-embedded nodes PHI_8_TABLE[offset+i], i∈[0, 2^k_skip).
     offset=0 → the S domain; offset=2^k_skip → the Λ domain.
 
@@ -73,28 +69,32 @@ def _lagrange_weights(k_skip: int, z, offset: int) -> np.ndarray:
     jit is essential — it keeps the native ghash multiplies fused).
     Same field math → byte-identical weights (gated).
 
-    z: uint64 [2]; returns uint64 [2^k_skip, 2]."""
-    s = jnp.asarray(_urm.PHI_8_TABLE[offset:offset + (1 << k_skip)])  # [ell, 2]
-    num, den = _lag_numden(s, jnp.asarray(z))
-    return np.asarray(_lag_w(num, _batch_inv(den)))
+    z: uint64 [2]; returns `binary_field_ghash [2^k_skip]` — every consumer folds
+    it on the dtype, so the weights never leave it."""
+    sg = field.to_ghash(jnp.asarray(_urm.PHI_8_TABLE[offset:offset + (1 << k_skip)]))
+    num, den = _lag_numden(sg, field.to_ghash(jnp.asarray(z)))
+    return _lag_w(num, _batch_inv(den))
 
 
 def _interpolate_at_z_on_lambda(values, k_skip: int, z) -> np.ndarray:
     """Σ_i L_i^Λ(z)·values[i] (flock `interpolate_at_z_on_lambda`).
 
-    values: uint64 [2^k_skip, 2]; z: uint64 [2]; returns uint64 [2]."""
+    values: uint64 [2^k_skip, 2]; z: uint64 [2]; returns uint64 [2] (a proof field)."""
     w = _lagrange_weights(k_skip, z, 1 << k_skip)
-    prod = field.to_ghash(jnp.asarray(w)) * field.to_ghash(jnp.asarray(values))
+    prod = w * field.to_ghash(jnp.asarray(values))
     return field.from_ghash_host(jnp.sum(prod))  # XOR-sum inner product
 
 
 @frx.jit
-def _fold_at_z_dev(rows, w):
+def _fold_at_z_dev(rows, w_g):
     """a_mlv[x_rest] = Σ_s witness[x_rest·ell + s]·L_s(z) (flock `fold_at_z_naive`),
     on device, reading the witness rows already resident from round1. rows: uint8
-    [2^(m-k_skip), ell]; w: uint64 [ell, 2] -> [n_chunks, 2].
+    [2^(m-k_skip), ell]; w_g: `binary_field_ghash [ell]` -> ghash [n_chunks].
 
-    Select-and-XOR-reduce: the large `[n_chunks, ell, 2]` intermediate is fused on
-    the GPU instead of materialized in host numpy."""
+    Select-and-XOR-reduce: the large `[n_chunks, ell]` intermediate is fused on the
+    GPU instead of materialized in host numpy. The select drops to the lo/hi lanes —
+    it zeroes a weight by integer-multiplying it against the 0/1 witness bit, which
+    the field multiply can't express."""
+    w = field.from_ghash(w_g)                                     # [ell, 2]
     masked = rows[:, :, None].astype(jnp.uint64) * w[None, :, :]  # 0 or w[s], uint64 [n,ell,2]
-    return field.from_ghash(jnp.sum(field.to_ghash(masked), axis=1))  # [n,2]
+    return jnp.sum(field.to_ghash(masked), axis=1)                # ghash [n]

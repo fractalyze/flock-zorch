@@ -40,8 +40,7 @@ LABEL = b"flock-lincheck-v0"
 def build_quirky_eq_table(z_skip, x_inner_rest, k_skip: int):
     """eq_inner[i_skip + i_rest·2^k_skip] = λ_skip[i_skip]·eq_rest[i_rest]
     (flock `build_quirky_eq_table`; i_skip in the LOW bits). z_skip: uint64 [2]."""
-    lam = _lagrange_weights(k_skip, z_skip, 0)                 # S-domain, len 2^k_skip
-    lam = field.to_ghash(jnp.asarray(lam))                     # [ell_skip]
+    lam = _lagrange_weights(k_skip, z_skip, 0)
     eq_rest = field.to_ghash(build_eq_fused(jnp.asarray(x_inner_rest)))  # [ell_rest] — fused (avoids per-layer eager dispatch)
     prod = eq_rest[:, None] * lam[None, :]                    # [ell_rest, ell_skip]
     return field.from_ghash(prod.reshape(-1))                 # [ell_rest·ell_skip, 2]
@@ -271,7 +270,7 @@ class _ClaimRound(Round):
         r_inner_skip = transcript.sample_f128()               # 7. fresh z_skip AFTER
         lam = _lagrange_weights(k_skip, r_inner_skip, 0)       # 8. φ8 S-domain weights
         w = field.from_ghash_host(jnp.sum(                     # inner_product
-            field.to_ghash(jnp.asarray(lam)) * field.to_ghash(jnp.asarray(z_partial)), axis=0))
+            lam * field.to_ghash(jnp.asarray(z_partial)), axis=0))
         r_inner_rest = [np.asarray(r) for r in reversed(carry.r_rounds)]  # 9. LSB-first
         claim = LincheckClaim(
             r_inner_skip=np.asarray(r_inner_skip),

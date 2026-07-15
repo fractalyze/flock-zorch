@@ -105,9 +105,8 @@ def _mlv_round(a_g, b_g, eq_g, r0_g, t):
     the unrolled n_mlv-round graph compiled for minutes and ran ~6x slower than
     its parts (XLA fusion/scheduling collapses on it). The eq table comes in as
     an operand — building it in-round re-compiled the whole doubling chain into
-    every round program (~13 s × n_mlv of the cold wall). All-ghash in-trace; the
-    caller converts uint64 lanes at its eager boundary, keeping this one round a
-    single clean ghash kernel."""
+    every round program (~13 s × n_mlv of the cold wall). All-ghash in-trace —
+    the operands arrive on the dtype and only the proof messages leave it."""
     m1, minf = sumcheck.round_pair_eq_g(a_g, b_g, eq_g, r0_g)
     t = t.observe_scalar(m1).observe_scalar(minf)
     t, rho = t.sample_scalar()
@@ -184,11 +183,11 @@ class _MultilinearRound(Round):
         n_mlv = m - k_skip
 
         # Fold the witness at z, then run each multilinear round as one jitted
-        # device program with Fiat-Shamir inside. The jitted rounds run all-ghash,
-        # so the lane <-> ghash conversions stay here at the eager boundary.
-        weights = jnp.asarray(_lagrange_weights(k_skip, carry.z, 0))  # S-domain
-        a_g = field.to_ghash(_fold_at_z_dev(carry.a_rows, weights))
-        b_g = field.to_ghash(_fold_at_z_dev(carry.b_rows, weights))
+        # device program with Fiat-Shamir inside — all on the dtype, so the lanes
+        # only reappear where a proof message is serialized.
+        weights = _lagrange_weights(k_skip, carry.z, 0)  # S-domain, ghash [ell]
+        a_g = _fold_at_z_dev(carry.a_rows, weights)
+        b_g = _fold_at_z_dev(carry.b_rows, weights)
         r_g = field.to_ghash(jnp.asarray(carry.r))
 
         t = transcript._t
