@@ -38,8 +38,8 @@ def _reduce_one(packed, x_outer, ch: Challenger):
     suffix = jnp.asarray(np.asarray(x_outer)[1:])             # x_outer[1:], length L
     suffix_tensor = sumcheck.build_eq_fused_g(suffix)
     s_hat_v = zrs.bit_slice_evals(packed, suffix_tensor)     # (128,) ghash
-    s_hat_v_lanes = field.from_ghash_host(s_hat_v)                     # [128,2]
-    ch.observe_f128_slice(s_hat_v_lanes)
+    ch.observe_f128_slice_g(s_hat_v)                          # observe device ghash directly
+    s_hat_v_lanes = field.from_ghash_host(s_hat_v)           # [128,2] — materialized for the proof only
     r_dprime = jnp.asarray(ch.sample_f128_vec(LOG_PACKING))  # [7,2]
     eq_r_dprime = sumcheck.build_eq_fused_g(r_dprime)  # [128] ghash, kept for the gamma combine
     claim = zrs.inner_product(zrs.tensor_algebra_transpose(s_hat_v), eq_r_dprime)

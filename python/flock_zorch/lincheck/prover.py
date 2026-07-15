@@ -191,7 +191,8 @@ class _LincheckCarry:
     comb: Any = None                 # ← _CombRound
     rounds: Any = None               # ← _SumcheckRound
     r_rounds: Any = None             # ← _SumcheckRound (read by _ClaimRound)
-    z_partial: Any = None            # ← _SumcheckRound
+    z_partial: Any = None            # ← _SumcheckRound (lanes, for the proof message)
+    z_partial_g: Any = None          # ← _SumcheckRound (ghash, for observe + w)
     z_vec_pre: Any = None            # ← _SumcheckRound (capture)
     claim: Any = None                # ← _ClaimRound
 
@@ -248,11 +249,12 @@ class _SumcheckRound(Round):
             einfs = field.from_ghash_host(jnp.stack(einfs_g))
             r_rounds = list(field.from_ghash_host(jnp.stack(r_g)))
             rounds = list(zip(e1s, einfs))
-            z_partial = field.from_ghash_host(stacked[1])
+            z_partial_g = stacked[1]
         else:
-            z_partial = field.from_ghash_host(z_vec)
+            z_partial_g = z_vec
+        z_partial = field.from_ghash_host(z_partial_g)
         carry = replace(carry, rounds=rounds, r_rounds=r_rounds, z_partial=z_partial,
-                        z_vec_pre=z_vec_pre)
+                        z_partial_g=z_partial_g, z_vec_pre=z_vec_pre)
         return carry, transcript, (rounds, z_partial)
 
 
@@ -266,13 +268,12 @@ class _ClaimRound(Round):
 
     def __call__(self, carry, transcript):
         k_skip = self._k_skip
-        z_partial = carry.z_partial
-        transcript.observe_f128_slice(z_partial)              # 6. observe z_partial
+        transcript.observe_f128_slice_g(carry.z_partial_g)    # 6. observe z_partial (device ghash)
         r_inner_skip = transcript.sample_f128()               # 7. fresh z_skip AFTER
         lam = _lagrange_weights(k_skip, _to_int(r_inner_skip), 0)  # 8. φ8 S-domain weights
         lam_arr = jnp.asarray(np.stack([_to_lohi(x) for x in lam]))
         w = field.from_ghash_host(jnp.sum(                         # inner_product
-            field.to_ghash(lam_arr) * field.to_ghash(jnp.asarray(z_partial)), axis=0))
+            field.to_ghash(lam_arr) * carry.z_partial_g, axis=0))
         r_inner_rest = [np.asarray(r) for r in reversed(carry.r_rounds)]  # 9. LSB-first
         claim = LincheckClaim(
             r_inner_skip=np.asarray(r_inner_skip),
