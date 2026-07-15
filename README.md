@@ -3,12 +3,12 @@
 A GPU prover for **flock**'s binary-field R1CS PIOP — the scheme from
 [*Flock: Fast Proving for Batch Boolean Computations*](https://eprint.iacr.org/2026/1329)
 (eprint 2026/1329) — built on Fractalyze's **zorch** stack. The whole prover is
-authored once in Python/**frx** (Fractalyze's JAX fork), and the compiler emits
+authored once in Python/**FRX** (Fractalyze's JAX fork), and the compiler emits
 the hardware code: the same readable source targets CPU and GPU, and its output
 matches the reference flock prover bit-for-bit.
 
 The point is a **single JAX/MLIR codebase, not a GPU rewrite of the proving
-logic**. flock's prover is written as a clean statement of the math; frx lowers
+logic**. flock's prover is written as a clean statement of the math; FRX lowers
 it to StableHLO/MLIR, and the compiler — carrying native finite-field dtypes
 (`zk_dtypes`) and the carryless-multiply lowerings for GF(2¹²⁸) — compiles that
 down to each target. The expensive field-arithmetic optimization lives in
@@ -29,63 +29,56 @@ device-resident — reproducing flock `prove`'s proof bit-for-bit.
 
 ## Setup
 
-flock-zorch depends on two pinned sibling repos:
+No submodules and nothing to clone by hand — both pinned deps are fetched by the
+build:
 
-| dep | repo | role |
-|---|---|---|
-| `third_party/flock` | [`succinctlabs/flock`](https://github.com/succinctlabs/flock) (public) | git **submodule**, the reference prover + byte-compare oracle: Cargo path-deps `flock-core`/`flock-prover`; `examples/dump_*.rs` dump the golden fixtures from it |
-| `zorch` | [`fractalyze/zorch`](https://github.com/fractalyze/zorch) (private) | bazel **`git_override`** in `MODULE.bazel`, the scheme-agnostic spine: `zorch.hash.sha256`, the device Fiat-Shamir transcript, the `Round`/`Bridge`/`Stage` chain roles, `pcs.basefold` |
+| dep | how |
+|---|---|
+| **flock** — the reference prover + byte-compare oracle | a cargo **git rev dep** (`flock-core` / `flock-prover` in [`Cargo.toml`](Cargo.toml)); `cargo build` fetches it at the pinned rev, and `examples/dump_*.rs` drive it to dump the golden fixtures |
+| **zorch** — the scheme-agnostic spine (`zorch.hash.sha256`, the device Fiat-Shamir transcript, the `Round`/`Bridge`/`Stage` chain roles, `pcs.basefold`) | a bazel **`git_override`** in [`MODULE.bazel`](MODULE.bazel); bazel fetches it |
 
-One command bootstraps everything (submodules → venv → cargo build → goldens →
-smoke gates):
+**Prerequisites** — an NVIDIA GPU (CUDA; RTX 5090 / sm_120 reference), a Rust
+toolchain (`flock-core` is edition 2024), Python 3.11, and SSH access to
+`fractalyze/zorch` (bazel clones it). For the GPU fast path, a **CUDA 13.3
+`ptxas`** at `~/.local/cuda13/bin`: with it on `PATH` the pinned frx wheel's
+compiler emits the hardware `clmad` GF(2¹²⁸) multiply; without it, the software
+`binary_field_ghash` multiply — same output, just slower.
 
 ```bash
-git clone --recursive git@github.com:fractalyze/flock-zorch.git && cd flock-zorch
-scripts/setup.sh          # idempotent; ~minutes
+git clone git@github.com:fractalyze/flock-zorch.git && cd flock-zorch
 ```
 
-`scripts/setup.sh` runs, in order: preflight → submodules → Python venv (`.venv`,
-from `requirements.in` + the Fractalyze PyPI index) → `cargo build --release`
-(dumpers + CPU benches) → clmad fast-path check → regenerate the core goldens →
-two smoke gates (`field`, `e2e`) that prove the output matches flock end to end.
-If you cloned without `--recursive`, it runs `git submodule update --init
---recursive` for you.
+Reproduction has three tiers with independent deps: a **Rust toolchain**
+regenerates the golden fixtures by driving the pinned flock (no GPU, no Python);
+the **CPU byte-match** checks the frx port against them under **Bazel** (deps from
+the pip lock, zorch from the git_override — no venv); the **GPU byte-match** runs
+the port on-device from a **venv**. Build the venv once (the other two tiers need
+nothing installed):
 
-### Prerequisites
+```bash
+python3.11 -m venv .venv
+.venv/bin/pip install -r requirements.in --extra-index-url https://fractalyze.github.io/pypi/simple/
+```
 
-- **GPU** — NVIDIA CUDA; the reference is an RTX 5090 (sm_120). Any recent NVIDIA
-  GPU runs the gates; the headline benches assume the 5090.
-- **Rust** via rustup (`flock-core` is edition 2024).
-- **Python 3.11**.
-- **SSH access to `fractalyze/zorch`** (bazel's `git_override` clones it).
-- Optional, for the GPU fast path — a **CUDA 13.3 `ptxas`** at
-  `~/.local/cuda13/bin`. With it on `PATH` the pinned frx wheel's compiler emits
-  the hardware `clmad` (carryless multiply-add) GF(2¹²⁸) multiply; without it
-  everything still runs on the software `binary_field_ghash` multiply — same
-  output, just slower.
-
-  ```bash
-  export PATH="$HOME/.local/cuda13/bin:$PATH"   # sm_120 needs ptxas >= 13.3
-  ```
+> Or run `scripts/setup.sh` — one idempotent bootstrap that does all of the above
+> plus the goldens and two smoke gates.
 
 ### Bumping the pins
 
 ```bash
-# zorch: edit the git_override commit in MODULE.bazel, keeping requirements.in's
-# frx / frxlib / frx-cuda12 wheels on the SAME version as zorch's own
-# requirements.in — the binary-field GPU kernels must match, and CPU-only CI
-# can't catch a desync. bazel re-fetches on the next command; no submodule to move.
-$EDITOR MODULE.bazel                  # git_override(..., commit = "<new sha>")
-# flock (a submodule):
-git -C third_party/flock fetch && git -C third_party/flock checkout <commit>
-git add MODULE.bazel third_party/flock && git commit -m "deps: bump pins"
+# flock: edit the rev on the flock-core / flock-prover git deps in Cargo.toml
+# (cargo re-fetches on the next build). zorch: edit the git_override commit in
+# MODULE.bazel, keeping requirements.in's frx / frxlib / frx-cuda12 wheels on the
+# SAME version as zorch's own requirements.in — the binary-field GPU kernels must
+# match, and CPU-only CI can't catch a desync.
+$EDITOR Cargo.toml MODULE.bazel
 scripts/dump_goldens.sh core && bazel test //python:all   # re-verify before pushing
 ```
 
 ## Reproduce
 
 The oracle is the pinned flock itself: `examples/dump_*.rs` dump fixtures from
-`flock-core`, and each `*_oracle_test.py` checks the frx port's serialized output
+`flock-core`, and each `*_oracle_test.py` checks the FRX port's serialized output
 against them, anchored bottom-up (field → additive NTT → Merkle → zerocheck →
 lincheck → PCS → full `R1csProof`). A layer is not done until its gate is green
 on GPU.
@@ -128,7 +121,7 @@ rebuilds it from the pinned flock.
 ### One benchmark point (SHA-256, m=26)
 
 ```bash
-VENV=.venv/bin/python                                                       # built by scripts/setup.sh
+VENV=.venv/bin/python                                                       # the venv from Setup
 cargo run --release --example dump_sha2 -- 2048 artifacts/sha2_golden.bin   # real R1CS, m=26
 cargo build --release --example bench_sha2_cpu                              # CPU anchor
 export JAX_PLATFORMS=cuda XLA_PYTHON_CLIENT_PREALLOCATE=false
@@ -149,15 +142,15 @@ timing is warm best-of-3 (JIT compile excluded), GPU verified idle. Every
 instance is a real flock hash-circuit R1CS at flock's shipped size, swept over
 the witness size m to locate the GPU/CPU crossover. The CPU baseline is x86
 **scalar** (flock's NEON paths are aarch64-gated), so Apple silicon would shift
-the crossover right. Measured on `main` (zorch `9cb08349`, frx
+the crossover right. Measured on `main` (zorch `9cb08349`, FRX
 `dev20260715063133`), 2026-07-16.
 
 ### Keccak3 (Ligerito) — GPU wins
 
-| m  | n_keccaks | flock CPU (ms) | GPU (ms) | speedup |
-|----|-----------|----------------|----------|---------|
-| 26 | 1536      | 245            | 97       | **2.5×** |
-| 28 | 6144      | 1,027          | 209      | **4.9×** |
+| m   | n_keccaks | flock CPU (ms) | GPU (ms) | speedup  |
+| --- | --------- | -------------- | -------- | -------- |
+| 26  | 1536      | 245            | 97       | **2.5×** |
+| 28  | 6144      | 1,027          | 209      | **4.9×** |
 
 The Ligerito open runs device-resident (zorch's jitted open + device-resident
 queries): the GPU is a slow-growing floor (97 → 209 ms) while the CPU is O(n),
@@ -165,18 +158,18 @@ so the win grows with m and the crossover sits below m=26.
 
 ### SHA-256 (BaseFold) — crossover ≈ m=28
 
-| m  | n_comp | flock CPU (ms) | GPU (ms) | speedup |
-|----|--------|----------------|----------|---------|
-| 24 | 512    | 63             | 393      | 0.2×    |
-| 26 | 2048   | 217            | 489      | 0.4×    |
-| 28 | 8192   | 936            | 705      | **1.3×** |
+| m   | n_comp | flock CPU (ms) | GPU (ms) | speedup  |
+| --- | ------ | -------------- | -------- | -------- |
+| 24  | 512    | 63             | 393      | 0.2×     |
+| 26  | 2048   | 217            | 489      | 0.4×     |
+| 28  | 8192   | 936            | 705      | **1.3×** |
 
 ### BLAKE3 (BaseFold) — crossover ≈ m=28
 
-| m  | n_comp | flock CPU (ms) | GPU (ms) | speedup |
-|----|--------|----------------|----------|---------|
-| 26 | 4096   | 273            | 497      | 0.5×    |
-| 28 | 16384  | 1,070          | 694      | **1.5×** |
+| m   | n_comp | flock CPU (ms) | GPU (ms) | speedup  |
+| --- | ------ | -------------- | -------- | -------- |
+| 26  | 4096   | 273            | 497      | 0.5×     |
+| 28  | 16384  | 1,070          | 694      | **1.5×** |
 
 **BaseFold is mid-regression.** The BaseFold open has not yet received the
 device-resident open the Ligerito path got, so its GPU floor is ~5–6× higher than
@@ -200,6 +193,6 @@ The proving scheme and the reference implementation are
 [**flock**](https://github.com/succinctlabs/flock) by Succinct Labs — the
 [flock paper](https://eprint.iacr.org/2026/1329) (eprint 2026/1329). flock-zorch
 is an independent GPU implementation of that scheme on the zorch stack; the
-unmodified `succinctlabs/flock` prover is vendored under `third_party/flock` as
-the byte-compare oracle every gate checks against. All credit for the scheme and
-the R1CS PIOP design is theirs.
+unmodified `succinctlabs/flock` prover is pinned as the `flock-core` /
+`flock-prover` git rev dep and is the byte-compare oracle every gate checks
+against. All credit for the scheme and the R1CS PIOP design is theirs.

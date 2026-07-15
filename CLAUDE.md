@@ -3,8 +3,8 @@
 GPU port of [succinctlabs/flock](https://github.com/succinctlabs/flock) (an
 R1CS-over-GF(2) PIOP prover: zerocheck + lincheck, Ligerito/BaseFold PCS over
 F₂¹²⁸) onto Fractalyze's zorch / frx compiler stack, in the style of
-`bellman-zorch` and `accumulation-zorch`. Upstream lives at `third_party/flock` —
-it is the byte-compare baseline.
+`bellman-zorch` and `accumulation-zorch`. Upstream flock is the byte-compare
+baseline — pinned as the `flock-core` / `flock-prover` git rev dep in `Cargo.toml`.
 
 This file is agent conventions only; everything else lives in
 [`README.md`](README.md) — what/why, architecture, setup, gates, benchmarks,

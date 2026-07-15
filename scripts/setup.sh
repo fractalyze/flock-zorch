@@ -30,9 +30,7 @@ else
   echo "WARN: no nvidia-smi — the GPU gates/benches need a CUDA GPU (RTX 5090 / sm_120 reference)"
 fi
 
-log "1. submodules — flock + zorch pinned (see .gitmodules)"
-git submodule update --init --recursive
-git submodule status
+log "1. deps — no submodules: flock is a cargo git rev dep (fetched by the build in step 3); zorch is a bazel git_override"
 
 log "2. python venv -> $VENV_DIR (frx jax-fork + frxlib + zk_dtypes + CUDA PJRT from the fractalyze index)"
 [ -d "$VENV_DIR" ] || "$PYTHON_BIN" -m venv "$VENV_DIR"
@@ -40,7 +38,7 @@ log "2. python venv -> $VENV_DIR (frx jax-fork + frxlib + zk_dtypes + CUDA PJRT 
 "$VENV_DIR/bin/pip" install -q -r requirements.in --extra-index-url "$PYPI_INDEX"
 "$VENV_DIR/bin/python" -c 'import frx; print("  frx", frx.__version__)'
 
-log "3. build Rust against third_party/flock — golden dumpers + CPU benches"
+log "3. build Rust — fetches flock (git rev dep), builds golden dumpers + CPU benches"
 cargo build --release             # lib (rlib)
 cargo build --release --examples  # dump_* (goldens) + bench_*_cpu (apple-to-apple CPU baselines)
 
@@ -63,7 +61,7 @@ log "DONE — box is set up and byte-identity is green."
 cat <<EOF
 
 To run more:
-  # the 18 core byte-identity gates (CPU, bazel-managed, zorch via git_override):
+  # the core byte-identity gates (CPU, bazel-managed, zorch via git_override):
   bazel test //python:all
 
   # full golden set incl. the heavy real hash circuits (keccak/sha2/blake3, blake3 ~118MB):

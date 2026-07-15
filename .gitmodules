@@ -1,3 +1,0 @@
-[submodule "third_party/flock"]
-	path = third_party/flock
-	url = https://github.com/succinctlabs/flock.git
