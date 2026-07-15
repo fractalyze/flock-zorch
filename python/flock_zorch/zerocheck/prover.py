@@ -190,8 +190,8 @@ class _MultilinearRound(Round):
         # device program with Fiat-Shamir inside. The jitted rounds run all-ghash,
         # so the lane <-> ghash conversions stay here at the eager boundary.
         weights = _lagrange_weights(k_skip, z_int, 0)  # S-domain
-        a_g = field.to_ghash(jnp.asarray(_fold_at_z_rows(carry.a_rows, weights)))
-        b_g = field.to_ghash(jnp.asarray(_fold_at_z_rows(carry.b_rows, weights)))
+        a_g = _fold_at_z_rows(carry.a_rows, weights)  # native ghash [n]
+        b_g = _fold_at_z_rows(carry.b_rows, weights)
         r_g = field.to_ghash(jnp.asarray(carry.r))
 
         t = transcript._t

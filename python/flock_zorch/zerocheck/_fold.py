@@ -98,10 +98,10 @@ def _fold_at_z_dev(rows, w):
     Select-and-XOR-reduce: the large `[n_chunks, ell, 2]` intermediate is fused on
     the GPU instead of materialized in host numpy."""
     masked = rows[:, :, None].astype(jnp.uint64) * w[None, :, :]  # 0 or w[s], uint64 [n,ell,2]
-    return field.from_ghash(jnp.sum(field.to_ghash(masked), axis=1))  # [n,2]
+    return jnp.sum(field.to_ghash(masked), axis=1)  # ghash [n]
 
 
-def _fold_at_z_rows(rows, weights: list[int]) -> np.ndarray:
+def _fold_at_z_rows(rows, weights: list[int]):
     """fold_at_z from device witness rows (uint8 [2^(m-k_skip), 2^k_skip]) — so the
     witness transferred for round1 is reused here instead of re-sent."""
     w = jnp.asarray(np.stack([_to_lohi(x) for x in weights]))  # [ell, 2]
