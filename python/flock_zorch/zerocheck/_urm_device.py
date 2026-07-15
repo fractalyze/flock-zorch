@@ -28,6 +28,7 @@ from flock_zorch import field
 from flock_zorch.zerocheck import _urm
 
 _PHI_DEV = jnp.asarray(_urm.PHI_8_TABLE)     # [256, 2] uint64
+_PHI_DEV_G = field.to_ghash(_PHI_DEV)        # [256] ghash — indexed in-kernel, no lane bitcast
 _AES = np.dtype(zk_dtypes.binary_field_gf8_aes)
 
 
@@ -61,11 +62,10 @@ def _round1_core():
             b_l = _extend_rows(b, k_skip)
             c_l = _to_u8(_extend_rows(c, k_skip))
             ab = _to_u8(a_l * b_l).astype(jnp.int32)
-            phi_ab = field.to_ghash(_PHI_DEV[ab])
-            phi_c = field.to_ghash(_PHI_DEV[c_l.astype(jnp.int32)])
-            eqx_g = field.to_ghash(eqx)                        # [n_chunks, 1]
-            return (field.from_ghash(jnp.sum(eqx_g * phi_ab, axis=0)),
-                    field.from_ghash(jnp.sum(eqx_g * phi_c, axis=0)))
+            phi_ab = _PHI_DEV_G[ab]
+            phi_c = _PHI_DEV_G[c_l.astype(jnp.int32)]
+            return (field.from_ghash(jnp.sum(eqx * phi_ab, axis=0)),
+                    field.from_ghash(jnp.sum(eqx * phi_c, axis=0)))
         _R1_CORE = core
     return _R1_CORE
 

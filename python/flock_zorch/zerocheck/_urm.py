@@ -79,7 +79,7 @@ def round1_rows(a, b, c, m: int, k_skip: int, r):
     compute half of `round1_naive`, so the witness can be transferred once and
     reused by `zerocheck._fold_at_z_rows`. Returns (P^AB, P^C) as numpy."""
     r = np.asarray(r, dtype=np.uint64)
-    eqx = sumcheck.build_eq_fused(jnp.asarray(r[k_skip:]))[:, None, :]  # [n_chunks, 1, 2]
+    eqx = sumcheck.build_eq_fused_g(jnp.asarray(r[k_skip:]))[:, None]  # [n_chunks, 1] ghash
     p_ab, p_c = _urm_device._round1_core()(a, b, c, k_skip, eqx)  # fused extend+phi+accum
     return np.asarray(p_ab), np.asarray(p_c)
 
