@@ -5,7 +5,7 @@
 #   scripts/setup.sh
 #
 # Overridable via env: PYTHON_BIN (default python3.11), VENV_DIR (default ./.venv).
-# See docs/SETUP.md for prerequisites, the optional clmad GPU acceleration, the full
+# See README.md for prerequisites, the optional clmad GPU acceleration, the full
 # golden set, and how to run the whole gate suite + benchmarks.
 set -euo pipefail
 
@@ -50,7 +50,7 @@ if [ -x "${PTXAS:-$HOME/.local/cuda13/bin/ptxas}" ]; then
   echo "  wheel emits hardware clmad for the GF(2^128) multiply."
 else
   echo "  no CUDA-13.x ptxas — gates/benches use the software binary_field_ghash multiply"
-  echo "  (byte-identical, slower). See docs/SETUP.md 'clmad GPU acceleration'."
+  echo "  (byte-identical, slower). See README.md 'Setup' (clmad fast path)."
 fi
 
 log "5. regenerate the core golden fixtures from the pinned flock"
@@ -73,5 +73,5 @@ To run more:
   PYTHONPATH="python:\$(scripts/zorch_pythonpath.sh)" $VENV_DIR/bin/python \\
       python/flock_zorch/testing/<name>_oracle_test.py
   # benchmarks (run on an IDLE machine for an honest apple-to-apple CPU baseline):
-  see docs/SETUP.md  ("Benchmarks")
+  see README.md  ("Benchmark")
 EOF

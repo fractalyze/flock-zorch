@@ -6,12 +6,9 @@ F₂¹²⁸) onto Fractalyze's zorch / frx compiler stack, in the style of
 `bellman-zorch` and `accumulation-zorch`. Upstream lives at `third_party/flock` —
 it is the byte-compare baseline.
 
-This file is agent conventions only; everything else lives in the docs:
-- [`README.md`](README.md) — what/why, architecture, benchmarks, byte-identity
-  status, setup, toolchain.
-- [`docs/SETUP.md`](docs/SETUP.md) — prerequisites, gate environment, pins and
-  bumping them, golden regeneration, `clmad` GPU acceleration.
-- [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) — methodology and measurements.
+This file is agent conventions only; everything else lives in
+[`README.md`](README.md) — what/why, architecture, setup, gates, benchmarks,
+and toolchain.
 
 **Comments: terse.** Prefer none over verbose — a good step/target name or
 self-evident code beats a paragraph. Drop a comment rather than pad it.
@@ -24,4 +21,4 @@ serialized output must equal flock-core's reference bytes, anchored bottom-up:
 A layer is not "done" until its `*_oracle_test` is green on GPU. Fixtures are
 dumped from flock-core itself (`examples/dump_*.rs`), so the gate transitively
 pins us to upstream. Core gates: `bazel test //python:all`; the heavy/GPU gates
-run on the venv (`docs/SETUP.md`).
+run on the venv (see README "Reproduce").
