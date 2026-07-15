@@ -28,7 +28,6 @@ import frx.numpy as jnp
 from flock_zorch import field
 from flock_zorch.sumcheck import build_eq_fused, ONE
 from flock_zorch.zerocheck import _lagrange_weights, ZerocheckProof
-from flock_zorch.field import _to_int, _to_lohi
 from flock_zorch.challenger import Challenger
 from flock_zorch.lincheck._csc_fold import _flatten_nz, _csc_segments, _seg_xor_fold
 from flock_zorch.sumcheck.inf_product import prove_inf_product
@@ -38,11 +37,10 @@ U64 = jnp.uint64
 LABEL = b"flock-lincheck-v0"
 
 
-def build_quirky_eq_table(z_skip_int: int, x_inner_rest, k_skip: int):
+def build_quirky_eq_table(z_skip, x_inner_rest, k_skip: int):
     """eq_inner[i_skip + i_rest·2^k_skip] = λ_skip[i_skip]·eq_rest[i_rest]
-    (flock `build_quirky_eq_table`; i_skip in the LOW bits)."""
-    lam = _lagrange_weights(k_skip, z_skip_int, 0)             # S-domain, len 2^k_skip
-    lam = field.to_ghash(jnp.asarray(np.stack([_to_lohi(x) for x in lam])))  # [ell_skip]
+    (flock `build_quirky_eq_table`; i_skip in the LOW bits). z_skip: uint64 [2]."""
+    lam = _lagrange_weights(k_skip, z_skip, 0)
     eq_rest = field.to_ghash(build_eq_fused(jnp.asarray(x_inner_rest)))  # [ell_rest] — fused (avoids per-layer eager dispatch)
     prod = eq_rest[:, None] * lam[None, :]                    # [ell_rest, ell_skip]
     return field.from_ghash(prod.reshape(-1))                 # [ell_rest·ell_skip, 2]
@@ -211,7 +209,7 @@ class _CombRound(Round):
         x_ab, circuit = carry.x_ab, carry.circuit
         transcript.observe_label(LABEL)
         alpha = jnp.asarray(transcript.sample_f128())
-        eq_inner = build_quirky_eq_table(_to_int(x_ab.z_skip), x_ab.x_inner_rest, k_skip)
+        eq_inner = build_quirky_eq_table(x_ab.z_skip, x_ab.x_inner_rest, k_skip)
         if circuit is not None:
             comb = jnp.asarray(circuit.fold_alpha_batched(alpha, eq_inner))
             if circuit.const_pin is not None:
@@ -270,10 +268,9 @@ class _ClaimRound(Round):
         z_partial = carry.z_partial
         transcript.observe_f128_slice(z_partial)              # 6. observe z_partial
         r_inner_skip = transcript.sample_f128()               # 7. fresh z_skip AFTER
-        lam = _lagrange_weights(k_skip, _to_int(r_inner_skip), 0)  # 8. φ8 S-domain weights
-        lam_arr = jnp.asarray(np.stack([_to_lohi(x) for x in lam]))
-        w = field.from_ghash_host(jnp.sum(                         # inner_product
-            field.to_ghash(lam_arr) * field.to_ghash(jnp.asarray(z_partial)), axis=0))
+        lam = _lagrange_weights(k_skip, r_inner_skip, 0)       # 8. φ8 S-domain weights
+        w = field.from_ghash_host(jnp.sum(                     # inner_product
+            lam * field.to_ghash(jnp.asarray(z_partial)), axis=0))
         r_inner_rest = [np.asarray(r) for r in reversed(carry.r_rounds)]  # 9. LSB-first
         claim = LincheckClaim(
             r_inner_skip=np.asarray(r_inner_skip),
