@@ -149,7 +149,6 @@ numpy==2.4.6 \
     #   ml-dtypes
     #   scipy
     #   zk-dtypes
-    #   zkbench
 opt-einsum==3.4.0 \
     --hash=sha256:69bb92469f86a1565195ece4ac0323943e83477171b91d24c35afe028a90d7cd \
     --hash=sha256:96ca72f1b886d148241348783498194c577fa30a8faac108586b14f1ba4473ac
@@ -226,6 +225,3 @@ zk-dtypes==0.0.10 \
     # via
     #   -r requirements.in
     #   jax
-zkbench==0.4.0 \
-    --hash=sha256:60d6d265fbe87dc8c0fd18e16af01d6f1484ba08c4a5c5c1082fd0ac02acb5d3
-    # via -r requirements.in

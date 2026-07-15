@@ -4,7 +4,7 @@ load("@rules_python//python:pip.bzl", "compile_pip_requirements")
 compile_pip_requirements(
     name = "requirements",
     src = "requirements.in",
-    # jax/jaxlib/jax-cuda12-* dev wheels + zk-dtypes/zkbench live on the Fractalyze
+    # jax/jaxlib/jax-cuda12-* dev wheels + zk-dtypes live on the Fractalyze
     # index, not PyPI — mirror the pip.parse extra_index_url in MODULE.bazel.
     extra_args = ["--extra-index-url=https://fractalyze.github.io/pypi/simple/"],
     requirements_txt = "requirements_lock_3_11.txt",
