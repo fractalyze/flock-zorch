@@ -1,24 +1,24 @@
-# flock-zorch — agent guide
+# Project Context for Claude Code
 
-GPU port of [succinctlabs/flock](https://github.com/succinctlabs/flock) (an
-R1CS-over-GF(2) PIOP prover: zerocheck + lincheck, Ligerito/BaseFold PCS over
-F₂¹²⁸) onto Fractalyze's zorch / frx compiler stack, in the style of
-`bellman-zorch` and `accumulation-zorch`. Upstream flock is the byte-compare
-baseline — pinned as the `flock-core` / `flock-prover` git rev dep in `Cargo.toml`.
+Overview, setup, the reproduction path, and the benchmark all live in
+[`README.md`](README.md) — start there.
 
-This file is agent conventions only; everything else lives in
-[`README.md`](README.md) — what/why, architecture, setup, gates, benchmarks,
-and toolchain.
+## Non-negotiables
 
-**Comments: terse.** Prefer none over verbose — a good step/target name or
-self-evident code beats a paragraph. Drop a comment rather than pad it.
+The rules every change must respect:
 
-## Non-negotiable: byte-identical oracle gates are mandatory
-
-Every layer ships with a byte-match against **unmodified** flock. The frx port's
-serialized output must equal flock-core's reference bytes, anchored bottom-up:
-**field → additive-NTT → Merkle → zerocheck → lincheck → PCS → e2e proof.**
-A layer is not "done" until its `*_oracle_test` is green on GPU. Fixtures are
-dumped from flock-core itself (`examples/dump_*.rs`), so the gate transitively
-pins us to upstream. Core gates: `bazel test //python:all`; the heavy/GPU gates
-run on the venv (see README "Reproduce").
+- **Byte-identical to flock.** Every layer is gated `frx port ≡ unmodified flock`
+  over serialized bytes, anchored bottom-up (field → additive NTT → Merkle →
+  zerocheck → lincheck → PCS → full `R1csProof`). The golden fixtures are dumped
+  from flock-core (the `flock-core` / `flock-prover` git rev dep), so the gate
+  transitively pins us to upstream. A layer is not done until its `*_oracle_test`
+  is green on GPU, and no behavior change ships without its byte-match.
+- **Assemble zorch's blocks, never re-implement the scheme.** The prover is built
+  from zorch's scheme-agnostic spine (`Round`, Fiat-Shamir, `PCS`, fold,
+  zero-check). flock-zorch adds only the flock-specific pieces the byte-match
+  needs — the GHASH-basis field, the round-1 URM, the ∞-trick round loop, and
+  F128↔bytes serialization — and re-derives nothing zorch already provides.
+- **frx and zorch pins move in lockstep.** Bumping zorch (the `MODULE.bazel`
+  `git_override`) means bumping `requirements.in`'s frx / frxlib / frx-cuda12
+  wheels to the SAME version as zorch's own `requirements.in`: the binary-field
+  GPU kernels must match, and CPU-only CI can't catch a desync.

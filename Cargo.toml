@@ -20,10 +20,6 @@ flock-prover = { git = "https://github.com/succinctlabs/flock.git", rev = "73f72
 # CPU anchor is flock's honest best on this box, not a single thread.
 rayon = "1.10"
 
-# Standalone workspace root (do not get absorbed into a parent dir). The reusable
-# `crates/zkx-pjrt` FFI shim is added as a member when the fused-GPU PJRT path lands.
-[workspace]
-
 # Match flock's bench profile (thin LTO + single codegen unit) so the CPU NTT
 # baseline in `cpu_vs_gpu.py` is flock's honest best on this hardware, not an
 # under-optimized build that would inflate the GPU speedup.

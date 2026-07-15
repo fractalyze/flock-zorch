@@ -60,9 +60,6 @@ python3.11 -m venv .venv
 .venv/bin/pip install -r requirements.in --extra-index-url https://fractalyze.github.io/pypi/simple/
 ```
 
-> Or run `scripts/setup.sh` — one idempotent bootstrap that does all of the above
-> plus the goldens and two smoke gates.
-
 ### Bumping the pins
 
 ```bash
