@@ -71,23 +71,26 @@ device-resident) — which reproduces flock `prove`'s proof **bit-for-bit**.
 |----|----------------|----------------|---------|
 | 26 | 280.3          | 96.0           | **2.9×** |
 
-### Keccak3 (Ligerito) — crossover ≈ m=27
+### Keccak3 (Ligerito) — crossover ≈ m=26
 
 | m  | flock CPU (ms) | GPU clmad (ms) | speedup |
 |----|----------------|----------------|---------|
-| 22 | 26.1           | 254.3          | 0.10×   |
-| 24 | 70.4           | 277.7          | 0.25×   |
-| 26 | 269.5          | 401.3          | 0.67×   |
-| 28 | 1,118.2        | 627.0          | **1.8×** |
+| 22 | 27.0           | 123.8          | 0.22×   |
+| 24 | 71.3           | 160.0          | 0.45×   |
+| 26 | 277.1          | 239.1          | **1.16×** |
+| 28 | 1,167.1        | 474.4          | **2.5×** |
+
+Ligerito re-measured 2026-07-16 after the native-ghash + device-residency work
+(Fiat-Shamir sample/observe kept on-device): GPU prove ~1.3–2× faster at every
+point, crossover moved left ≈27→≈26 (GPU now wins at m=26).
 
 **Reading the numbers.** flock's prover is a sequential SHA-256 Fiat-Shamir chain;
 at small m the per-round data-parallel work (NTT / URM / FRI) is too small to
 amortize GPU launch overhead, so the CPU wins. The bulk work grows with m and the
-GPU overtakes — at **m ≈ 24 for the BaseFold circuits** (SHA-256, BLAKE3) and later,
-**m ≈ 27 for Ligerito** (Keccak3), whose extra recursive rounds add sequential
-structure. Above the crossover the GPU advantage keeps growing with m. (The Keccak3
-m=28 point runs near the RTX 5090's 32 GB ceiling — XLA hit a 16 GB allocation
-retry — so it is memory-bound, not compute-bound.)
+GPU overtakes — at **m ≈ 24 for the BaseFold circuits** (SHA-256, BLAKE3) and,
+after the device-residency work, **m ≈ 26 for Ligerito** (Keccak3), whose extra
+recursive rounds add sequential structure. Above the crossover the GPU advantage
+keeps growing with m (Keccak3 2.5× by m=28).
 
 ## Caveats (read these)
 
@@ -100,7 +103,7 @@ retry — so it is memory-bound, not compute-bound.)
    `aarch64`-gated, so they don't compile on this x86 box. Apple silicon would
    shift the crossover to the right; the definitive equivalence test wants flock
    built on a MacBook.
-3. **The GPU only wins above the crossover** (m ≳ 24 BaseFold, ≳ 27 Ligerito). For
+3. **The GPU only wins above the crossover** (m ≳ 24 BaseFold, ≳ 26 Ligerito). For
    the smaller instances the CPU is faster — don't read the large-m numbers as a
    universal speedup.
 

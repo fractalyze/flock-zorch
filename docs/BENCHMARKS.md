@@ -15,7 +15,7 @@ synthetic circuits.
 | CUDA | driver 13.x; frx runtime = CUDA 12 (frx-cuda12 stack); ptxas ≥ 13.3 for compiler-emitted clmad (sm_120) |
 | Rust | flock built thin-LTO, `codegen-units=1`, `target-cpu=native` (its honest x86 best) |
 | Python / frx | 3.11 / frx jax-fork cuda12 stack |
-| Date | 2026-06-30 UTC |
+| Date | 2026-06-30 UTC (BaseFold); Keccak3 Ligerito re-measured 2026-07-16 UTC |
 
 - **clmad**: YES (compiler-emitted; ptxas 13.3 on PATH) — hardware GF(2¹²⁸) multiply.
 - **Idle**: GPU verified idle (0% util, 0 compute procs) before every GPU timing;
@@ -73,17 +73,24 @@ Confirmed bit-for-bit on GPU (fixtures dumped from unmodified flock-core):
 |----|--------|----------------|----------------|---------|
 | 26 | 4096   | 280.3          | 96.0           | **2.9×** |
 
-### Keccak3 (Ligerito) — crossover ≈ m=27
+### Keccak3 (Ligerito) — crossover ≈ m=26  *(re-measured 2026-07-16)*
 
 | m  | n_keccaks | flock CPU (ms) | GPU clmad (ms) | speedup |
 |----|-----------|----------------|----------------|---------|
-| 22 | 49        | 26.1           | 254.3          | 0.10×   |
-| 24 | 384       | 70.4           | 277.7          | 0.25×   |
-| 26 | 1536      | 269.5          | 401.3          | 0.67×   |
-| 28 | 6144      | 1,118.2        | 627.0          | **1.8×** |
+| 22 | 49        | 27.0           | 123.8          | 0.22×   |
+| 24 | 384       | 71.3           | 160.0          | 0.45×   |
+| 26 | 1536      | 277.1          | 239.1          | **1.16×** |
+| 28 | 6144      | 1,167.1        | 474.4          | **2.5×** |
 
-The Keccak3 m=28 GPU run hit a 16 GB device-allocation retry (near the 32 GB
-ceiling) and is memory-bound, not compute-bound; the timing is still reported.
+Re-measured after the native-ghash + device-residency work (Fiat-Shamir
+sample/observe kept on-device via `sample_f128_g`/`observe_f128_g`, `_combine_claims`
+and the ring-switch reductions carried on the `binary_field_ghash` dtype instead of
+round-tripping through host uint64 lanes). GPU prove dropped ~1.3–2× at every point
+versus the 2026-06-30 baseline and the crossover moved **left from ≈27 to ≈26** (the
+GPU now wins at m=26). The m=28 point fits in 32 GB with no allocation retry.
+
+<sub>Prior baseline (2026-06-30, pre-migration): 254.3 / 277.7 / 401.3 / 627.0 ms
+GPU at m=22/24/26/28, crossover ≈27, m=28 memory-bound with a 16 GB retry.</sub>
 
 ---
 
@@ -139,8 +146,10 @@ too small to amortize GPU kernel-launch + host↔device latency, so the CPU wins
 m grows the bulk work per round grows and the GPU overtakes:
 
 - **BaseFold circuits (SHA-256, BLAKE3): crossover ≈ m=24.** GPU 2.7–2.9× by m=26.
-- **Ligerito (Keccak3): crossover ≈ m=27.** Ligerito's recursive rounds add
-  sequential structure, pushing the crossover right; GPU 1.8× by m=28.
+- **Ligerito (Keccak3): crossover ≈ m=26** (after the device-residency work; was
+  ≈27). Ligerito's recursive rounds add sequential structure, but keeping the
+  Fiat-Shamir sample/observe and the claim-combine on-device removed the per-round
+  host sync — GPU **2.5×** by m=28.
 
 Above the crossover the advantage grows with m — consistent with the GPU winning on
 bulk arithmetic and the CPU winning on latency-bound small instances.
@@ -152,12 +161,13 @@ bulk arithmetic and the CPU winning on latency-bound small instances.
 1. **CPU baseline is x86 SCALAR.** flock's NEON paths are aarch64-gated, so Apple
    silicon would shift the crossover to the right. The definitive equivalence test
    wants flock built on a MacBook.
-2. **The GPU only wins above the crossover** (m ≳ 24 BaseFold, ≳ 27 Ligerito);
+2. **The GPU only wins above the crossover** (m ≳ 24 BaseFold, ≳ 26 Ligerito);
    below it the CPU is faster. The large-m numbers are not a universal speedup.
 3. **zorch is early-stage.** This codebase keeps the CPU prover readable while
    enabling GPU codegen; field-arithmetic optimization is delegated to the ZKX/MLIR
    compiler, which is still maturing — that is why the crossover sits at large m.
-4. **Keccak3 m=28 is memory-bound** on a 32 GB RTX 5090 (16 GB allocation retry).
+4. **Keccak3 m=28** now fits in 32 GB with no allocation retry (post device-residency);
+   the older baseline hit a 16 GB retry and was memory-bound there.
 
 ---
 
