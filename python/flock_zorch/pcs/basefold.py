@@ -184,16 +184,22 @@ def flock_basefold_config(
 # --- wire assembly: zorch CadenceProof -> flock's BasefoldProof --------------
 
 
-def _lohi_scalar(x: Array) -> np.ndarray:
-    """ghash scalar -> uint64 [2] (lo, hi), flock's F128 representation."""
-    b = np.asarray(lax.bitcast_convert_type(x, jnp.uint8)).tobytes()
-    return np.frombuffer(b, np.uint64).copy()
-
-
 def _lohi(x: Array) -> np.ndarray:
     """ghash (any shape) -> (-1, 2) uint64 lo‖hi (the uint8 bitcast direction)."""
     b = np.asarray(lax.bitcast_convert_type(x, jnp.uint8)).tobytes()
     return np.frombuffer(b, np.uint64).reshape(-1, 2).copy()
+
+
+def _f128_scalar(x: Array) -> np.ndarray:
+    """device ghash scalar -> host `binary_field_ghash` scalar (same 16 wire bytes)."""
+    b = np.asarray(lax.bitcast_convert_type(x, jnp.uint8)).tobytes()
+    return np.frombuffer(b, ghash._GHASH_HOST).reshape(())
+
+
+def _f128v(x: Array) -> np.ndarray:
+    """device ghash (any shape) -> host `binary_field_ghash` [-1] (same wire bytes)."""
+    b = np.asarray(lax.bitcast_convert_type(x, jnp.uint8)).tobytes()
+    return np.frombuffer(b, ghash._GHASH_HOST).copy()
 
 
 def _leaf_rows(row: Array) -> np.ndarray:
@@ -217,15 +223,15 @@ def _flock_basefold_proof(proof, k_code: int, log_inv_rate: int, num_ntts: int) 
     has_prefix_commit = bool(arities)  # the post-row-batch commit exists iff FRI does
 
     round_messages = [
-        (_lohi_scalar(u0), _lohi_scalar(u2)) for (u0, u2) in proof.round_messages
+        (_f128_scalar(u0), _f128_scalar(u2)) for (u0, u2) in proof.round_messages
     ]
     roots = [np.asarray(r, np.uint8).copy() for r in proof.commit_roots]
     post_rb_root = roots[0] if has_prefix_commit else np.zeros(32, np.uint8)
     round_commitments = roots[1:]  # per-epoch roots (all but the last epoch)
 
-    final_a = _lohi_scalar(proof.final_state[0])
-    final_b = _lohi_scalar(proof.final_state[1])
-    final_codeword = _lohi(proof.final_codeword)  # [2^log_inv_rate, 2]
+    final_a = _f128_scalar(proof.final_state[0])
+    final_b = _f128_scalar(proof.final_state[1])
+    final_codeword = _f128v(proof.final_codeword)  # [2^log_inv_rate] ghash
 
     positions = np.asarray(proof.positions)
     n_q = int(positions.shape[0])
@@ -445,8 +451,10 @@ def verify(target, proof, initial_codeword_root, k_code, log_inv_rate,
     # One jitted device program for the whole FS replay (the schedule is static
     # given the proof shape); the running-target algebra replays on host after,
     # off the materialized challenges — it reads the transcript nowhere.
-    msgs = np.stack([(np.asarray(u0, np.uint64), np.asarray(u2, np.uint64))
-                     for u0, u2 in proof.round_messages])            # [log_msg, 2, 2]
+    # to_lanes on read: the proof holds ghash round messages, but this verifier
+    # also runs on uint64-lane test proofs, so it stays dtype-agnostic.
+    msgs = np.stack([(ghash.to_lanes(u0), ghash.to_lanes(u2))
+                     for u0, u2 in proof.round_messages])            # [log_msg, 2, 2] lanes
     if arities:
         post_rb_g = ghash.to_ghash(
             jnp.asarray(_root_f128(np.asarray(proof.post_row_batch_commit)).copy()))
@@ -473,12 +481,13 @@ def verify(target, proof, initial_codeword_root, k_code, log_inv_rate,
 
     info = {"reason": "", "challenges": challenges}
 
-    # ---- final sumcheck + codeword-constancy checks ----
-    final_a = np.asarray(proof.final_a, np.uint64)
-    final_b = np.asarray(proof.final_b, np.uint64)
+    # ---- final sumcheck + codeword-constancy checks (lanes: the FRI fold
+    # kernels below are lane-based, so the fold-consistency stays uint64) ----
+    final_a = ghash.to_lanes(proof.final_a)
+    final_b = ghash.to_lanes(proof.final_b)
     if not np.array_equal(_hf_mul(final_a, final_b), running_target):
         return reject("SumcheckFinalMismatch", challenges)
-    final_cw = np.asarray(proof.final_codeword, np.uint64)
+    final_cw = ghash.to_lanes(proof.final_codeword)
     if final_cw.shape[0] != (1 << log_inv_rate):
         return reject("FinalCodewordNotConstant:len", challenges)
     if not np.all([np.array_equal(final_cw[i], final_cw[0]) for i in range(final_cw.shape[0])]):

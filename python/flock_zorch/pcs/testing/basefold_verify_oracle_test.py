@@ -171,9 +171,11 @@ def main() -> int:
     # Tamper vectors on the 2-epoch proof.
     print("tamper (2-epoch base):")
 
+    # the prover's proof holds ghash scalars; flip a bit via a ghash XOR (host `+`)
+    flip1 = np.frombuffer(np.array([1, 0], np.uint64).tobytes(), ghash._GHASH_HOST).reshape(())
     def t_msg(p, t, r):
         new_msgs = list(p.round_messages)
-        new_msgs[0] = (new_msgs[0][0] ^ np.uint64(1), new_msgs[0][1])
+        new_msgs[0] = (new_msgs[0][0] + flip1, new_msgs[0][1])
         return dataclasses.replace(p, round_messages=new_msgs), t, r
     def t_leaf(p, t, r):
         new_queries = list(p.queries)
@@ -181,7 +183,7 @@ def main() -> int:
         new_queries[0] = tuple(q0)
         return dataclasses.replace(p, queries=new_queries), t, r
     def t_final(p, t, r):
-        return dataclasses.replace(p, final_a=p.final_a ^ np.uint64(1)), t, r
+        return dataclasses.replace(p, final_a=p.final_a + flip1), t, r
     def t_root(p, t, r):
         return p, t, (np.asarray(r).copy() ^ np.uint8(1))
 

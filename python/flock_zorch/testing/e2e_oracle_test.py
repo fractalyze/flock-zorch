@@ -142,7 +142,8 @@ def run():
     for i in range(2):
         _eq(f"open ring_switch[{i}].s_hat_v", out.ring_switches[i], g_rs[i], results)
     bf = out.basefold
-    got_rm = np.array([np.concatenate([a, b]) for a, b in bf.round_messages])
+    got_rm = np.array([np.concatenate([ghash.to_lanes(a).reshape(2), ghash.to_lanes(b).reshape(2)])
+                       for a, b in bf.round_messages])
     want_rm = np.array([np.concatenate([a, b]) for a, b in g_bf["rm"]])
     _eq("open bf round_messages", got_rm, want_rm, results)
     _eq("open bf post_rb_commit", bf.post_row_batch_commit, g_bf["post_rb_root"], results)
