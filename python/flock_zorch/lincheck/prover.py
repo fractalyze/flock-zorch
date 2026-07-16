@@ -34,8 +34,8 @@ from flock_zorch.sumcheck.inf_product import prove_inf_product
 from zorch.round import ProveChain, Round
 
 U64 = jnp.uint64
+_GHASH = jnp.binary_field_ghash
 LABEL = b"flock-lincheck-v0"
-_ZERO_G = frx.lax.bitcast_convert_type(jnp.zeros(2, U64), jnp.binary_field_ghash)
 
 
 def build_quirky_eq_table(z_skip, x_inner_rest, k_skip: int):
@@ -53,7 +53,7 @@ def _mat_fold(mat_dense, eq):
 
     mat_dense: uint64 [k, k] (0/1, indexed [row, col]); eq: ghash [k] -> ghash [k].
     The 0/1 marginal is a dtype-native select (mask · ghash isn't a field mul)."""
-    return jnp.sum(jnp.where(mat_dense.astype(bool), eq[:, None], _ZERO_G), axis=0)
+    return jnp.sum(jnp.where(mat_dense.astype(bool), eq[:, None], jnp.zeros((), _GHASH)), axis=0)
 
 
 def fold_alpha_batched(alpha, a_dense, b_dense, eq_inner):
@@ -84,7 +84,7 @@ class CscCircuit:
 
     def fold_alpha_batched(self, alpha, eq_inner):
         eq = jnp.asarray(eq_inner).reshape(-1)                # ghash [k]
-        zero = frx.lax.bitcast_convert_type(jnp.zeros((self.k, 2), U64), jnp.binary_field_ghash)
+        zero = jnp.zeros(self.k, _GHASH)
         out_a = _seg_xor_fold(eq, *self._a_seg, self.k) if self._a_seg else zero
         out_b = _seg_xor_fold(eq, *self._b_seg, self.k) if self._b_seg else zero
         return alpha * out_a + out_b
@@ -109,7 +109,7 @@ def _partial_fold(zp, eq_outer, n_outer):
     [n_outer,k,2] intermediate stays fused on device and never lands in HBM."""
     bits = ((zp[:, None, :] >> jnp.arange(8, dtype=jnp.uint8)[None, :, None]) & 1)  # [nb,8,k]
     bits = bits.reshape(n_outer, zp.shape[1]).astype(bool)                          # i_outer=byte·8+r
-    return jnp.sum(jnp.where(bits, eq_outer[:, None], _ZERO_G), axis=0)  # dtype-native 0/1 select
+    return jnp.sum(jnp.where(bits, eq_outer[:, None], jnp.zeros((), _GHASH)), axis=0)  # dtype-native 0/1 select
 
 
 @runtime_checkable
