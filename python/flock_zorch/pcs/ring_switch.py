@@ -32,11 +32,11 @@ def _reduce_one(packed, x_outer, ch: Challenger):
     the caller turns eq_r_dprime into rs_eq_ind (with or without a gamma scale)."""
     ch.observe_label(LABEL)
     suffix = x_outer[1:]                                       # ghash coords, length L
-    suffix_tensor = sumcheck.build_eq_fused_from_g(suffix)
+    suffix_tensor = sumcheck.build_eq_fused(suffix)
     s_hat_v = zrs.bit_slice_evals(packed, suffix_tensor)     # (128,) ghash
     ch.observe_f128(s_hat_v)                          # observe device ghash directly
     r_dprime = ghash.from_ghash(ch.sample_f128(LOG_PACKING))  # [7,2]
-    eq_r_dprime = sumcheck.build_eq_fused_g(r_dprime)  # [128] ghash, kept for the gamma combine
+    eq_r_dprime = sumcheck.build_eq_fused_from_lanes(r_dprime)  # [128] ghash, kept for the gamma combine
     claim = zrs.inner_product(zrs.tensor_algebra_transpose(s_hat_v), eq_r_dprime)
     return s_hat_v, suffix_tensor, eq_r_dprime, claim          # claim native ghash
 

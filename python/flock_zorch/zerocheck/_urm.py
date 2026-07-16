@@ -137,7 +137,7 @@ def round1_rows(a, b, c, m: int, k_skip: int, r):
     """Round-1 URM from device witness rows (uint8 [2^(m-k_skip), 2^k_skip]). The
     compute half of `round1_naive`, so the witness can be transferred once and
     reused by `zerocheck._fold_at_z_dev`. Returns (P^AB, P^C) as numpy."""
-    eqx = sumcheck.build_eq_fused_from_g(r[k_skip:])[:, None]  # r is ghash [m]; [n_chunks, 1]
+    eqx = sumcheck.build_eq_fused(r[k_skip:])[:, None]  # r is ghash [m]; [n_chunks, 1]
     p_ab, p_c = _round1_core(a, b, c, k_skip, eqx)  # fused extend+phi+accum
     return np.asarray(p_ab), np.asarray(p_c)
 

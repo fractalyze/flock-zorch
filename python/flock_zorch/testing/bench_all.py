@@ -57,8 +57,8 @@ def main():
         n = 1 << log
         r = _rand(log, 5)
         a, b = _rand(n, 6), _rand(n, 7)
-        eq_fn = frx.jit(lambda rr, ln=log: sumcheck.build_eq(rr))
-        rp_fn = frx.jit(lambda aa, bb, rr: sumcheck.round_pair(aa, bb, rr))
+        eq_fn = frx.jit(lambda rr, ln=log: sumcheck.build_eq_lanes(rr))
+        rp_fn = frx.jit(lambda aa, bb, rr: sumcheck.round_pair_lanes(aa, bb, rr))
         fs_fn = frx.jit(lambda aa: sumcheck.fold_single(aa, r[0]))
         eq_ms = _bench(eq_fn, (r,), 30) * 1e3
         rp_ms = _bench(rp_fn, (a, b, r), 30) * 1e3

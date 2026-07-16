@@ -26,7 +26,7 @@ import frx
 import frx.numpy as jnp
 
 from flock_zorch import ghash
-from flock_zorch.sumcheck import build_eq_fused, build_eq_fused_from_g, ONE
+from flock_zorch.sumcheck import build_eq_fused, ONE
 from flock_zorch.zerocheck import _lagrange_weights, ZerocheckProof
 from flock_zorch.challenger import Challenger
 from flock_zorch.lincheck._csc_fold import _flatten_nz, _csc_segments, _seg_xor_fold
@@ -43,7 +43,7 @@ def build_quirky_eq_table(z_skip, x_inner_rest, k_skip: int):
     (flock `build_quirky_eq_table`; i_skip in the LOW bits). z_skip: ghash scalar
     (the zerocheck fold point). Returns the eq table as native ghash [ell_rest·ell_skip]."""
     lam = _lagrange_weights(k_skip, z_skip, 0)
-    eq_rest = build_eq_fused_from_g(x_inner_rest)             # ghash coords -> [ell_rest]
+    eq_rest = build_eq_fused(x_inner_rest)             # ghash coords -> [ell_rest]
     prod = eq_rest[:, None] * lam[None, :]                    # [ell_rest, ell_skip]
     return prod.reshape(-1)
 
@@ -233,7 +233,7 @@ class _SumcheckRound(Round):
         m, k_log, k_skip = self._m, self._k_log, self._k_skip
         inner_rest = k_log - k_skip
         comb = carry.comb
-        eq_outer = build_eq_fused_from_g(carry.x_ab.x_outer)
+        eq_outer = build_eq_fused(carry.x_ab.x_outer)
         z_vec = partial_fold_packed_z(carry.z_packed_bytes, m, k_log, eq_outer)
         z_vec_pre = ghash.from_ghash_host(z_vec) if self._capture else None  # pre-sumcheck (PCS open reuse)
 
