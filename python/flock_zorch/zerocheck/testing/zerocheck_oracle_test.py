@@ -92,7 +92,7 @@ def run(path: Path | None = None):
 
         # Localization cross-checks (claim) first.
         _eq(f"r_rest(m={m})", out.r_rest, r_rest)
-        _eq(f"z(m={m})", out.z, z)
+        _eq(f"z(m={m})", ghash.from_ghash_host(out.z), z)
         _eq(f"mlv_challenges(m={m})", out.mlv_challenges, mlv_ch)
 
         # The proof — the actual gate.

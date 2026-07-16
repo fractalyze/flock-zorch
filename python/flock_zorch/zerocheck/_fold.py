@@ -61,7 +61,7 @@ def _batch_inv(ag):
     return result
 
 
-def _lagrange_weights(k_skip: int, z, offset: int):
+def _lagrange_weights(k_skip: int, zg, offset: int):
     """L_i(z) over the φ₈-embedded nodes PHI_8_TABLE[offset+i], i∈[0, 2^k_skip).
     offset=0 → the S domain; offset=2^k_skip → the Λ domain.
 
@@ -69,18 +69,18 @@ def _lagrange_weights(k_skip: int, z, offset: int):
     jit is essential — it keeps the native ghash multiplies fused).
     Same field math → byte-identical weights (gated).
 
-    z: uint64 [2]; returns `binary_field_ghash [2^k_skip]` — every consumer folds
-    it on the dtype, so the weights never leave it."""
+    zg: `binary_field_ghash` scalar (z is a value in the L_i formula, not an index).
+    Returns `binary_field_ghash [2^k_skip]` — never leaves the dtype."""
     sg = ghash.to_ghash(jnp.asarray(_urm.PHI_8_TABLE[offset:offset + (1 << k_skip)]))
-    num, den = _lag_numden(sg, ghash.to_ghash(jnp.asarray(z)))
+    num, den = _lag_numden(sg, zg)
     return _lag_w(num, _batch_inv(den))
 
 
-def _interpolate_at_z_on_lambda(values, k_skip: int, z) -> np.ndarray:
+def _interpolate_at_z_on_lambda(values, k_skip: int, zg) -> np.ndarray:
     """Σ_i L_i^Λ(z)·values[i] (flock `interpolate_at_z_on_lambda`).
 
-    values: uint64 [2^k_skip, 2]; z: uint64 [2]; returns uint64 [2] (a proof field)."""
-    w = _lagrange_weights(k_skip, z, 1 << k_skip)
+    values: uint64 [2^k_skip, 2]; zg: ghash scalar; returns uint64 [2] (a proof field)."""
+    w = _lagrange_weights(k_skip, zg, 1 << k_skip)
     prod = w * ghash.to_ghash(jnp.asarray(values))
     return ghash.from_ghash_host(jnp.sum(prod))  # XOR-sum inner product
 

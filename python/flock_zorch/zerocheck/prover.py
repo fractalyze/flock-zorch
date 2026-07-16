@@ -162,7 +162,7 @@ class _UrmRound(Round):
         round1_ab, round1_c = _urm.round1_rows(a_rows, b_rows, c_rows, m, k_skip, carry.r)
         transcript.observe_f128(ghash.to_ghash(jnp.asarray(round1_ab)))
         transcript.observe_f128(ghash.to_ghash(jnp.asarray(round1_c)))
-        z = ghash.from_ghash_host(transcript.sample_f128())
+        z = transcript.sample_f128()
         # c-claim: interpolate round1_c at z.
         final_c_eval = _interpolate_at_z_on_lambda(round1_c, k_skip, z)
         carry = replace(carry, a_rows=a_rows, b_rows=b_rows, round1_ab=round1_ab,

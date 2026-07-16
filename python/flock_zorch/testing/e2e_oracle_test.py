@@ -99,7 +99,7 @@ def run():
     _eq("zc final_a", zc.final_a_eval, g_zc["fa"], results)
     _eq("zc final_b", zc.final_b_eval, g_zc["fb"], results)
     _eq("zc final_c", zc.final_c_eval, g_zc["fc"], results)
-    _eq("zc claim z", zc.z, g_zcl["z"], results)
+    _eq("zc claim z", ghash.from_ghash_host(zc.z), g_zcl["z"], results)
     _eq("zc claim mlv_challenges", zc.mlv_challenges, g_zcl["mlv"], results)
     _eq("zc claim r_rest", zc.r_rest, g_zcl["rrest"], results)
 
@@ -115,7 +115,7 @@ def run():
     want_lcr = np.array([np.concatenate([a, b]) for a, b in g_lc["rounds"]]) if g_lc["rounds"] else np.zeros((0, 4), np.uint64)
     _eq("lc rounds", got_lcr, want_lcr, results)
     _eq("lc z_partial", lc_zp, g_lc["zp"], results)
-    _eq("lc claim r_inner_skip", lc_claim.r_inner_skip, g_lcl["ris"], results)
+    _eq("lc claim r_inner_skip", ghash.from_ghash_host(lc_claim.r_inner_skip), g_lcl["ris"], results)
     _eq("lc claim r_inner_rest", lc_claim.r_inner_rest, g_lcl["rir"], results)
     _eq("lc claim w", lc_claim.w, g_lcl["w"], results)
     _eq("lc z_vec_pre", z_vec_pre, g_zvp, results)
@@ -123,10 +123,10 @@ def run():
     # ---- Stage D: ab / c z-claims ----
     ab_pt = dict(zs=lc_claim.r_inner_skip, xir=lc_claim.r_inner_rest, xo=x_ab.x_outer, v=lc_claim.w)
     c_pt = dict(zs=zc.z, xir=zc.r_rest[:inner_rest], xo=zc.r_rest[inner_rest:], v=zc.final_c_eval)
-    _eq("ab.z_skip", ab_pt["zs"], g_ab["zs"], results)
+    _eq("ab.z_skip", ghash.from_ghash_host(ab_pt["zs"]), g_ab["zs"], results)
     _eq("ab.x_outer", ab_pt["xo"], g_ab["xo"], results)
     _eq("ab.value", ab_pt["v"], g_ab["v"], results)
-    _eq("c.z_skip", c_pt["zs"], g_c["zs"], results)
+    _eq("c.z_skip", ghash.from_ghash_host(c_pt["zs"]), g_c["zs"], results)
     _eq("c.x_outer", c_pt["xo"], g_c["xo"], results)
     _eq("c.value", c_pt["v"], g_c["v"], results)
 

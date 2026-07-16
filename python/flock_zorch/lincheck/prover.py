@@ -40,8 +40,8 @@ _ZERO_G = frx.lax.bitcast_convert_type(jnp.zeros(2, U64), jnp.binary_field_ghash
 
 def build_quirky_eq_table(z_skip, x_inner_rest, k_skip: int):
     """eq_inner[i_skip + i_rest·2^k_skip] = λ_skip[i_skip]·eq_rest[i_rest]
-    (flock `build_quirky_eq_table`; i_skip in the LOW bits). z_skip: uint64 [2].
-    Returns the eq table as native ghash [ell_rest·ell_skip]."""
+    (flock `build_quirky_eq_table`; i_skip in the LOW bits). z_skip: ghash scalar
+    (the zerocheck fold point). Returns the eq table as native ghash [ell_rest·ell_skip]."""
     lam = _lagrange_weights(k_skip, z_skip, 0)
     eq_rest = build_eq_fused_g(jnp.asarray(x_inner_rest))     # [ell_rest]
     prod = eq_rest[:, None] * lam[None, :]                    # [ell_rest, ell_skip]
@@ -265,13 +265,13 @@ class _ClaimRound(Round):
     def __call__(self, carry, transcript):
         k_skip = self._k_skip
         transcript.observe_f128(carry.z_partial_g)      # 6. observe z_partial
-        r_inner_skip = ghash.from_ghash_host(transcript.sample_f128())  # 7. fresh z_skip AFTER
+        r_inner_skip = transcript.sample_f128()               # 7. fresh z_skip AFTER
         lam = _lagrange_weights(k_skip, r_inner_skip, 0)       # 8. φ8 S-domain weights
         w = ghash.from_ghash_host(jnp.sum(                     # inner_product
             lam * carry.z_partial_g, axis=0))
         r_inner_rest = [np.asarray(r) for r in reversed(carry.r_rounds)]  # 9. LSB-first
         claim = LincheckClaim(
-            r_inner_skip=np.asarray(r_inner_skip),
+            r_inner_skip=r_inner_skip,
             r_inner_rest=np.stack(r_inner_rest) if r_inner_rest else np.zeros((0, 2), np.uint64),
             w=w)
         return replace(carry, claim=claim), transcript, claim
