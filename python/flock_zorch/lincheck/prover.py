@@ -26,7 +26,7 @@ import frx
 import frx.numpy as jnp
 
 from flock_zorch import field
-from flock_zorch.sumcheck import build_eq_fused, ONE
+from flock_zorch.sumcheck import build_eq_fused, build_eq_fused_g, ONE
 from flock_zorch.zerocheck import _lagrange_weights, ZerocheckProof
 from flock_zorch.challenger import Challenger
 from flock_zorch.lincheck._csc_fold import _flatten_nz, _csc_segments, _seg_xor_fold
@@ -35,23 +35,25 @@ from zorch.round import ProveChain, Round
 
 U64 = jnp.uint64
 LABEL = b"flock-lincheck-v0"
+_ZERO_G = frx.lax.bitcast_convert_type(jnp.zeros(2, U64), jnp.binary_field_ghash)
 
 
 def build_quirky_eq_table(z_skip, x_inner_rest, k_skip: int):
     """eq_inner[i_skip + i_rest·2^k_skip] = λ_skip[i_skip]·eq_rest[i_rest]
-    (flock `build_quirky_eq_table`; i_skip in the LOW bits). z_skip: uint64 [2]."""
+    (flock `build_quirky_eq_table`; i_skip in the LOW bits). z_skip: uint64 [2].
+    Returns the eq table as native ghash [ell_rest·ell_skip]."""
     lam = _lagrange_weights(k_skip, z_skip, 0)
-    eq_rest = field.to_ghash(build_eq_fused(jnp.asarray(x_inner_rest)))  # [ell_rest] — fused (avoids per-layer eager dispatch)
+    eq_rest = build_eq_fused_g(jnp.asarray(x_inner_rest))     # [ell_rest]
     prod = eq_rest[:, None] * lam[None, :]                    # [ell_rest, ell_skip]
-    return field.from_ghash(prod.reshape(-1))                 # [ell_rest·ell_skip, 2]
+    return prod.reshape(-1)
 
 
 def _mat_fold(mat_dense, eq):
     """Transposed binary-matrix·vector: out[c] = Σ_{r: M[r,c]=1} eq[r].
 
-    mat_dense: uint64 [k, k] (0/1, indexed [row, col]); eq: [k, 2] -> ghash [k]."""
-    sel = mat_dense[:, :, None] * eq[:, None, :]              # M[r,c]·eq[r]  (0/1 select)
-    return jnp.sum(field.to_ghash(sel), axis=0)  # XOR over rows
+    mat_dense: uint64 [k, k] (0/1, indexed [row, col]); eq: ghash [k] -> ghash [k].
+    The 0/1 marginal is a dtype-native select (mask · ghash isn't a field mul)."""
+    return jnp.sum(jnp.where(mat_dense.astype(bool), eq[:, None], _ZERO_G), axis=0)
 
 
 def fold_alpha_batched(alpha, a_dense, b_dense, eq_inner):
@@ -81,11 +83,11 @@ class CscCircuit:
         self._b_seg = _csc_segments(b_col, b_row)
 
     def fold_alpha_batched(self, alpha, eq_inner):
-        eq = jnp.asarray(np.asarray(eq_inner, np.uint64).reshape(-1, 2))
-        zero = jnp.zeros((self.k, 2), U64)
+        eq = jnp.asarray(eq_inner).reshape(-1)                # ghash [k]
+        zero = frx.lax.bitcast_convert_type(jnp.zeros((self.k, 2), U64), jnp.binary_field_ghash)
         out_a = _seg_xor_fold(eq, *self._a_seg, self.k) if self._a_seg else zero
         out_b = _seg_xor_fold(eq, *self._b_seg, self.k) if self._b_seg else zero
-        return alpha * field.to_ghash(out_a) + field.to_ghash(out_b)
+        return alpha * out_a + out_b
 
 
 def partial_fold_packed_z(z_packed_bytes: bytes, m: int, k_log: int, eq_outer):
@@ -106,9 +108,8 @@ def _partial_fold_dev(zp, eq_outer, n_outer):
     """z_vec[i_inner] = Σ_{i_outer} bit·eq_outer[i_outer], device+jit so the large
     [n_outer,k,2] intermediate stays fused on device and never lands in HBM."""
     bits = ((zp[:, None, :] >> jnp.arange(8, dtype=jnp.uint8)[None, :, None]) & 1)  # [nb,8,k]
-    bits = bits.reshape(n_outer, zp.shape[1]).astype(jnp.uint64)                    # i_outer=byte·8+r
-    sel = bits[:, :, None] * eq_outer[:, None, :]                                   # 0/1 select, [n_outer,k,2]
-    return jnp.sum(field.to_ghash(sel), axis=0)
+    bits = bits.reshape(n_outer, zp.shape[1]).astype(bool)                          # i_outer=byte·8+r
+    return jnp.sum(jnp.where(bits, eq_outer[:, None], _ZERO_G), axis=0)  # dtype-native 0/1 select
 
 
 @runtime_checkable
@@ -232,7 +233,7 @@ class _SumcheckRound(Round):
         m, k_log, k_skip = self._m, self._k_log, self._k_skip
         inner_rest = k_log - k_skip
         comb = carry.comb
-        eq_outer = build_eq_fused(jnp.asarray(carry.x_ab.x_outer))
+        eq_outer = build_eq_fused_g(jnp.asarray(carry.x_ab.x_outer))
         z_vec = partial_fold_packed_z(carry.z_packed_bytes, m, k_log, eq_outer)
         z_vec_pre = field.from_ghash_host(z_vec) if self._capture else None  # pre-sumcheck (PCS open reuse)
 

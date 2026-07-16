@@ -139,7 +139,7 @@ def run():
 
     # Stage W: the M1 walker port — KeccakLincheckCircuit.fold_alpha_batched (standalone)
     for i, p in enumerate(g["probes"]):
-        comb = field.from_ghash_host(circ.fold_alpha_batched(field.to_ghash(p["alpha"]), p["eq"]))
+        comb = field.from_ghash_host(circ.fold_alpha_batched(field.to_ghash(p["alpha"]), field.to_ghash(p["eq"])))
         results.append((f"walker probe {i} (fold_alpha_batched)", np.array_equal(comb, p["comb"])))
     return m, results
 
