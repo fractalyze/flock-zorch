@@ -142,47 +142,48 @@ the witness size m to locate the GPU/CPU crossover. The CPU baseline is x86
 the crossover right. Measured on `main` (zorch `9cb08349`, FRX
 `dev20260715063133`), 2026-07-16.
 
-### Keccak3 (Ligerito) — GPU wins
+### Keccak3 (Ligerito) — crossover ≈ m=24
 
-| m   | n_keccaks | flock CPU (ms) | GPU (ms) | speedup  |
-| --- | --------- | -------------- | -------- | -------- |
-| 26  | 1536      | 245            | 97       | **2.5×** |
-| 28  | 6144      | 1,027          | 209      | **4.9×** |
+| m   | n_keccaks | flock CPU (ms) | GPU (ms) | speedup   |
+| --- | --------- | -------------- | -------- | --------- |
+| 22  | 49        | 27.0           | 47.2     | 0.57×     |
+| 24  | 384       | 71.3           | 66.4     | **1.07×** |
+| 26  | 1536      | 277.1          | 94.1     | **2.9×**  |
+| 28  | 6144      | 1,167.1        | 185.7    | **6.3×**  |
 
-The Ligerito open runs device-resident (zorch's jitted open + device-resident
-queries): the GPU is a slow-growing floor (97 → 209 ms) while the CPU is O(n),
-so the win grows with m and the crossover sits below m=26.
+The Ligerito open runs device-resident — zorch's recursive open compiles to one
+device program (#479) and query positions are sampled on-device (#104) — so the
+GPU is a slow-growing floor (47 → 186 ms) while the CPU is O(n): GPU wins from
+m=24 and reaches 6.3× by m=28.
 
-### SHA-256 (BaseFold) — crossover ≈ m=28
-
-| m   | n_comp | flock CPU (ms) | GPU (ms) | speedup  |
-| --- | ------ | -------------- | -------- | -------- |
-| 24  | 512    | 63             | 393      | 0.2×     |
-| 26  | 2048   | 217            | 489      | 0.4×     |
-| 28  | 8192   | 936            | 705      | **1.3×** |
-
-### BLAKE3 (BaseFold) — crossover ≈ m=28
+### SHA-256 (BaseFold) — crossover ≈ m=25
 
 | m   | n_comp | flock CPU (ms) | GPU (ms) | speedup  |
 | --- | ------ | -------------- | -------- | -------- |
-| 26  | 4096   | 273            | 497      | 0.5×     |
-| 28  | 16384  | 1,070          | 694      | **1.5×** |
+| 24  | 512    | 63.8           | 76.1     | 0.8×     |
+| 26  | 2048   | 222.7          | 111.7    | **2.0×** |
+| 28  | 8192   | 928.7          | 243.7    | **3.8×** |
 
-**BaseFold is mid-regression.** The BaseFold open has not yet received the
-device-resident open the Ligerito path got, so its GPU floor is ~5–6× higher than
-it should be (393–705 ms) and the crossover sits at m≈28 instead of m≈24 — GPU
-loses below it. Tracked in
-[#106](https://github.com/fractalyze/flock-zorch/issues/106); porting Ligerito's
-jitted device-open to BaseFold is expected to restore the earlier m≈24 crossover.
+### BLAKE3 (BaseFold) — crossover ≈ m=25
+
+| m   | n_comp | flock CPU (ms) | GPU (ms) | speedup  |
+| --- | ------ | -------------- | -------- | -------- |
+| 26  | 4096   | 276.2          | 123.9    | **2.2×** |
+| 28  | 16384  | 1,070.5        | 237.6    | **4.5×** |
+
+The BaseFold open drives the same device-native `zorch.pcs.basefold` seam the
+Ligerito path uses, so its GPU floor stays low (76 → 244 ms) and it crosses over
+at m≈25 like Ligerito — GPU 2.0× by m=26, 3.8× by m=28.
 
 **Reading the numbers.** flock's prover is a sequential SHA-256 Fiat-Shamir
 chain; at small m the per-round data-parallel work (NTT / URM / FRI) is too small
 to amortize GPU launch overhead, so the CPU wins. The bulk work grows with m and
-the GPU overtakes — already by m=26 for Ligerito, and at m≈28 for BaseFold until
-#106 lands. Above the crossover the GPU advantage keeps growing with m. Reproduce
-any point with the [SHA-256 recipe above](#one-benchmark-point-sha-256-m26)
-(swap `dump_sha2` / `bench_sha2_cpu` / `e2e_sha2_bench.py` for the
-`blake3` / `keccak3_ligerito` variants).
+the GPU overtakes — at m≈24 for Ligerito, m≈25 for BaseFold — and the advantage
+keeps growing above the crossover (Ligerito 6.3× and BaseFold 3.8–4.5× by m=28).
+Reproduce any point with the
+[SHA-256 recipe above](#one-benchmark-point-sha-256-m26) (swap `dump_sha2` /
+`bench_sha2_cpu` / `e2e_sha2_bench.py` for the `blake3` / `keccak3_ligerito`
+variants).
 
 ## Acknowledgments
 
