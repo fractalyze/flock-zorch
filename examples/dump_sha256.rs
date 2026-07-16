@@ -2,7 +2,7 @@
 //!
 //! Hashes `N` deterministic SplitMix64 messages of `L` bytes each with flock's
 //! own `merkle::hash_leaf` (= `Sha256::digest`), so the fixture is byte-anchored
-//! to unmodified flock. The jax port (`flock_zorch.sha256.digest`) reads the
+//! to unmodified flock. The frx port (`flock_zorch.sha256.digest`) reads the
 //! inputs, recomputes the digests, and byte-compares.
 //!
 //! Usage: `cargo run --release --example dump_sha256 -- [N] [L] [out_path]`

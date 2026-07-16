@@ -3,7 +3,7 @@
 //!
 //! Builds flock's `merkle::merkle_tree` over `n_leaves` x `leaf_size`-byte leaves,
 //! picks `n_pos` deterministic query positions, and dumps the data + positions +
-//! flock's `merkle::merkle_multi_proof`. The jax port (`flock_zorch.merkle`)
+//! flock's `merkle::merkle_multi_proof`. The frx port (`flock_zorch.merkle`)
 //! recomputes the tree + multi-proof and byte-compares.
 //!
 //! Usage: `cargo run --release --example dump_merkle_multi -- [n_leaves] [leaf_size] [n_pos] [out]`

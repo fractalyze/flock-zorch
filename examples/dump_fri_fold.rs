@@ -4,7 +4,7 @@
 //! Replicates flock-core `pcs::basefold::fri_fold_codeword` (a private fn) using
 //! its public twiddle source `AdditiveNttF128::twiddle` and the exact `fold_pair`
 //! formula (v=v+u; u=u+v·t; out=u+r·(u+v)). The twiddles — the non-trivial part
-//! — are flock's, so the fixture is byte-anchored to flock. The jax port
+//! — are flock's, so the fixture is byte-anchored to flock. The frx port
 //! (`flock_zorch.pcs_open.fri_fold`) recomputes and byte-compares.
 //!
 //! Usage: `cargo run --release --example dump_fri_fold -- [k_code] [layer] [out]`

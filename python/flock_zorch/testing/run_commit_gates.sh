@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Reproducible PCS-commit byte-identity + 10x gate across multiple (m, rate, batch)
-# configurations. Regenerates each golden from unmodified flock, runs the jax gate,
+# configurations. Regenerates each golden from unmodified flock, runs the frx gate,
 # and tees a committed log to artifacts/commit_gate_results.txt — so the multi-size
 # claim is backed by an artifact, not just a transcript.
 #

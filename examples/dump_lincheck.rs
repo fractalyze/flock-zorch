@@ -2,7 +2,7 @@
 //! PIOP sub-protocol). Builds deterministic sparse base matrices A_0,B_0, a
 //! witness z, and a QuirkyPoint x_ab, runs unmodified flock-core's
 //! `lincheck::prove`, and dumps ALL inputs + the resulting `LincheckProof`
-//! (rounds + z_partial). The jax port (`flock_zorch.lincheck.prove`) reads the
+//! (rounds + z_partial). The frx port (`flock_zorch.lincheck.prove`) reads the
 //! inputs, recomputes, and byte-compares rounds + z_partial.
 //!
 //! Usage: `cargo run --release --example dump_lincheck -- [m] [k_log] [k_skip] [out]`

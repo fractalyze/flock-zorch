@@ -13,7 +13,7 @@ Byte-identity to unmodified succinct flock is the non-negotiable gate; the
 golden fixtures are dumped from flock-core by the Rust `examples/dump_*.rs`.
 
 Note: GPU byte-match gates run under the zorch venv via `PYTHONPATH`, NOT under
-hermetic Bazel (the jax/zkx CUDA wheels are not hermetic — the
+hermetic Bazel (the frx/xla CUDA wheels are not hermetic — the
 same reason sp1-zorch's GPU checks are `verify_*` py_binary runnables, not
 hermetic `py_test`s). See README "Run the gates".
 """

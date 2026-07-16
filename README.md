@@ -7,7 +7,7 @@ authored once in Python/**FRX** (Fractalyze's JAX fork), and the compiler emits
 the hardware code: the same readable source targets CPU and GPU, and its output
 matches the reference flock prover bit-for-bit.
 
-The point is a **single JAX/MLIR codebase, not a GPU rewrite of the proving
+The point is a **single FRX/MLIR codebase, not a GPU rewrite of the proving
 logic**. flock's prover is written as a clean statement of the math; FRX lowers
 it to StableHLO/MLIR, and the compiler — carrying native finite-field dtypes
 (`zk_dtypes`) and the carryless-multiply lowerings for GF(2¹²⁸) — compiles that

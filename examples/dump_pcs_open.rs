@@ -2,7 +2,7 @@
 //!
 //! Commits a deterministic witness, runs unmodified flock `pcs::open` at a random
 //! x_outer with the real FsChallenger, and dumps z_packed + x_outer + codeword +
-//! the OpeningProof (ring_switch.s_hat_v + the full BaseFoldProof). The jax port
+//! the OpeningProof (ring_switch.s_hat_v + the full BaseFoldProof). The frx port
 //! (`flock_zorch.pcs_open.open`) rebuilds the tree, reruns, and byte-compares.
 //!
 //! Usage: `cargo run --release --example dump_pcs_open -- [m] [log_inv_rate] [log_batch_size] [out]`

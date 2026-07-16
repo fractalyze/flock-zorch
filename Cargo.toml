@@ -2,7 +2,7 @@
 name = "flock-zorch"
 version = "0.1.0"
 edition = "2021"
-description = "GPU port of succinctlabs/flock (R1CS-over-GF(2) PIOP) via the zorch/zkx compiler stack"
+description = "GPU port of succinctlabs/flock (R1CS-over-GF(2) PIOP) via the zorch/xla compiler stack"
 
 [dependencies]
 # The byte-compare baseline: unmodified upstream flock, pinned by git rev so its

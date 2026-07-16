@@ -1,7 +1,7 @@
 """flock's BaseFold PCS open (`pcs::basefold`), authored in frx — byte-identical
 to flock-core. `prove` drives `zorch.pcs.basefold`'s injectable choreography seam
 (config + sumcheck kernel + Fiat-Shamir choreography) over flock's shared
-challenger, retiring the in-tree jax recursion; `verify` stays flock's own
+challenger, retiring the in-tree frx recursion; `verify` stays flock's own
 byte-anchored verifier.
 
 The open is a sumcheck over (a_init, b) interleaved with codeword folding

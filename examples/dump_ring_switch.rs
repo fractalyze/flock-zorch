@@ -1,7 +1,7 @@
 //! Golden-fixture dumper for flock's ring-switch reduction (`ring_switch::prove`).
 //!
 //! Random packed_witness + x_outer, real FsChallenger; dumps inputs + the proof's
-//! s_hat_v + the output (rs_eq_ind, sumcheck_claim). The jax port
+//! s_hat_v + the output (rs_eq_ind, sumcheck_claim). The frx port
 //! (`flock_zorch.ring_switch.prove`) recomputes and byte-compares all three.
 //!
 //! Usage: `cargo run --release --example dump_ring_switch -- [m] [out]`
