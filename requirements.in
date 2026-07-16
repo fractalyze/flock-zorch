@@ -13,7 +13,7 @@ numpy
 # stay on the same version so the GPU kernels are byte-identical. The stack
 # carries the interior-padding lowering lincheck's `_seg_xor_fold`
 # (frx.lax.associative_scan) needs — older wheels raise NotImplementedError on
-# the sha2/blake3 GPU gates. Bump these together with the submodule pin.
+# the sha2/blake3 GPU gates. Bump these together with the zorch git_override pin.
 frx==0.10.0.dev20260715063133
 frxlib==0.10.0.dev20260715063133
 frx-cuda12-plugin==0.10.0.dev20260715063133

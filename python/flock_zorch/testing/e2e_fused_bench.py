@@ -76,7 +76,7 @@ def bench(m, n=3):
 
 # The prover runs flock's production host Fiat-Shamir transcript (HostSha256).
 # The on-device byte transcript was measured in #7 (a ~44s regression, no crossover
-# left-shift; see docs/BENCHMARKS.md) and is not benched here.
+# left-shift) and is not benched here.
 def main():
     ms = [int(x) for x in sys.argv[1:]] or [26]
     n = int(os.environ.get("FLOCK_BENCH_N", "3"))
