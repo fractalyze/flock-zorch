@@ -25,3 +25,10 @@ A layer is not "done" until its `*_oracle_test` is green on GPU. Fixtures are
 dumped from flock-core itself (`examples/dump_*.rs`), so the gate transitively
 pins us to upstream. Core gates: `bazel test //python:all`; the heavy/GPU gates
 run on the venv (`docs/SETUP.md`).
+
+Fixtures must end in `_golden.bin` — `artifacts/BUILD.bazel` globs `*_golden.bin`
+into every gate's runfiles, so qualify a config variant *before* the suffix
+(`basefold_3epoch_golden.bin`, not `basefold_golden_3epoch.bin`, which the glob
+silently drops). A non-default config (e.g. a multi-epoch anchor) is dumped by an
+explicit `dump_<x> <args> artifacts/<name>_golden.bin` line in
+`scripts/dump_goldens.sh`, mirroring the `run_commit_gates.sh` / lincheck sweeps.
