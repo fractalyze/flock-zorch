@@ -7,9 +7,8 @@
 #     core = every layer + the identity e2e prover (fast; small fixtures)
 #     all  = core + the real hash-circuit full provers (slow; blake3_golden ~118 MB)
 #
-# Note: a few gates sweep configs via their own runner rather than a single default
-# golden — PCS commit (python/flock_zorch/testing/run_commit_gates.sh) and the
-# multi-(m,k_log,k_skip) lincheck gate regenerate their own per-config goldens.
+# Note: the multi-(m,k_log,k_skip) lincheck gate sweeps configs via its own runner
+# rather than a single default golden — it regenerates its own per-config goldens.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -18,7 +17,7 @@ source "$HOME/.cargo/env" 2>/dev/null || true
 
 cargo build --release --examples >/dev/null   # fetches flock (git rev dep) + builds the dumpers
 
-CORE=(ntt sha256 merkle merkle_multi commit sumcheck zerocheck challenger
+CORE=(ntt sha256 merkle merkle_multi sumcheck zerocheck challenger
       gf8_urm fri_fold ring_switch ligerito lincheck e2e_ligerito chain_shift)
 HEAVY=(keccak_ligerito keccak_chain keccak3_ligerito sha2_ligerito blake3_ligerito)
 
