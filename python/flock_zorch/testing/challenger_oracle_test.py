@@ -17,6 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
+from flock_zorch import ghash
 from flock_zorch.challenger import Challenger
 
 _MAGIC = b"FLKCHL01"
@@ -33,7 +34,8 @@ def _artifacts_dir() -> Path:
 
 
 def _f128(lo: int, hi: int) -> np.ndarray:
-    return np.array([lo, hi], dtype=np.uint64)
+    """A native-ghash scalar (observe_f128 frames on the dtype now)."""
+    return ghash._lanes_to_ghash(np.array([lo, hi], dtype=np.uint64))
 
 
 def _load(path: Path):
@@ -55,7 +57,7 @@ def _replay(make_challenger=Challenger) -> tuple[list[np.ndarray], int]:
     ch.observe_label(LABEL)
     ch.observe_bytes(bytes(range(32)))
     ch.observe_f128(_f128(0x0123456789ABCDEF, 0xFEDCBA9876543210))
-    ch.observe_f128([_f128(1, 0), _f128(2, 0), _f128(0xDEADBEEF, 0xCAFEBABE)])
+    ch.observe_f128(np.stack([_f128(1, 0), _f128(2, 0), _f128(0xDEADBEEF, 0xCAFEBABE)]))
 
     s0 = ch.sample_f128()
     samples.append(s0)
@@ -77,7 +79,7 @@ def run(path: Path | None = None, *, make_challenger=Challenger):
     golden, golden_nonce = _load(path)
     samples, nonce = _replay(make_challenger)
 
-    got = np.stack(samples)
+    got = ghash.to_lanes(np.stack(samples))
     if not np.array_equal(got, golden):
         i = int(np.flatnonzero(np.any(got != golden, axis=1))[0])
         raise AssertionError(
