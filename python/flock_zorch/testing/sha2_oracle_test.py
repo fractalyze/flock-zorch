@@ -21,6 +21,8 @@ import frx
 
 frx.config.update("jax_enable_x64", True)
 
+import frx.numpy as jnp  # noqa: E402
+
 from flock_zorch import ghash, zerocheck, lincheck, prover  # noqa: E402
 from flock_zorch.pcs import commit as pcs_commit  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
@@ -115,8 +117,8 @@ def run():
     _eq("lc z_partial", lc_zp, g["lc"]["zp"], results)
 
     # Stage D: batched dual-claim open (ab from lincheck, c from zerocheck)
-    ab_full = np.concatenate([lc_claim.r_inner_rest, x_ab.x_outer], axis=0)
-    c_full = np.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
+    ab_full = jnp.concatenate([lc_claim.r_inner_rest, x_ab.x_outer], axis=0)
+    c_full = jnp.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
     out = prover.open_batch(g["z"], codeword, tree, [ab_full, c_full], (m - 7 - lbs) + lir,
                             lir, lbs, ch)
     for i in range(2):

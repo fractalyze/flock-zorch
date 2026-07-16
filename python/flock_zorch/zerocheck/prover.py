@@ -206,7 +206,7 @@ class _MultilinearRound(Round):
         final_b_eval = final_b
         carry = replace(carry, multilinear_rounds=rounds, final_a_eval=final_a_eval,
                         final_b_eval=final_b_eval,
-                        mlv_challenges=ghash.from_ghash_host(jnp.stack(rhos)))
+                        mlv_challenges=jnp.stack(rhos))       # native ghash open-point coords
         return carry, transcript, (rounds, final_a_eval, final_b_eval)
 
 
@@ -242,5 +242,5 @@ def prove_packed(a_bits, b_bits, c_bits, m: int, domain: bytes | None = None,
         final_c_eval=carry.final_c_eval,
         z=carry.z,
         mlv_challenges=carry.mlv_challenges,
-        r_rest=ghash.from_ghash_host(carry.r[k_skip:]),   # lanes: the c-open point coords + byte-gate
+        r_rest=carry.r[k_skip:],   # native ghash: the c-open point coords; byte-gate lanes-converts
     )

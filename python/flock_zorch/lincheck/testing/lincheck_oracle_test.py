@@ -50,7 +50,9 @@ def _load(path):
     a = _read_matrix(rd, k)
     b = _read_matrix(rd, k)
     z_packed = rd.raw(rd.u64())
-    x_ab = lincheck.AbClaimPoint(z_skip=ghash.to_ghash(rd.f128()), x_inner_rest=rd.f128s(rd.u64()), x_outer=rd.f128s(rd.u64()))
+    x_ab = lincheck.AbClaimPoint(z_skip=ghash.to_ghash(rd.f128()),
+                                 x_inner_rest=ghash.to_ghash(rd.f128s(rd.u64())),
+                                 x_outer=ghash.to_ghash(rd.f128s(rd.u64())))
     n_rounds = rd.u64()
     rounds = [(rd.f128(), rd.f128()) for _ in range(n_rounds)]
     z_partial = rd.f128s(rd.u64())

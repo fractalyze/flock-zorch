@@ -234,10 +234,10 @@ class _PcsOpenStage(Stage):
         inner_rest = self._k_log - self._k_skip
         zc, lc_claim = carry.zc, carry.lc_claim
         x_outer = zc.mlv_challenges[inner_rest:]
-        ab_full = np.concatenate([lc_claim.r_inner_rest, x_outer], axis=0)
+        ab_full = jnp.concatenate([lc_claim.r_inner_rest, x_outer], axis=0)
         # c_full split-then-rejoined (not just zc.r_rest) to mirror Rust's
         # QuirkyPoint / quirky_x_outer_full.
-        c_full = np.concatenate([zc.r_rest[:inner_rest], zc.r_rest[inner_rest:]], axis=0)
+        c_full = jnp.concatenate([zc.r_rest[:inner_rest], zc.r_rest[inner_rest:]], axis=0)
         pcs = self._pcs
         pcs_open_proof = open_batch(
             carry.z_packed, carry.codeword, carry.tree, [ab_full, c_full], pcs.k_code,

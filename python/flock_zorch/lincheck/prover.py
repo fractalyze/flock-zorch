@@ -26,7 +26,7 @@ import frx
 import frx.numpy as jnp
 
 from flock_zorch import ghash
-from flock_zorch.sumcheck import build_eq_fused, build_eq_fused_g, ONE
+from flock_zorch.sumcheck import build_eq_fused, build_eq_fused_from_g, ONE
 from flock_zorch.zerocheck import _lagrange_weights, ZerocheckProof
 from flock_zorch.challenger import Challenger
 from flock_zorch.lincheck._csc_fold import _flatten_nz, _csc_segments, _seg_xor_fold
@@ -43,7 +43,7 @@ def build_quirky_eq_table(z_skip, x_inner_rest, k_skip: int):
     (flock `build_quirky_eq_table`; i_skip in the LOW bits). z_skip: ghash scalar
     (the zerocheck fold point). Returns the eq table as native ghash [ell_rest·ell_skip]."""
     lam = _lagrange_weights(k_skip, z_skip, 0)
-    eq_rest = build_eq_fused_g(jnp.asarray(x_inner_rest))     # [ell_rest]
+    eq_rest = build_eq_fused_from_g(x_inner_rest)             # ghash coords -> [ell_rest]
     prod = eq_rest[:, None] * lam[None, :]                    # [ell_rest, ell_skip]
     return prod.reshape(-1)
 
@@ -233,7 +233,7 @@ class _SumcheckRound(Round):
         m, k_log, k_skip = self._m, self._k_log, self._k_skip
         inner_rest = k_log - k_skip
         comb = carry.comb
-        eq_outer = build_eq_fused_g(jnp.asarray(carry.x_ab.x_outer))
+        eq_outer = build_eq_fused_from_g(carry.x_ab.x_outer)
         z_vec = partial_fold_packed_z(carry.z_packed_bytes, m, k_log, eq_outer)
         z_vec_pre = ghash.from_ghash_host(z_vec) if self._capture else None  # pre-sumcheck (PCS open reuse)
 
@@ -244,7 +244,7 @@ class _SumcheckRound(Round):
                 stacked, transcript._t, inner_rest)
             for e1, einf, r in msgs:
                 rounds.append((e1, einf))
-                r_rounds.append(ghash.from_ghash_host(r))
+                r_rounds.append(r)                            # native ghash fold challenge
             z_partial_g = stacked[1]
         else:
             z_partial_g = z_vec
@@ -268,10 +268,11 @@ class _ClaimRound(Round):
         r_inner_skip = transcript.sample_f128()               # 7. fresh z_skip AFTER
         lam = _lagrange_weights(k_skip, r_inner_skip, 0)       # 8. φ8 S-domain weights
         w = jnp.sum(lam * carry.z_partial_g, axis=0)          # inner_product (ghash)
-        r_inner_rest = [np.asarray(r) for r in reversed(carry.r_rounds)]  # 9. LSB-first
+        r_inner_rest = list(reversed(carry.r_rounds))         # 9. LSB-first (ghash scalars)
         claim = LincheckClaim(
             r_inner_skip=r_inner_skip,
-            r_inner_rest=np.stack(r_inner_rest) if r_inner_rest else np.zeros((0, 2), np.uint64),
+            r_inner_rest=(jnp.stack(r_inner_rest) if r_inner_rest
+                          else ghash.to_ghash(jnp.zeros((0, 2), jnp.uint64))),
             w=w)
         return replace(carry, claim=claim), transcript, claim
 

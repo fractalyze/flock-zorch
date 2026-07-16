@@ -15,7 +15,6 @@ Requires `jax_enable_x64`.
 """
 from __future__ import annotations
 
-import numpy as np
 import frx.numpy as jnp
 
 from flock_zorch import ghash, sumcheck
@@ -32,8 +31,8 @@ def _reduce_one(packed, x_outer, ch: Challenger):
     (s_hat_v [128,2], suffix_tensor [ghash], eq_r_dprime [128] ghash, claim [ghash]);
     the caller turns eq_r_dprime into rs_eq_ind (with or without a gamma scale)."""
     ch.observe_label(LABEL)
-    suffix = jnp.asarray(np.asarray(x_outer)[1:])             # x_outer[1:], length L
-    suffix_tensor = sumcheck.build_eq_fused_g(suffix)
+    suffix = x_outer[1:]                                       # ghash coords, length L
+    suffix_tensor = sumcheck.build_eq_fused_from_g(suffix)
     s_hat_v = zrs.bit_slice_evals(packed, suffix_tensor)     # (128,) ghash
     ch.observe_f128(s_hat_v)                          # observe device ghash directly
     r_dprime = ghash.from_ghash(ch.sample_f128(LOG_PACKING))  # [7,2]

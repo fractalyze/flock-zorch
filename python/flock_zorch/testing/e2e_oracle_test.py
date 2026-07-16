@@ -18,6 +18,7 @@ import frx
 
 frx.config.update("jax_enable_x64", True)
 
+import frx.numpy as jnp  # noqa: E402
 from flock_zorch import ghash, zerocheck, lincheck, prover  # noqa: E402
 from flock_zorch.pcs import commit as pcs_commit, ring_switch  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
@@ -37,7 +38,7 @@ class R:
 
 
 def _eq(name, got, want, results):
-    ok = np.array_equal(ghash.to_lanes(got).reshape(-1, 2) if np.asarray(got).size else np.asarray(got),
+    ok = np.array_equal(ghash.to_lanes(got).reshape(-1, 2) if np.asarray(got).size else ghash.to_lanes(got),
                         np.asarray(want, np.uint64).reshape(-1, 2) if np.asarray(want).size else np.asarray(want))
     results.append((name, ok))
     return ok
@@ -133,8 +134,8 @@ def run():
     _eq("c.value", c_pt["v"], g_c["v"], results)
 
     # ---- Stage E: batched dual-claim PCS open ----
-    ab_full = np.concatenate([ab_pt["xir"], ab_pt["xo"]], axis=0)
-    c_full = np.concatenate([c_pt["xir"], c_pt["xo"]], axis=0)
+    ab_full = jnp.concatenate([ab_pt["xir"], ab_pt["xo"]], axis=0)
+    c_full = jnp.concatenate([c_pt["xir"], c_pt["xo"]], axis=0)
     out = prover.open_batch(z_packed, codeword, tree, [ab_full, c_full], (m - 7 - LBS) + LIR,
                             LIR, LBS, ch)
     # ring_switches (s_hat_v per claim)
