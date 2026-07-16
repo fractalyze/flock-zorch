@@ -62,7 +62,7 @@ def main() -> int:
         print(" want:", bytes(golden_root).hex())
         return 1
 
-    # disable_jit so `_root_dev` runs eagerly: the probe observes the Python
+    # disable_jit so `_root` runs eagerly: the probe observes the Python
     # routing hooks, which a persistent-compilation-cache hit would bypass.
     with frx.disable_jit():
         hooks_ok = _hooks_on_commit_path()

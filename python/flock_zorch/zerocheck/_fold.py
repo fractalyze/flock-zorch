@@ -86,7 +86,7 @@ def _interpolate_at_z_on_lambda(values, k_skip: int, zg) -> np.ndarray:
 
 
 @frx.jit
-def _fold_at_z_dev(rows, w_g):
+def _fold_at_z(rows, w_g):
     """a_mlv[x_rest] = Σ_s witness[x_rest·ell + s]·L_s(z) (flock `fold_at_z_naive`),
     on device, reading the witness rows already resident from round1. rows: uint8
     [2^(m-k_skip), ell]; w_g: `binary_field_ghash [ell]` -> ghash [n_chunks].

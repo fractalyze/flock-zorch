@@ -4,7 +4,7 @@ r1cs_hashes/keccak3.rs:449-484`). Task #14, M3b — the headline keccak backend.
 
 keccak3 packs THREE independent keccak permutations per block at K_LOG=17 (useful
 ≈ 97.3% vs single-keccak's 65%). The walker is exactly three disjoint copies of
-the single-keccak transpose recurrence — one `_accumulate_subkeccak_dev` per
+the single-keccak transpose recurrence — one `_accumulate_subkeccak` per
 sub-keccak over its column region, merged by XOR into a shared `comb` plus one
 shared const row. The device fold, the θ∘ρ∘π preimage maps and the gather helpers
 are reused verbatim from `keccak` (flock reuses `super::keccak` likewise)
@@ -51,9 +51,9 @@ class Keccak3LincheckCircuit:
     n_cols = K
     const_pin = Z_CONST  # shared const-wire pin column (lincheck.prove applies +β here)
     _sub_cols = [(_COL0[i], _COL24[i], _ROWS_T[i]) for i in range(N_SUB)]  # host (test ref)
-    _sub_cols_dev = _device_sub_cols(_sub_cols)          # device, built once
+    _sub_cols = _device_sub_cols(_sub_cols)          # device, built once
 
     def fold_alpha_batched(self, alpha, eq_inner):
         """comb[c] = α·(A_0ᵀ·eq)[c] ⊕ (B_0ᵀ·eq)[c] — three disjoint sub-keccak walks
         XOR-merged into the shared comb (incl. the shared Z_CONST column), on device."""
-        return _fold_walker(eq_inner, alpha, self._sub_cols_dev, Z_CONST)
+        return _fold_walker(eq_inner, alpha, self._sub_cols, Z_CONST)
