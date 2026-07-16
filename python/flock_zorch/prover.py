@@ -162,24 +162,23 @@ class _ProveCarry:
     z_lincheck: bytes         # lincheck witness bytes
     a0: Array                 # lincheck A matrix (dense)
     b0: Array                 # lincheck B matrix (dense)
-    codeword: np.ndarray | None = None  # ← _CommitStage; read by _PcsOpenStage
-    tree: np.ndarray | None = None      # ← _CommitStage; read by _PcsOpenStage
+    pdata: Any = None         # ← _CommitStage: the Ligerito commit; read by _PcsOpenStage
     zc: zerocheck.ZerocheckProof | None = None    # ← _ZerocheckStage; read by lincheck + open + assembly
     lc_claim: lincheck.LincheckClaim | None = None  # ← _LincheckStage; read by open + assembly
 
 
 class _CommitStage(Stage):
-    """Commit ẑ through the `FlockPcsProver` seam, then bind the transcript to the
-    statement (flock `bind_statement`): the trace-commit Stage (commit + preamble
-    absorb). Message = the root."""
+    """Commit ẑ through the Ligerito commit (`commit_flock_ligerito`), then bind the
+    transcript to the statement (flock `bind_statement`): the trace-commit Stage
+    (commit + preamble absorb). Message = the root."""
 
-    def __init__(self, pcs: FlockPcsProver):
-        self._pcs = pcs
+    def __init__(self, cfg):
+        self._cfg = cfg
 
     def __call__(self, carry, transcript):
-        root, data = self._pcs.commit([carry.z_packed])
+        root, pdata = zorch_ligerito.commit_flock_ligerito(self._cfg, carry.z_packed)
         bind_statement(transcript, carry.statement_digest, root)
-        return replace(carry, codeword=data.codeword, tree=data.tree), transcript, root
+        return replace(carry, pdata=pdata), transcript, root
 
 
 class _ZerocheckStage(Stage):
@@ -200,8 +199,8 @@ class _LincheckStage(Stage):
     zerocheck challenge point. Message = (rounds, z_partial); writes the ab claim
     onto the carry."""
 
-    def __init__(self, m, k_log, k_skip):
-        self._m, self._k_log, self._k_skip = m, k_log, k_skip
+    def __init__(self, m, k_log, k_skip, circuit=None):
+        self._m, self._k_log, self._k_skip, self._circuit = m, k_log, k_skip, circuit
 
     def __call__(self, carry, transcript):
         if carry.zc is None:
@@ -212,7 +211,7 @@ class _LincheckStage(Stage):
         x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, inner_rest)
         lp = lincheck.prove(
             carry.z_lincheck, carry.a0, carry.b0, x_ab, self._m,
-            self._k_log, self._k_skip, ch=transcript, capture=True)
+            self._k_log, self._k_skip, ch=transcript, capture=True, circuit=self._circuit)
         return replace(carry, lc_claim=lp.claim), transcript, (lp.rounds, lp.z_partial)
 
 
@@ -221,13 +220,12 @@ class _PcsOpenStage(Stage):
     point = lincheck r_inner_rest ++ zerocheck x_outer; c point = the zerocheck
     r_rest. Message = the BatchOpeningProof dict."""
 
-    def __init__(self, pcs: FlockPcsProver, k_log, k_skip):
-        self._pcs, self._k_log, self._k_skip = pcs, k_log, k_skip
+    def __init__(self, cfg, k_log, k_skip):
+        self._cfg, self._k_log, self._k_skip = cfg, k_log, k_skip
 
     def __call__(self, carry, transcript):
-        if (carry.zc is None or carry.lc_claim is None
-                or carry.codeword is None or carry.tree is None):
-            raise ValueError("the PCS open needs the commit codeword/tree plus the "
+        if carry.zc is None or carry.lc_claim is None or carry.pdata is None:
+            raise ValueError("the PCS open needs the Ligerito commit plus the "
                              "zerocheck and lincheck outputs on the carry; sequence "
                              "the commit, zerocheck, and lincheck Stages before it")
         inner_rest = self._k_log - self._k_skip
@@ -237,32 +235,29 @@ class _PcsOpenStage(Stage):
         # c_full split-then-rejoined (not just zc.r_rest) to mirror Rust's
         # QuirkyPoint / quirky_x_outer_full.
         c_full = jnp.concatenate([zc.r_rest[:inner_rest], zc.r_rest[inner_rest:]], axis=0)
-        pcs = self._pcs
-        pcs_open_proof = open_batch(
-            carry.z_packed, carry.codeword, carry.tree, [ab_full, c_full], pcs.k_code,
-            pcs.log_inv_rate, pcs.log_batch_size, transcript)
+        pcs_open_proof = open_batch_ligerito(
+            self._cfg, carry.z_packed, carry.pdata, [ab_full, c_full], transcript)
         return carry, transcript, pcs_open_proof
 
 
 def prove_fast(z_packed: Array, m: int, k_log: int, k_skip: int, useful_bits: int,
                a0: Array, b0: Array, z_lincheck: bytes, statement_digest: bytes,
-               log_inv_rate: int = 1, log_batch_size: int = 5,
-               domain: bytes = b"flock-test-v0") -> ProveFastResult:
-    """Fused single-call R1CS prover (identity-C path: c = z), byte-identical to
-    flock `prover::prove`. A zorch `ProveChain` of Stages threading one shared
-    challenger + a `_ProveCarry` (no per-phase host re-transfer): commit+bind →
-    zerocheck → lincheck → batched dual-claim open. a = A·z, b = B·z; for the
-    identity R1CS a = b = c = z (the gated path). Returns the proof + claims."""
-    pcs = FlockPcsProver(m, log_inv_rate, log_batch_size)
-
+               cfg, circuit=None, domain: bytes = b"flock-test-v0") -> ProveFastResult:
+    """Fused single-call R1CS prover on the Ligerito PCS, byte-identical to flock
+    `prover::prove_fast_ligerito`. A zorch `ProveChain` of Stages threading one
+    shared challenger + a `_ProveCarry` (no per-phase host re-transfer): Ligerito
+    commit+bind → zerocheck → lincheck → batched dual-claim Ligerito open. `cfg` is
+    the flock Ligerito config; `circuit` a `LincheckCircuit` for real hash R1CS
+    (None uses the dense a0/b0 path — the identity gate). a = A·z, b = B·z; for the
+    identity R1CS a = b = c = z. Returns the proof + claims."""
     ch = Challenger(domain)
     carry = _ProveCarry(z_packed=z_packed, statement_digest=statement_digest,
                         z_lincheck=z_lincheck, a0=a0, b0=b0)
     carry, _ch, msgs = ProveChain([
-        _CommitStage(pcs),
+        _CommitStage(cfg),
         _ZerocheckStage(m),
-        _LincheckStage(m, k_log, k_skip),
-        _PcsOpenStage(pcs, k_log, k_skip),
+        _LincheckStage(m, k_log, k_skip, circuit),
+        _PcsOpenStage(cfg, k_log, k_skip),
     ])(carry, ch)
     _root, zc, (lc_rounds, lc_zp), pcs_open_proof = msgs
 
