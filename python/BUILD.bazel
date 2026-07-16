@@ -49,13 +49,10 @@ py_library(
 _HEAVY = [
     "commit",
     "zorch_ligerito_driver",
-    "keccak",
     "keccak_ligerito",
     "keccak_chain",
     "keccak3_ligerito",
-    "sha2",
     "sha2_ligerito",
-    "blake3",
     "blake3_ligerito",
 ]
 
