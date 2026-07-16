@@ -65,8 +65,9 @@ def _check(path, name):
     rounds, z_partial = lp.rounds, lp.z_partial
     assert len(rounds) == len(g["rounds"]), (len(rounds), len(g["rounds"]))
     for i, ((e1, einf), (ge1, geinf)) in enumerate(zip(rounds, g["rounds"])):
-        assert np.array_equal(e1, ge1) and np.array_equal(einf, geinf), f"round {i} mismatch ({name})"
-    assert np.array_equal(z_partial, g["z_partial"]), f"z_partial mismatch ({name})"
+        assert np.array_equal(ghash.to_lanes(e1).reshape(2), ge1) and \
+            np.array_equal(ghash.to_lanes(einf).reshape(2), geinf), f"round {i} mismatch ({name})"
+    assert np.array_equal(ghash.to_lanes(z_partial), g["z_partial"]), f"z_partial mismatch ({name})"
     return g["m"], g["k_log"], g["k_skip"]
 
 

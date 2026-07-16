@@ -112,7 +112,8 @@ def run():
     x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, inner_rest)
     lc_rounds, lc_zp, lc_claim, z_vec_pre = lincheck.prove(
         zlc, a0, b0, x_ab, m, k_log, k_skip, ch=ch, capture=True)
-    got_lcr = np.array([np.concatenate([a, b]) for a, b in lc_rounds]) if lc_rounds else np.zeros((0, 4), np.uint64)
+    got_lcr = np.array([np.concatenate([ghash.to_lanes(a).reshape(2), ghash.to_lanes(b).reshape(2)])
+                        for a, b in lc_rounds]) if lc_rounds else np.zeros((0, 4), np.uint64)
     want_lcr = np.array([np.concatenate([a, b]) for a, b in g_lc["rounds"]]) if g_lc["rounds"] else np.zeros((0, 4), np.uint64)
     _eq("lc rounds", got_lcr, want_lcr, results)
     _eq("lc z_partial", lc_zp, g_lc["zp"], results)
