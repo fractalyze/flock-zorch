@@ -1,13 +1,11 @@
-"""Unit test for the octopus↔per-query-path pair in `merkle.py`:
-`multi_proof_to_paths` (octopus→paths, the expander that lets the BaseFold
-verifier feed flock's octopus multi-proof into zorch's `pcs.fold.verify_openings`)
-and its inverse `paths_to_multi_proof` (paths→octopus, the prover-side assembler
-that rebuilds flock's octopus from a zorch `Opening`'s per-query paths).
+"""Unit test for `merkle.paths_to_multi_proof` — the prover-side assembler that
+rebuilds flock's deduped octopus multi-proof from a zorch `Opening`'s per-query
+authentication paths (what `pcs/ligerito.py` serializes into `merkle_proof`).
 
 Pure host (hashlib reference tree + flock's own `merkle_multi_proof`), no GPU:
-these are proof-format decoding, not field math. Verifies each reconstructed
-path equals the tree's actual siblings AND rebuilds the root, then round-trips
-paths→octopus back to the original multi-proof byte-for-byte.
+this is proof-format encoding, not field math. Builds each query's ground-truth
+sibling path straight from the tree, checks it rebuilds the root, then asserts
+paths→octopus reproduces flock's reference `merkle_multi_proof` byte-for-byte.
 """
 from __future__ import annotations
 
@@ -56,17 +54,14 @@ def _check(num_leaves: int, leaf_bytes_len: int, positions: list[int], name: str
     depth = num_leaves.bit_length() - 1
 
     proof = merkle.merkle_multi_proof(tree, num_leaves, positions)
-    leaf_bytes = np.stack([leaves[p] for p in positions])  # [Q, L]
-    paths = merkle.multi_proof_to_paths(proof, num_leaves, positions, leaf_bytes)
+    # Ground-truth per-query paths straight from the tree: path[k] = sibling of (p>>k).
+    paths = np.stack([
+        np.stack([tree[starts[k] + ((p >> k) ^ 1)] for k in range(depth)])
+        for p in positions
+    ]) if depth else np.zeros((len(positions), 0, 32), np.uint8)
 
     ok = paths.shape == (len(positions), depth, 32)
-    # Each query's path[k] must equal the tree's sibling of (p>>k).
     for qi, p in enumerate(positions):
-        for k in range(depth):
-            node = p >> k
-            expected = tree[starts[k] + (node ^ 1)]
-            if not np.array_equal(paths[qi, k], expected):
-                ok = False
         # Rebuild the root from leaf hash + path (parity-ordered compress).
         node_hash = hashlib.sha256(leaves[p].tobytes()).digest()
         idx = p
@@ -82,12 +77,12 @@ def _check(num_leaves: int, leaf_bytes_len: int, positions: list[int], name: str
         if not np.array_equal(np.frombuffer(node_hash, np.uint8), root):
             ok = False
 
-    # Inverse: paths→octopus must reproduce the original multi-proof byte-for-byte.
+    # paths→octopus must reproduce flock's reference multi-proof byte-for-byte.
     octopus = merkle.paths_to_multi_proof(paths, num_leaves, positions)
     if octopus.shape != proof.shape or not np.array_equal(octopus, proof):
         ok = False
 
-    print(f"octopus↔paths round-trip ({name}, n={num_leaves} q={len(positions)}): "
+    print(f"paths→octopus vs flock merkle_multi_proof ({name}, n={num_leaves} q={len(positions)}): "
           f"{'PASS' if ok else 'FAIL'}")
     return ok
 
