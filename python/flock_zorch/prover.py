@@ -18,21 +18,18 @@ import frx.numpy as jnp
 from frx import Array
 
 from flock_zorch import ghash, zerocheck, lincheck
-from flock_zorch.pcs import ring_switch, basefold, fri, ligerito as zorch_ligerito
+from flock_zorch.pcs import ring_switch, ligerito as zorch_ligerito
 from flock_zorch.sumcheck import build_eq
 from flock_zorch.challenger import Challenger  # noqa: F401  (re-exported for callers)
-from flock_zorch.pcs import FlockPcsProver
 from zorch.round import ProveChain, Stage
 
 
 @dataclass(frozen=True)
 class BatchOpenProof:
     """Batched dual-claim PCS open (flock BatchOpeningProof): the per-claim
-    ring-switch reductions plus the combined low-degree open — `basefold` for the
-    BaseFold backend or `ligerito` for the Ligerito backend (exactly one set)."""
+    ring-switch reductions plus the combined Ligerito low-degree open."""
 
     ring_switches: Any
-    basefold: Any = None
     ligerito: Any = None
 
 
@@ -92,24 +89,6 @@ def _combine_claims(rs_eq_inds, gammas, sumcheck_claims, packed_direct=(), gamma
         b_combined = b_combined + g * eq_pd
         target = target + g * pd.value                             # pd.value native ghash
     return b_combined, target  # native ghash: [2^L], scalar
-
-
-def open_batch(z_packed, codeword, init_tree, x_outers, k_code, log_inv_rate,
-               log_batch_size, ch) -> BatchOpenProof:
-    """Batched dual-claim PCS open — byte-identical to flock
-    `pcs::open_batch_padded_with_precomputed_s_hat_v` (BatchOpeningProof =
-    {ring_switches, basefold}). Each x_outers[i] = quirky_x_outer_full(claim.point)
-    = x_inner_rest ++ x_outer. N ring-switch reductions are γ-combined into ONE
-    BaseFold: b_combined = Σ_i γ_i·rs_eq_ind_i, run on a=z_packed. (round0_prime
-    precompute is byte-equivalent to recomputing the round-0 message, so the
-    existing basefold.prove suffices; target_combined doesn't affect proof bytes.)"""
-    ch.observe_label(b"flock-pcs-open-batch-v0")
-    s_hat_vs, rs_eq_inds, sumcheck_claims, gammas = ring_switch.prove_batched(z_packed, x_outers, ch)
-    b_combined, _target = _combine_claims(rs_eq_inds, gammas, sumcheck_claims)  # BaseFold ignores target
-    n_queries = fri.default_fri_queries(log_inv_rate)
-    bf = basefold.prove(z_packed, b_combined, codeword, init_tree, k_code,
-                        log_inv_rate, log_batch_size, n_queries, ch)
-    return BatchOpenProof(ring_switches=s_hat_vs, basefold=bf)
 
 
 def open_batch_ligerito(config, z_packed, pdata, x_outers, ch) -> BatchOpenProof:

@@ -22,7 +22,6 @@ py_library(
         "@zorch//zorch/hash:sha256",
         "@zorch//zorch/pcs:fold",
         "@zorch//zorch/pcs:ring_switch",
-        "@zorch//zorch/pcs/basefold",
         "@zorch//zorch/pcs/ligerito",
         requirement("frx"),
         requirement("numpy"),
