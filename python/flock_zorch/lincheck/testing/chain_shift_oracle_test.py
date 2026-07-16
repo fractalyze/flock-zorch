@@ -52,7 +52,8 @@ def run():
     # ---- Gate A: shift sumcheck on a fresh shared challenger.
     ch = Challenger(b"flock-chain-shift-v0")
     rounds, g_at, claims = chain.prove_chain_shift(ghash.to_ghash(ga["in_vals"]), ghash.to_ghash(ga["out_vals"]), ch)
-    got_r = np.array([np.concatenate([e1, ei]) for e1, ei in rounds]) if rounds else np.zeros((0, 4), np.uint64)
+    got_r = np.array([np.concatenate([ghash.to_lanes(e1).reshape(2), ghash.to_lanes(ei).reshape(2)])
+                      for e1, ei in rounds]) if rounds else np.zeros((0, 4), np.uint64)
     want_r = np.array([np.concatenate([e1, ei]) for e1, ei in ga["rounds"]]) if ga["rounds"] else np.zeros((0, 4), np.uint64)
     results.append(("shift rounds", got_r.shape == want_r.shape and np.array_equal(got_r, want_r)))
     results.append(("shift g_at_point", np.array_equal(g_at, ga["g_at_point"])))

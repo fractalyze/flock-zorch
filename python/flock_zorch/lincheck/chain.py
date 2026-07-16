@@ -66,8 +66,7 @@ def prove_chain_shift(in_vals, out_vals, ch):
     # Product sumcheck Σ_{y,s₀} W·g over n+1 vars (round msg + fold == lincheck's).
     stacked = jnp.stack([wt, g])
     stacked, ch._t, msgs = prove_inf_product(stacked, ch._t, n + 1)
-    rounds = [(ghash.from_ghash_host(e1), ghash.from_ghash_host(einf))
-              for e1, einf, _ in msgs]
+    rounds = [(e1, einf) for e1, einf, _ in msgs]
     r_pts = [ghash.from_ghash_host(r).reshape(2) for _, _, r in msgs]
 
     # After n+1 folds g[0] = g(τ',s₀*). Build the point: full[d-1-k]=r_pts[k]
