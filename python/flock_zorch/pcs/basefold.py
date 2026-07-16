@@ -306,7 +306,7 @@ def prove(
     n_pos = 1 << k_code
 
     a = ghash.to_ghash(jnp.asarray(z_packed))  # [2^log_msg]
-    b = ghash.to_ghash(jnp.asarray(b_combined))  # [2^log_msg]
+    b = b_combined  # native ghash [2^log_msg]
     cw_g = ghash.to_ghash(jnp.asarray(codeword))  # [n_pos * num_ntts]
 
     code = AdditiveReedSolomon(1 << log_dim, 1 << log_inv_rate, jnp.binary_field_ghash)

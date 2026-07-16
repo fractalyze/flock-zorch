@@ -58,7 +58,7 @@ def _check(name):
     init_tree = merkle.merkle_tree(codeword.reshape(n_leaves, num_ntts * 2).view(np.uint8))
 
     ch = Challenger(b"flock-basefold-test")
-    p = basefold.prove(z_packed, b, codeword, init_tree, k_code, lir, lbs, n_queries, ch)
+    p = basefold.prove(z_packed, ghash.to_ghash(b), codeword, init_tree, k_code, lir, lbs, n_queries, ch)
 
     def eq(x, y): return np.array_equal(np.asarray(x), np.asarray(y))
     checks = {

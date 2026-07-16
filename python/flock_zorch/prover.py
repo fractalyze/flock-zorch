@@ -106,7 +106,6 @@ def open_batch(z_packed, codeword, init_tree, x_outers, k_code, log_inv_rate,
     ch.observe_label(b"flock-pcs-open-batch-v0")
     s_hat_vs, rs_eq_inds, sumcheck_claims, gammas = ring_switch.prove_batched(z_packed, x_outers, ch)
     b_combined, _target = _combine_claims(rs_eq_inds, gammas, sumcheck_claims)  # BaseFold ignores target
-    b_combined = ghash.from_ghash_host(b_combined)  # BaseFold b is uint64 lanes
     n_queries = fri.default_fri_queries(log_inv_rate)
     bf = basefold.prove(z_packed, b_combined, codeword, init_tree, k_code,
                         log_inv_rate, log_batch_size, n_queries, ch)

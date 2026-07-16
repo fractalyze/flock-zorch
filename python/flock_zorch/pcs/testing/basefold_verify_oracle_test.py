@@ -124,7 +124,7 @@ def _build(m, lir, lbs, seed):
     root, codeword, tree = pcs_commit.commit(z, m, lir, lbs)
     target = _target(z, b)
     ch = Challenger(DOMAIN)
-    proof = basefold.prove(z, b, codeword, tree, k_code, lir, lbs, n_q, ch)
+    proof = basefold.prove(z, ghash.to_ghash(b), codeword, tree, k_code, lir, lbs, n_q, ch)
     return proof, target, root, k_code
 
 

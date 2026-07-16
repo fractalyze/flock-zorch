@@ -42,12 +42,12 @@ def _reduce_one(packed, x_outer, ch: Challenger):
 
 
 def prove(packed_witness, x_outer, ch: Challenger):
-    """Returns (s_hat_v [128,2], rs_eq_ind [2^L,2], sumcheck_claim [ghash]).
+    """Returns (s_hat_v [128,2], rs_eq_ind [2^L] ghash, sumcheck_claim [ghash]).
     Byte-identical to flock `ring_switch::prove`."""
     packed = ghash.to_ghash(packed_witness)
     s_hat_v, suffix_tensor, eq_r_dprime, claim = _reduce_one(packed, x_outer, ch)
     rs_eq_ind = zrs.rs_eq_ind(suffix_tensor, eq_r_dprime)
-    return s_hat_v, ghash.from_ghash_host(rs_eq_ind), claim
+    return s_hat_v, rs_eq_ind, claim                          # rs_eq_ind native ghash (BaseFold b)
 
 
 def prove_batched(packed_witness, x_outers, ch: Challenger):
