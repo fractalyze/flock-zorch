@@ -28,11 +28,14 @@ The rules every change must respect:
 Compute on the dtype (`*`→clmul, `+`→XOR, `jnp.sum`→XOR-sum). The uint64[lo,hi]
 lanes are the SAME 16 LE bytes, so `to_ghash`/`from_ghash` are pure bitcasts and
 `ghash.tobytes()` == the wire; the proof can hold ghash and serialize directly.
-- **int→ghash convert is UNIMPLEMENTED.** A ghash zero must be a bitcast of zero
-  bytes (`bitcast_convert_type(jnp.zeros(2,uint64), binary_field_ghash)`), NOT
-  `jnp.zeros((), binary_field_ghash)`.
-- **`jnp.where` on ghash needs a concrete zeros-ARRAY default**, not a scalar —
-  a scalar default emits an S64→ghash convert at compile. Mask a 0/1 select as
-  `jnp.where(mask_bool, x_g, zeros_g_array)`, never `mask_uint64 * x_g`.
+- **Ghash zeros are `jnp.zeros(n, binary_field_ghash)`** (scalar `()` and arrays
+  both). The ONE exception is a `jnp.sum`/reduce over a zeros array XLA can
+  *constant-fold*: the reduce identity then lowers via an unsupported S64→ghash
+  convert (`UNIMPLEMENTED: Converting from S64 to BINARY_FIELD_GHASH`,
+  fractalyze/jax#127). Avoid it by not feeding a reduce a fold-to-zero input — e.g.
+  keccak.py skips its identically-zero r=0 RC term. Only if you truly can't, fall
+  back to `bitcast_convert_type(jnp.zeros(uint64), binary_field_ghash)`.
+- **0/1 select is `jnp.where(mask_bool, x_g, jnp.zeros(_, binary_field_ghash))`**,
+  never `mask_uint64 * x_g` (that clmuls the mask as a field element, not a select).
 - **FS framing: scalar draw ≠ slice(1)** on the wire. `sample_f128()` (bare) is a
   scalar; a vector draw is `sample_f128(n)` (slice) even when n==1.
