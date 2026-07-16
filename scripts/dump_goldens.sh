@@ -19,7 +19,7 @@ source "$HOME/.cargo/env" 2>/dev/null || true
 cargo build --release --examples >/dev/null   # fetches flock (git rev dep) + builds the dumpers
 
 CORE=(ntt sha256 merkle merkle_multi commit sumcheck zerocheck challenger
-      gf8_urm ring_switch ligerito lincheck e2e_ligerito chain_shift)
+      gf8_urm fri_fold ring_switch ligerito lincheck e2e_ligerito chain_shift)
 HEAVY=(keccak_ligerito keccak_chain keccak3_ligerito sha2_ligerito blake3_ligerito)
 
 mkdir -p artifacts
