@@ -98,14 +98,14 @@ def run():
     circ = Keccak3LincheckCircuit()
     x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, ir)
     _lr, lc_zp, lc_claim, _zv = lincheck.prove(g["zlc"], None, None, x_ab, m, k_log, k_skip, ch=ch, capture=True, circuit=circ)
-    results.append(("lincheck z_partial", np.array_equal(lc_zp, g["lc"]["zp"])))
+    results.append(("lincheck z_partial", np.array_equal(ghash.to_lanes(lc_zp), g["lc"]["zp"])))
 
     ab_full = np.concatenate([lc_claim.r_inner_rest, x_ab.x_outer], axis=0)
     c_full = np.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
     out = prover.open_batch_ligerito(cfg, g["z"], pdata, [ab_full, c_full], ch)
 
     for i in range(len(g["rs"])):
-        results.append((f"open ring_switch[{i}]", np.array_equal(out.ring_switches[i], g["rs"][i])))
+        results.append((f"open ring_switch[{i}]", np.array_equal(ghash.to_lanes(out.ring_switches[i]), g["rs"][i])))
     p, gl = out.ligerito, g["lig"]
 
     def pairs(t): return np.array([np.concatenate([a, b]) for a, b in t]) if t else np.zeros((0, 4), np.uint64)
