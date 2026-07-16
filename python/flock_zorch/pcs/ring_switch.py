@@ -47,7 +47,7 @@ def prove(packed_witness, x_outer, ch: Challenger):
     packed = ghash.to_ghash(packed_witness)
     s_hat_v, suffix_tensor, eq_r_dprime, claim = _reduce_one(packed, x_outer, ch)
     rs_eq_ind = zrs.rs_eq_ind(suffix_tensor, eq_r_dprime)
-    return s_hat_v, rs_eq_ind, claim                          # rs_eq_ind native ghash (BaseFold b)
+    return s_hat_v, rs_eq_ind, claim                          # rs_eq_ind native ghash (the open's b)
 
 
 def prove_batched(packed_witness, x_outers, ch: Challenger):

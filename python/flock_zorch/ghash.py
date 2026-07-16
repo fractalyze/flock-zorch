@@ -12,8 +12,7 @@ readers and the challenger's F128 byte serde).
 `to_ghash`/`from_ghash` are the device uint64-lane <-> `binary_field_ghash` bitcast
 (a pure reinterpret — flock's {lo, hi} limbs are the dtype's storage bytes);
 `_lanes_to_ghash`/`_ghash_to_lanes` are the same reinterpret as a host numpy view.
-`_to_int`/`_to_lohi` are the host int <-> uint64-lane serde (bit i = coefficient
-of x^i). Requires `jax_enable_x64`.
+Requires `jax_enable_x64`.
 """
 from __future__ import annotations
 
@@ -77,18 +76,3 @@ def _ghash_to_lanes(g) -> np.ndarray:
     return g.reshape(-1).view(np.uint64).reshape(*g.shape, 2)
 
 
-# ---- host int <-> uint64-lane serialization (bit i = coefficient of x^i). Sole
-# consumer is the basefold verify oracle's independent big-int GF(2^128) multiply,
-# which must NOT share the dtype impl it gates. ----
-_MASK64 = (1 << 64) - 1
-
-
-def _to_int(arr) -> int:
-    """F128 uint64 [.., 2] (lo, hi) -> Python int (bit i = coefficient of x^i)."""
-    a = np.asarray(arr, dtype=np.uint64)
-    return int(a[0]) | (int(a[1]) << 64)
-
-
-def _to_lohi(x: int) -> np.ndarray:
-    """Python-int F128 -> uint64 [2] (lo, hi)."""
-    return np.array([x & _MASK64, (x >> 64) & _MASK64], dtype=np.uint64)

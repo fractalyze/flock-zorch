@@ -17,7 +17,7 @@ transforms never change the output. The same program can shard across multiple
 devices (GSPMD) without hand-written communication.
 
 flock is an R1CS-over-GF(2¹²⁸) prover: two sumcheck PIOPs (zerocheck + lincheck)
-over a BaseFold / Ligerito polynomial commitment, with a SHA-256 Fiat-Shamir
+over a Ligerito polynomial commitment, with a SHA-256 Fiat-Shamir
 transcript, targeting hash-circuit statements (Keccak-f[1600], Keccak3, SHA-256,
 BLAKE3). flock-zorch assembles that specific prover from zorch's scheme-agnostic
 blocks (`Round`, Fiat-Shamir, `Polynomial`, `PCS`, fold, zero-check) and adds
@@ -35,7 +35,7 @@ build:
 | dep | how |
 |---|---|
 | **flock** — the reference prover + byte-compare oracle | a cargo **git rev dep** (`flock-core` / `flock-prover` in [`Cargo.toml`](Cargo.toml)); `cargo build` fetches it at the pinned rev, and `examples/dump_*.rs` drive it to dump the golden fixtures |
-| **zorch** — the scheme-agnostic spine (`zorch.hash.sha256`, the device Fiat-Shamir transcript, the `Round`/`Bridge`/`Stage` chain roles, `pcs.basefold`) | a bazel **`git_override`** in [`MODULE.bazel`](MODULE.bazel); bazel fetches it |
+| **zorch** — the scheme-agnostic spine (`zorch.hash.sha256`, the device Fiat-Shamir transcript, the `Round`/`Bridge`/`Stage` chain roles, `pcs.ligerito`) | a bazel **`git_override`** in [`MODULE.bazel`](MODULE.bazel); bazel fetches it |
 
 **Prerequisites** — an NVIDIA GPU (CUDA; RTX 5090 / sm_120 reference), a Rust
 toolchain (`flock-core` is edition 2024), Python 3.11, and SSH access to
@@ -108,8 +108,8 @@ export PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"
 export PATH="$HOME/.local/cuda13/bin:$PATH"  # CUDA 13.3 ptxas -> compiler emits clmad
 VENV=.venv/bin/python
 scripts/dump_goldens.sh all                  # + the real hash circuits
-$VENV python/flock_zorch/testing/e2e_oracle_test.py          # full prove on GPU
-$VENV python/flock_zorch/testing/keccak_oracle_test.py       # Keccak full prove (BaseFold)
+$VENV python/flock_zorch/testing/e2e_ligerito_oracle_test.py    # fused prove (identity R1CS)
+$VENV python/flock_zorch/testing/keccak3_ligerito_oracle_test.py # Keccak full prove (Ligerito)
 $VENV python/flock_zorch/testing/blake3_ligerito_oracle_test.py
 ```
 
@@ -121,14 +121,14 @@ rebuilds it from the pinned flock.
 ### One benchmark point (SHA-256, m=26)
 
 ```bash
-VENV=.venv/bin/python                                                       # the venv from Setup
-cargo run --release --example dump_sha2 -- 2048 artifacts/sha2_golden.bin   # real R1CS, m=26
-cargo build --release --example bench_sha2_cpu                              # CPU anchor
+VENV=.venv/bin/python                                                                    # the venv from Setup
+cargo run --release --example dump_sha2_ligerito -- 2048 artifacts/sha2_ligerito_golden.bin  # real R1CS, m=26
+cargo build --release --example bench_sha2_ligerito_cpu                                   # CPU anchor
 export JAX_PLATFORMS=cuda XLA_PYTHON_CLIENT_PREALLOCATE=false
 export PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"
 export PATH="$HOME/.local/cuda13/bin:$PATH"
-CPU=$(target/release/examples/bench_sha2_cpu 2048 | grep -oE '[0-9.]+ ms' | head -1)
-$VENV python/flock_zorch/testing/e2e_sha2_bench.py "${CPU%% ms}"            # GPU vs CPU
+CPU=$(target/release/examples/bench_sha2_ligerito_cpu 2048 | grep -oE '[0-9.]+ ms' | head -1)
+$VENV python/flock_zorch/testing/e2e_sha2_ligerito_bench.py "${CPU%% ms}"                 # GPU vs CPU
 ```
 
 ## Benchmark
@@ -159,34 +159,14 @@ device program (#479) and query positions are sampled on-device (#104) — so th
 GPU is a slow-growing floor (47 → 186 ms) while the CPU is O(n): GPU wins from
 m=24 and reaches 6.3× by m=28.
 
-### SHA-256 (BaseFold) — crossover ≈ m=25
-
-| m   | n_comp | flock CPU (ms) | GPU (ms) | speedup  |
-| --- | ------ | -------------- | -------- | -------- |
-| 24  | 512    | 63.8           | 76.1     | 0.8×     |
-| 26  | 2048   | 222.7          | 111.7    | **2.0×** |
-| 28  | 8192   | 928.7          | 243.7    | **3.8×** |
-
-### BLAKE3 (BaseFold) — crossover ≈ m=25
-
-| m   | n_comp | flock CPU (ms) | GPU (ms) | speedup  |
-| --- | ------ | -------------- | -------- | -------- |
-| 26  | 4096   | 276.2          | 123.9    | **2.2×** |
-| 28  | 16384  | 1,070.5        | 237.6    | **4.5×** |
-
-The BaseFold open drives the same device-native `zorch.pcs.basefold` seam the
-Ligerito path uses, so its GPU floor stays low (76 → 244 ms) and it crosses over
-at m≈25 like Ligerito — GPU 2.0× by m=26, 3.8× by m=28.
-
 **Reading the numbers.** flock's prover is a sequential SHA-256 Fiat-Shamir
-chain; at small m the per-round data-parallel work (NTT / URM / FRI) is too small
-to amortize GPU launch overhead, so the CPU wins. The bulk work grows with m and
-the GPU overtakes — at m≈24 for Ligerito, m≈25 for BaseFold — and the advantage
-keeps growing above the crossover (Ligerito 6.3× and BaseFold 3.8–4.5× by m=28).
-Reproduce any point with the
-[SHA-256 recipe above](#one-benchmark-point-sha-256-m26) (swap `dump_sha2` /
-`bench_sha2_cpu` / `e2e_sha2_bench.py` for the `blake3` / `keccak3_ligerito`
-variants).
+chain; at small m the per-round data-parallel work (NTT / URM / recursive fold)
+is too small to amortize GPU launch overhead, so the CPU wins. The bulk work
+grows with m and the GPU overtakes at m≈24, and the advantage keeps growing
+above the crossover (6.3× by m=28). Reproduce any point with the
+[SHA-256 recipe above](#one-benchmark-point-sha-256-m26) (swap `dump_sha2_ligerito` /
+`bench_sha2_ligerito_cpu` / `e2e_sha2_ligerito_bench.py` for the `blake3_ligerito`
+/ `keccak3_ligerito` variants).
 
 ## Acknowledgments
 

@@ -73,7 +73,7 @@ def bind_statement(ch, statement_digest, root) -> None:
 
 def _combine_claims(rs_eq_inds, gammas, sumcheck_claims, packed_direct=(), gammas_pd=()):
     """γ-combine the batched ring-switch claims (+ optional packed-direct claims) into
-    the single (b_combined, target) the BaseFold/Ligerito open runs against. The
+    the single (b_combined, target) the Ligerito open runs against. The
     ring-switch γ's are already baked into each rs_eq_ind by prove_batched, so b is
     their XOR-sum; target = Σ γ_i·sumcheck_claim_i. Packed-direct claims add
     γ_pd_j·eq(point_j) to b and γ_pd_j·value_j to target. NB: all observe/sample stay
