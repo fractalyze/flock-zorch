@@ -44,9 +44,8 @@ py_library(
     ],
 )
 
-# Non-bazel gates (heavy hash circuits + commit GPU); everything else defaults in.
+# Non-bazel gates (heavy hash circuits + GPU); everything else defaults in.
 _HEAVY = [
-    "commit",
     "zorch_ligerito_driver",
     "keccak_ligerito",
     "keccak_chain",
