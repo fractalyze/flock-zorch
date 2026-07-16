@@ -35,9 +35,9 @@ def _reduce_one(packed, x_outer, ch: Challenger):
     suffix = jnp.asarray(np.asarray(x_outer)[1:])             # x_outer[1:], length L
     suffix_tensor = sumcheck.build_eq_fused_g(suffix)
     s_hat_v = zrs.bit_slice_evals(packed, suffix_tensor)     # (128,) ghash
-    ch.observe_f128_slice_g(s_hat_v)                          # observe device ghash directly
+    ch.observe_f128(s_hat_v)                          # observe device ghash directly
     s_hat_v_lanes = ghash.from_ghash_host(s_hat_v)           # [128,2] — materialized for the proof only
-    r_dprime = jnp.asarray(ch.sample_f128_vec(LOG_PACKING))  # [7,2]
+    r_dprime = ghash.from_ghash(ch.sample_f128(LOG_PACKING))  # [7,2]
     eq_r_dprime = sumcheck.build_eq_fused_g(r_dprime)  # [128] ghash, kept for the gamma combine
     claim = zrs.inner_product(zrs.tensor_algebra_transpose(s_hat_v), eq_r_dprime)
     return s_hat_v_lanes, suffix_tensor, eq_r_dprime, ghash.from_ghash_host(claim)
@@ -63,7 +63,7 @@ def prove_batched(packed_witness, x_outers, ch: Challenger):
     (s_hat_vs, rs_eq_inds[gamma-baked], sumcheck_claims, gammas)."""
     packed = ghash.to_ghash(packed_witness)
     works = [_reduce_one(packed, x_outer, ch) for x_outer in x_outers]
-    gammas = [ch.sample_f128_g() for _ in range(len(x_outers))]  # native ghash
+    gammas = [ch.sample_f128() for _ in range(len(x_outers))]
 
     s_hat_vs, rs_eq_inds, sumcheck_claims = [], [], []
     for (s_hat_v_lanes, suffix_tensor, eq_r_dprime, claim), g in zip(works, gammas):

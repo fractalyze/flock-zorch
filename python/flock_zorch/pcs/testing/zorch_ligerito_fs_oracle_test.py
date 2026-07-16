@@ -100,7 +100,7 @@ def test_sample_framing():
 
     ch = Challenger(DOMAIN)
     ref_one = ch.sample_f128()
-    ref_vec = ch.sample_f128_vec(5)
+    ref_vec = ch.sample_f128(5)
     check(
         "sample values",
         np.array_equal(_lohi(one)[0], ref_one)

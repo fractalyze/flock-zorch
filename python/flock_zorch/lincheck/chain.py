@@ -52,8 +52,8 @@ def prove_chain_shift(in_vals, out_vals, ch):
     n = int(n_total).bit_length() - 1
 
     # τ ∈ Fⁿ then α — both before the sumcheck (mirrored by the verifier).
-    tau = np.asarray(ch.sample_f128_vec(n)).reshape(n, 2)
-    alpha = np.asarray(ch.sample_f128()).reshape(2)
+    tau = ghash.from_ghash_host(ch.sample_f128(n)).reshape(n, 2)
+    alpha = ghash.from_ghash_host(ch.sample_f128()).reshape(2)
     eqtau = np.asarray(build_eq(jnp.asarray(tau))).reshape(n_total, 2)  # eqtau[y]=eq(τ,y)
 
     # Weight table over (y, s₀), s₀ the HIGH bit (index y + s₀·N):

@@ -208,12 +208,12 @@ class _CombRound(Round):
         k_skip = self._k_skip
         x_ab, circuit = carry.x_ab, carry.circuit
         transcript.observe_label(LABEL)
-        alpha = transcript.sample_f128_g()
+        alpha = transcript.sample_f128()
         eq_inner = build_quirky_eq_table(x_ab.z_skip, x_ab.x_inner_rest, k_skip)
         if circuit is not None:
             comb = circuit.fold_alpha_batched(alpha, eq_inner)
             if circuit.const_pin is not None:
-                beta = transcript.sample_f128_g()              # sampled AFTER alpha (flock order)
+                beta = transcript.sample_f128()               # sampled AFTER alpha (flock order)
                 col = circuit.const_pin
                 comb = comb.at[col].set(comb[col] + beta)
         else:
@@ -264,8 +264,8 @@ class _ClaimRound(Round):
 
     def __call__(self, carry, transcript):
         k_skip = self._k_skip
-        transcript.observe_f128_slice_g(carry.z_partial_g)    # 6. observe z_partial (device ghash)
-        r_inner_skip = transcript.sample_f128()               # 7. fresh z_skip AFTER
+        transcript.observe_f128(carry.z_partial_g)      # 6. observe z_partial
+        r_inner_skip = ghash.from_ghash_host(transcript.sample_f128())  # 7. fresh z_skip AFTER
         lam = _lagrange_weights(k_skip, r_inner_skip, 0)       # 8. φ8 S-domain weights
         w = ghash.from_ghash_host(jnp.sum(                     # inner_product
             lam * carry.z_partial_g, axis=0))

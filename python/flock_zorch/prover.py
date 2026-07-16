@@ -139,8 +139,8 @@ def open_batch_mixed_ligerito(config, z_packed, pdata, x_outers, packed_direct,
     # Packed-direct: observe each claim's value, THEN sample the γ_pd (flock order).
     for pd in packed_direct:
         ch.observe_label(b"flock-pcs-packed-direct-v0")
-        ch.observe_f128(pd.value)
-    gammas_pd = [ch.sample_f128_g() for _ in packed_direct]  # native ghash
+        ch.observe_f128(ghash.to_ghash(jnp.asarray(pd.value)))
+    gammas_pd = [ch.sample_f128() for _ in packed_direct]
 
     b_combined, target = _combine_claims(rs_eq_inds, gammas, sumcheck_claims,
                                          packed_direct=packed_direct, gammas_pd=gammas_pd)

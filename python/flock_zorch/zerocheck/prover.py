@@ -132,8 +132,8 @@ class _SetupRound(Round):
     def __call__(self, carry, transcript):
         m, k_skip = self._m, self._k_skip
         transcript.observe_label(LABEL)
-        r_skip = transcript.sample_f128_vec(k_skip)               # [6, 2]
-        r_outer = transcript.sample_f128_vec(m - k_skip - N_INNER)  # [m-13, 2]
+        r_skip = ghash.from_ghash_host(transcript.sample_f128(k_skip))       # [6, 2]
+        r_outer = ghash.from_ghash_host(transcript.sample_f128(m - k_skip - N_INNER))  # [m-13, 2]
         # r = r_skip ++ small ++ medium ++ r_outer
         r = np.zeros((m, 2), dtype=np.uint64)
         r[:k_skip] = r_skip
@@ -160,9 +160,9 @@ class _UrmRound(Round):
         b_rows = _urm.witness_to_rows(carry.b_bits, m, k_skip)
         c_rows = _urm.witness_to_rows(carry.c_bits, m, k_skip)
         round1_ab, round1_c = _urm.round1_rows(a_rows, b_rows, c_rows, m, k_skip, carry.r)
-        transcript.observe_f128_slice(round1_ab)
-        transcript.observe_f128_slice(round1_c)
-        z = transcript.sample_f128()
+        transcript.observe_f128(ghash.to_ghash(jnp.asarray(round1_ab)))
+        transcript.observe_f128(ghash.to_ghash(jnp.asarray(round1_c)))
+        z = ghash.from_ghash_host(transcript.sample_f128())
         # c-claim: interpolate round1_c at z.
         final_c_eval = _interpolate_at_z_on_lambda(round1_c, k_skip, z)
         carry = replace(carry, a_rows=a_rows, b_rows=b_rows, round1_ab=round1_ab,

@@ -23,14 +23,13 @@ import frx.numpy as jnp
 
 from zorch.sha256_field_transcript import Sha256FieldTranscript
 
-from flock_zorch import ghash, fs
+from flock_zorch import fs
 
 
 class Challenger:
     """Mutable wrapper over the functional device transcript, mirroring flock's
-    `&mut self` `FsChallenger` API. F128 values are `uint64[..., 2]` arrays at
-    this boundary (the `field.py` representation); the transcript holds native
-    `binary_field_ghash` elements."""
+    `&mut self` `FsChallenger` API. Observes and samples carry native
+    `binary_field_ghash` elements; host-int consumers convert at their own edge."""
 
     def __init__(self, domain: bytes):
         self._t = Sha256FieldTranscript.new(domain, jnp.binary_field_ghash)
@@ -42,36 +41,23 @@ class Challenger:
         self._t = fs.observe_bytes(
             self._t, np.frombuffer(bytes(data), np.uint8))
 
-    def observe_f128(self, v) -> None:
-        self._t = fs.observe_scalar(self._t, ghash.to_ghash(jnp.asarray(v)))
+    def observe_f128(self, g) -> None:
+        """Observe F128 (native `binary_field_ghash`) — a scalar or a slice,
+        framed by shape (flock scalar-frames a single element, slice-frames many)."""
+        if jnp.ndim(g) == 0:
+            self._t = fs.observe_scalar(self._t, g)
+        else:
+            self._t = fs.observe_slice(self._t, g)
 
-    def observe_f128_g(self, g) -> None:
-        """Observe a native `binary_field_ghash` scalar — no host lift (for values
-        already device-resident as ghash, e.g. a Merkle-free reduction output)."""
-        self._t = fs.observe_scalar(self._t, g)
-
-    def observe_f128_slice(self, vs) -> None:
-        vs = jnp.asarray(np.asarray(vs, np.uint64).reshape(-1, 2))
-        self._t = fs.observe_slice(self._t, ghash.to_ghash(vs))
-
-    def observe_f128_slice_g(self, gs) -> None:
-        """Observe a native `binary_field_ghash` slice — no host lift. The caller
-        keeps any lanes it needs for the proof; the transcript never leaves device."""
-        self._t = fs.observe_slice(self._t, gs)
-
-    def sample_f128(self) -> np.ndarray:
-        self._t, g = fs.sample_scalar(self._t)
-        return ghash.from_ghash_host(g)
-
-    def sample_f128_g(self):
-        """Sample one F128 as a native `binary_field_ghash` scalar — no host
-        round-trip, for device consumers that would otherwise re-lift the lanes."""
-        self._t, g = fs.sample_scalar(self._t)
-        return g
-
-    def sample_f128_vec(self, n: int) -> np.ndarray:
+    def sample_f128(self, n: int = 1):
+        """Sample F128 as native `binary_field_ghash`: a scalar for `n == 1`, a
+        length-`n` slice otherwise. Host-int consumers (Lagrange nodes, query
+        positions) do `ghash.from_ghash_host` themselves."""
+        if n == 1:
+            self._t, g = fs.sample_scalar(self._t)
+            return g
         self._t, g = fs.sample_slice(self._t, n)
-        return ghash.from_ghash_host(g)
+        return g
 
     def grind_pow(self, bits: int) -> int:
         self._t, witness = fs.grind(self._t, bits)

@@ -55,15 +55,15 @@ def _replay(make_challenger=Challenger) -> tuple[list[np.ndarray], int]:
     ch.observe_label(LABEL)
     ch.observe_bytes(bytes(range(32)))
     ch.observe_f128(_f128(0x0123456789ABCDEF, 0xFEDCBA9876543210))
-    ch.observe_f128_slice([_f128(1, 0), _f128(2, 0), _f128(0xDEADBEEF, 0xCAFEBABE)])
+    ch.observe_f128([_f128(1, 0), _f128(2, 0), _f128(0xDEADBEEF, 0xCAFEBABE)])
 
     s0 = ch.sample_f128()
     samples.append(s0)
     ch.observe_f128(s0)
 
-    sv = ch.sample_f128_vec(5)
+    sv = ch.sample_f128(5)
     samples.extend(sv)
-    ch.observe_f128_slice(sv)
+    ch.observe_f128(sv)
 
     nonce = ch.grind_pow(GRIND_BITS)
 
