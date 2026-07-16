@@ -97,6 +97,10 @@ def medium_challenges() -> np.ndarray:
         np.array([g * gp1 ** -1 for g, gp1 in zip(gamma, one_plus)], ghash._GHASH_HOST))
 
 
+_SMALL_G = ghash.to_ghash(jnp.asarray(small_challenges()))    # [3] ghash — fixed inner challenges
+_MEDIUM_G = ghash.to_ghash(jnp.asarray(medium_challenges()))  # [4] ghash
+
+
 @frx.jit
 def _mlv_round(a_g, b_g, eq_g, r0_g, t):
     """ONE multilinear round as one device program: the eq-weighted message pair
@@ -132,15 +136,10 @@ class _SetupRound(Round):
     def __call__(self, carry, transcript):
         m, k_skip = self._m, self._k_skip
         transcript.observe_label(LABEL)
-        r_skip = ghash.from_ghash_host(transcript.sample_f128(k_skip))       # [6, 2]
-        r_outer = ghash.from_ghash_host(transcript.sample_f128(m - k_skip - N_INNER))  # [m-13, 2]
-        # r = r_skip ++ small ++ medium ++ r_outer
-        r = np.zeros((m, 2), dtype=np.uint64)
-        r[:k_skip] = r_skip
-        r[k_skip:k_skip + 3] = small_challenges()
-        r[k_skip + 3:k_skip + N_INNER] = medium_challenges()
-        if m - k_skip - N_INNER > 0:
-            r[k_skip + N_INNER:] = r_outer
+        # r = r_skip ++ small ++ medium ++ r_outer, assembled on the dtype.
+        r_skip = transcript.sample_f128(k_skip)
+        r_outer = transcript.sample_f128(m - k_skip - N_INNER)
+        r = jnp.concatenate([r_skip, _SMALL_G, _MEDIUM_G, r_outer])
         return replace(carry, r=r), transcript, None
 
 
@@ -188,7 +187,7 @@ class _MultilinearRound(Round):
         weights = _lagrange_weights(k_skip, carry.z, 0)  # S-domain, ghash [ell]
         a_g = _fold_at_z_dev(carry.a_rows, weights)
         b_g = _fold_at_z_dev(carry.b_rows, weights)
-        r_g = ghash.to_ghash(jnp.asarray(carry.r))
+        r_g = carry.r
 
         t = transcript._t
         # All rounds' eq suffix tables in one program (round i reads
@@ -243,5 +242,5 @@ def prove_packed(a_bits, b_bits, c_bits, m: int, domain: bytes | None = None,
         final_c_eval=carry.final_c_eval,
         z=carry.z,
         mlv_challenges=carry.mlv_challenges,
-        r_rest=carry.r[k_skip:],
+        r_rest=ghash.from_ghash_host(carry.r[k_skip:]),   # lanes: the c-open point coords + byte-gate
     )

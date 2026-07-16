@@ -81,6 +81,15 @@ def build_eq_fused_g(r):
     return _BUILD_EQ_FUSED_G(jnp.asarray(r, U64))
 
 
+_BUILD_EQ_FUSED_FROM_G = frx.jit(build_eq_g)
+
+
+def build_eq_fused_from_g(rg):
+    """`build_eq_fused_g` for a challenge vector already on the dtype (no input
+    bitcast) — one fused kernel."""
+    return _BUILD_EQ_FUSED_FROM_G(rg)
+
+
 def fold_single(a, challenge):
     """Bind the low variable of one multilinear at `challenge` (flock
     `fold_in_place_single`): `out[x] = a[2x] + challenge·(a[2x+1] + a[2x])` — zorch's
