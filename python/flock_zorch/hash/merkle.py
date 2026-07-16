@@ -115,12 +115,12 @@ GHASH_TREE = _Sha256MerkleTree(_GhashSha256LeafHasher(), _Sha256Compressor())
 
 
 @frx.jit
-def _root_dev(leaves):
+def _root(leaves):
     return _TREE.commit(leaves)[0]
 
 
 @frx.jit
-def _tree_dev(leaves):
+def _tree(leaves):
     _, layers = _TREE.commit(leaves)
     return jnp.concatenate(layers, axis=0)  # [2*n_leaves - 1, 32], flock's layout
 
@@ -128,7 +128,7 @@ def _tree_dev(leaves):
 def merkle_root(leaves) -> np.ndarray:
     """32-byte Merkle root of `n_leaves` equal-sized leaves. uint8 [n_leaves, leaf_size]
     -> uint8 [32], byte-identical to flock. One jit (commit fold is a single scan)."""
-    return np.asarray(_root_dev(jnp.asarray(leaves, dtype=jnp.uint8)))
+    return np.asarray(_root(jnp.asarray(leaves, dtype=jnp.uint8)))
 
 
 def merkle_tree(leaves) -> np.ndarray:
@@ -137,7 +137,7 @@ def merkle_tree(leaves) -> np.ndarray:
 
     leaves: uint8 [n, leaf_size] (n a power of two). Returns uint8 [2n-1, 32].
     One jit (zorch digest_layers, concatenated)."""
-    return np.asarray(_tree_dev(jnp.asarray(leaves, dtype=jnp.uint8)))
+    return np.asarray(_tree(jnp.asarray(leaves, dtype=jnp.uint8)))
 
 
 def _octopus_levels(positions, num_leaves: int):

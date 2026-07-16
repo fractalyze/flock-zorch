@@ -100,11 +100,11 @@ def partial_fold_packed_z(z_packed_bytes: bytes, m: int, k_log: int, eq_outer):
     n_outer = 1 << (m - k_log)
     n_bytes = n_outer // 8
     zp = jnp.asarray(np.frombuffer(z_packed_bytes, np.uint8).reshape(n_bytes, k))
-    return _partial_fold_dev(zp, eq_outer, n_outer)         # device + jit (keeps the intermediate off HBM)
+    return _partial_fold(zp, eq_outer, n_outer)         # device + jit (keeps the intermediate off HBM)
 
 
 @functools.partial(frx.jit, static_argnums=(2,))
-def _partial_fold_dev(zp, eq_outer, n_outer):
+def _partial_fold(zp, eq_outer, n_outer):
     """z_vec[i_inner] = Σ_{i_outer} bit·eq_outer[i_outer], device+jit so the large
     [n_outer,k,2] intermediate stays fused on device and never lands in HBM."""
     bits = ((zp[:, None, :] >> jnp.arange(8, dtype=jnp.uint8)[None, :, None]) & 1)  # [nb,8,k]

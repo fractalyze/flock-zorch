@@ -28,7 +28,7 @@ from flock_zorch.zerocheck import _urm
 from flock_zorch.ghash import _lanes_to_ghash, _ghash_to_lanes
 from flock_zorch.challenger import Challenger
 from flock_zorch.zerocheck._fold import (
-    _lagrange_weights, _interpolate_at_z_on_lambda, _fold_at_z_dev,
+    _lagrange_weights, _interpolate_at_z_on_lambda, _fold_at_z,
 )
 from zorch.round import ProveChain, Round
 from zorch.sumcheck.domain import fold
@@ -185,8 +185,8 @@ class _MultilinearRound(Round):
         # device program with Fiat-Shamir inside — all on the dtype, so the lanes
         # only reappear where a proof message is serialized.
         weights = _lagrange_weights(k_skip, carry.z, 0)  # S-domain, ghash [ell]
-        a_g = _fold_at_z_dev(carry.a_rows, weights)
-        b_g = _fold_at_z_dev(carry.b_rows, weights)
+        a_g = _fold_at_z(carry.a_rows, weights)
+        b_g = _fold_at_z(carry.b_rows, weights)
         r_g = carry.r
 
         t = transcript._t

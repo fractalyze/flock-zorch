@@ -5,7 +5,8 @@ re-transfer): commit+bind → zerocheck → lincheck → batched PCS open (see
 `prove_fast`).
 
 a = A·z, b = B·z are kept device-resident across the phases (no per-phase witness
-re-transfer). Gated by `testing/e2e_oracle_test.py` against flock `prover::prove`.
+re-transfer). Gated by `testing/e2e_ligerito_oracle_test.py` against flock
+`prover::prove_fast_ligerito`.
 """
 from __future__ import annotations
 
@@ -46,7 +47,7 @@ class ProveFastResult:
 
 
 @frx.jit
-def _unpack_bits_dev(z_packed):
+def _unpack_bits(z_packed):
     """Packed F128 witness [2^(m-7),2] -> device bit witness [2^m] uint8 (LSB-first
     within each 128-bit element), on device so a=b=c=z stays device-resident. The
     frx analogue of flock's `pcs::pack::unpack_witness`."""
@@ -168,7 +169,7 @@ class _ZerocheckStage(Stage):
         self._m = m
 
     def __call__(self, carry, transcript):
-        bits = _unpack_bits_dev(jnp.asarray(carry.z_packed))   # device-resident
+        bits = _unpack_bits(jnp.asarray(carry.z_packed))   # device-resident
         zc = zerocheck.prove_packed(bits, bits, bits, self._m, ch=transcript)
         return replace(carry, zc=zc), transcript, zc
 

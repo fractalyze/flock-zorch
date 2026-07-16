@@ -106,7 +106,7 @@ def _packed_to_rows(packed, m: int, k_skip: int):
     The witness is 1/8 the size packed (one F128 lane vs one byte per bit), so
     taking the packed form and unpacking here turns a fat host->device transfer
     into a small one + a cheap device kernel — the same device-unpack pattern
-    `prover._unpack_bits_dev` uses for the identity path."""
+    `prover._unpack_bits` uses for the identity path."""
     bi = jnp.arange(64, dtype=jnp.uint64)
     lo = ((packed[:, 0:1] >> bi) & jnp.uint64(1)).astype(jnp.uint8)
     hi = ((packed[:, 1:2] >> bi) & jnp.uint64(1)).astype(jnp.uint8)
@@ -136,7 +136,7 @@ def witness_to_rows(bits, m: int, k_skip: int):
 def round1_rows(a, b, c, m: int, k_skip: int, r):
     """Round-1 URM from device witness rows (uint8 [2^(m-k_skip), 2^k_skip]). The
     compute half of `round1_naive`, so the witness can be transferred once and
-    reused by `zerocheck._fold_at_z_dev`. Returns (P^AB, P^C) as numpy."""
+    reused by `zerocheck._fold_at_z`. Returns (P^AB, P^C) as numpy."""
     eqx = sumcheck.build_eq_fused(r[k_skip:])[:, None]  # r is ghash [m]; [n_chunks, 1]
     p_ab, p_c = _round1_core(a, b, c, k_skip, eqx)  # fused extend+phi+accum
     return np.asarray(p_ab), np.asarray(p_c)

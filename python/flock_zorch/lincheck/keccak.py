@@ -152,7 +152,7 @@ def _gather_xor(vals, map_T):
     return jnp.bitwise_xor.reduce(vals[map_T], axis=-2)
 
 
-def _accumulate_subkeccak_dev(eq, col_state0, col_state24, rows_t):
+def _accumulate_subkeccak(eq, col_state0, col_state24, rows_t):
     """One sub-keccak's comb_a/comb_b contributions (flock keccak.rs
     `fold_alpha_batched` body / keccak3.rs `accumulate_subkeccak`), returned
     functionally (no in-place XOR): values at rows_t (bijective) + col_state0 (2
@@ -205,7 +205,7 @@ def _accumulate_subkeccak_dev(eq, col_state0, col_state24, rows_t):
 
 
 @functools.partial(frx.jit, static_argnums=(3,))
-def _fold_walker_dev(eq, alpha, sub_cols, z_const):
+def _fold_walker_kernel(eq, alpha, sub_cols, z_const):
     """Device fold shared by both keccak walkers. Run each disjoint sub-keccak,
     scatter-SET its bijective columns (rows_t, col_state0 — no atomics), XOR-merge
     the shared z_const column (incl. the row-0 const), and α-combine with one field
@@ -219,7 +219,7 @@ def _fold_walker_dev(eq, alpha, sub_cols, z_const):
     zc_a = jnp.zeros(2, jnp.uint64)
     zc_b = jnp.zeros(2, jnp.uint64)
     for col_state0, col_state24, rows_t in sub_cols:
-        ra, rb, ca, cb, za, zb = _accumulate_subkeccak_dev(eq, col_state0, col_state24, rows_t)
+        ra, rb, ca, cb, za, zb = _accumulate_subkeccak(eq, col_state0, col_state24, rows_t)
         rtf = rows_t.reshape(-1)
         comb_a = comb_a.at[rtf].set(ra.reshape(-1, 2)).at[col_state0].set(ca)
         comb_b = comb_b.at[rtf].set(rb.reshape(-1, 2)).at[col_state0].set(cb)
@@ -237,13 +237,13 @@ def _device_sub_cols(sub_cols):
     return [(jnp.asarray(c0), jnp.asarray(c24), jnp.asarray(rt)) for c0, c24, rt in sub_cols]
 
 
-def _fold_walker(eq_inner, alpha, sub_cols_dev, z_const):
+def _fold_walker(eq_inner, alpha, sub_cols, z_const):
     """Production entry: reshape eq on device and fold, staying device-resident (the
-    caller reuses the result on device, like `CscCircuit`). `sub_cols_dev` is the
+    caller reuses the result on device, like `CscCircuit`). `sub_cols` is the
     circuit's device index arrays (built once via `_device_sub_cols`). `eq_inner`
     is the ghash quirky-eq table; lanes-convert once for the lane-domain fold."""
     eq = ghash.from_ghash(jnp.asarray(eq_inner)).reshape(-1, 2)
-    return _fold_walker_dev(eq, jnp.asarray(alpha), sub_cols_dev, int(z_const))
+    return _fold_walker_kernel(eq, jnp.asarray(alpha), sub_cols, int(z_const))
 
 
 class KeccakLincheckCircuit:
@@ -252,8 +252,8 @@ class KeccakLincheckCircuit:
     n_cols = K
     const_pin = Z_CONST  # const-wire pin column (lincheck.prove applies +β here)
     _sub_cols = [(_COL_STATE0, _COL_STATE24, _ROWS_T)]   # host arrays (test reference)
-    _sub_cols_dev = _device_sub_cols(_sub_cols)          # device, built once
+    _sub_cols = _device_sub_cols(_sub_cols)          # device, built once
 
     def fold_alpha_batched(self, alpha, eq_inner):
         """comb[c] = α·(A_0ᵀ·eq)[c] ⊕ (B_0ᵀ·eq)[c], the keccak.rs walker (device)."""
-        return _fold_walker(eq_inner, alpha, self._sub_cols_dev, Z_CONST)
+        return _fold_walker(eq_inner, alpha, self._sub_cols, Z_CONST)
