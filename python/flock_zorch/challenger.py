@@ -49,11 +49,13 @@ class Challenger:
         else:
             self._t = fs.observe_slice(self._t, g)
 
-    def sample_f128(self, n: int = 1):
-        """Sample F128 as native `binary_field_ghash`: a scalar for `n == 1`, a
-        length-`n` slice otherwise. Host-int consumers (Lagrange nodes, query
-        positions) do `ghash.from_ghash_host` themselves."""
-        if n == 1:
+    def sample_f128(self, n: int | None = None):
+        """Sample F128 as native `binary_field_ghash`. Bare `sample_f128()` is a
+        single scalar draw; `sample_f128(n)` is a length-`n` slice — the two frame
+        differently on the wire, so a length-1 vector still passes an explicit `n=1`
+        (scalar vs slice(1) are NOT the same bytes). Host-int consumers (Lagrange
+        nodes, query positions) do `ghash.from_ghash_host` themselves."""
+        if n is None:
             self._t, g = fs.sample_scalar(self._t)
             return g
         self._t, g = fs.sample_slice(self._t, n)
