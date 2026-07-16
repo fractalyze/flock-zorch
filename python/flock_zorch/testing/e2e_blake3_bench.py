@@ -23,7 +23,9 @@ import frx
 
 frx.config.update("jax_enable_x64", True)
 
-from flock_zorch import field, zerocheck, lincheck, prover  # noqa: E402
+import frx.numpy as jnp  # noqa: E402
+
+from flock_zorch import ghash, zerocheck, lincheck, prover  # noqa: E402
 from flock_zorch.pcs import commit as pcs_commit  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 from flock_zorch.testing.blake3_oracle_test import load, _unpack  # noqa: E402
@@ -52,8 +54,8 @@ def main():
         zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch)
         x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, ir)
         _r, _zp, lc_claim, _zv = lincheck.prove(g["zlc"], None, None, x_ab, m, k_log, k_skip, ch=ch, capture=True, circuit=csc)
-        ab_full = np.concatenate([lc_claim.r_inner_rest, x_ab.x_outer], axis=0)
-        c_full = np.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
+        ab_full = jnp.concatenate([lc_claim.r_inner_rest, x_ab.x_outer], axis=0)
+        c_full = jnp.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
         return prover.open_batch(z, codeword, tree, [ab_full, c_full], k_code, lir, lbs, ch)
 
     t = best(prove_once, n=3)

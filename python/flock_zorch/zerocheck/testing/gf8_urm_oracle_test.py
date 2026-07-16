@@ -19,6 +19,7 @@ import frx
 
 frx.config.update("jax_enable_x64", True)
 
+from flock_zorch import ghash  # noqa: E402
 from flock_zorch.zerocheck import _urm  # noqa: E402
 
 _MAGIC = b"FLKURM01"
@@ -74,7 +75,7 @@ def run(path: Path | None = None):
         r = rd.f128(m)
         ab_golden = rd.f128(1 << k_skip)
         c_golden = rd.f128(1 << k_skip)
-        p_ab, p_c = _urm.round1_naive(a, b, c, m, k_skip, r)
+        p_ab, p_c = _urm.round1_naive(a, b, c, m, k_skip, ghash.to_ghash(r))
         if not np.array_equal(p_ab, ab_golden):
             i = int(np.flatnonzero(np.any(p_ab != ab_golden, axis=1))[0])
             raise AssertionError(

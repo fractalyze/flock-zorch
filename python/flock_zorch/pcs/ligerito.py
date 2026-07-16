@@ -43,7 +43,7 @@ from zorch.pcs.ligerito.config import LigeritoConfig
 from zorch.pcs.ligerito.prover import LigeritoProver, LigeritoProverData
 from zorch.sha256_field_transcript import Sha256FieldTranscript
 
-from flock_zorch import field, fs
+from flock_zorch import ghash, fs
 from flock_zorch.hash import merkle
 
 FLOCK_LIGERITO_LABEL = b"flock-ligerito-basis-v0"
@@ -166,7 +166,7 @@ class FlockChoreography(LigeritoChoreography):
         def body(carry):
             inner, out, n = carry
             inner, g = inner.sample_scalar()
-            lo = field.from_ghash(g).reshape(2)[0]  # low uint64 limb = flock's v.lo
+            lo = ghash.from_ghash(g).reshape(2)[0]  # low uint64 limb = flock's v.lo
             pos = (lo % bl).astype(jnp.int32)
             hit = jnp.any((idx < n) & (out == pos))  # already drawn this level?
             out = jnp.where(hit, out, out.at[n].set(pos))
@@ -319,7 +319,7 @@ def commit_flock_ligerito(cfg: dict, z_packed) -> tuple[np.ndarray, LigeritoProv
     z = z_packed.reshape(-1, 2)
     log_n = z.shape[0].bit_length() - 1
     prover, _config, _chor = _flock_ligerito_prover(cfg, log_n)
-    root, pdata = prover.commit([_bitrev(field.to_ghash(z))])
+    root, pdata = prover.commit([_bitrev(ghash.to_ghash(z))])
     return np.asarray(root), pdata
 
 
@@ -337,8 +337,8 @@ def prove_flock_ligerito(cfg: dict, pdata: LigeritoProverData, b_combined, targe
     log_n = pdata.f.shape[0].bit_length() - 1
     prover, config, chor = _flock_ligerito_prover(cfg, log_n)
 
-    b = _bitrev(field.to_ghash(b_combined.reshape(-1, 2)))
-    value = field.to_ghash(target)
+    b = _bitrev(b_combined)          # b_combined already native ghash [2^L]
+    value = target                   # native ghash scalar
 
     proof, t_open = prover.open_with_basis(pdata, b, value, FlockTranscript(ch._t))
     ch._t = t_open.inner

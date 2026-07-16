@@ -24,7 +24,11 @@ import numpy as np
 import frx
 import frx.numpy as jnp
 
-from flock_zorch import field
+_ZERO_G = frx.lax.bitcast_convert_type(jnp.zeros(2, jnp.uint64), jnp.binary_field_ghash)
+
+
+def _zeros_g(n):
+    return frx.lax.bitcast_convert_type(jnp.zeros((n, 2), jnp.uint64), jnp.binary_field_ghash)
 
 # --- Layout constants (keccak.rs) -----------------------------------------
 N_LANES = 25
@@ -145,8 +149,9 @@ _RC_BITS = jnp.asarray(np.stack([          # (N_T, LANE_BITS) ι round-constant 
 
 
 def _gather_xor(vals, map_T):
-    """φᵀ / χ scatter as a gather+XOR-reduce: out[t] = XOR_k vals[map_T[t,k]]."""
-    return jnp.bitwise_xor.reduce(vals[map_T], axis=-2)
+    """φᵀ / χ scatter as a gather+XOR-reduce: out[t] = XOR_k vals[map_T[t,k]].
+    `vals` is native ghash; XOR-reduce is the dtype's XOR-sum."""
+    return jnp.sum(vals[map_T], axis=-1)
 
 
 def _accumulate_subkeccak_dev(eq, col_state0, col_state24, rows_t):
@@ -155,46 +160,46 @@ def _accumulate_subkeccak_dev(eq, col_state0, col_state24, rows_t):
     functionally (no in-place XOR): values at rows_t (bijective) + col_state0 (2
     contribs, pre-XORed) + the z_const scalars. The caller scatter-sets the bijective
     columns and XOR-merges the shared z_const."""
-    e_s0 = eq[col_state0]                                          # (S,2)
-    vec_pin = eq[col_state24]                                      # (S,2)
-    e_t = eq[rows_t]                                               # (N_T,S,2)
-    chi_a = jnp.bitwise_xor.reduce(e_t[:, _CHI_A_T], axis=2)       # (N_T,S,2)
-    chi_b = jnp.bitwise_xor.reduce(e_t[:, _CHI_B_T], axis=2)
+    e_s0 = eq[col_state0]                                          # ghash (S,)
+    vec_pin = eq[col_state24]                                      # ghash (S,)
+    e_t = eq[rows_t]                                               # ghash (N_T,S)
+    chi_a = jnp.sum(e_t[:, _CHI_A_T], axis=2)                      # ghash (N_T,S)
+    chi_b = jnp.sum(e_t[:, _CHI_B_T], axis=2)
 
-    zc_a = jnp.bitwise_xor.reduce(e_t.reshape(-1, 2), axis=0)      # Σ eq_t (A z_const)
-    zc_b = (jnp.bitwise_xor.reduce(e_s0, axis=0)                   # state_0 + state_24 pins
-            ^ jnp.bitwise_xor.reduce(vec_pin, axis=0))
+    zc_a = jnp.sum(e_t.reshape(-1))                               # Σ eq_t (A z_const)
+    zc_b = jnp.sum(e_s0) + jnp.sum(vec_pin)                        # state_0 + state_24 pins
 
-    # Round-constant GF(2) state machine (unrolled N_T) → RC_24.
+    # Round-constant GF(2) state machine (unrolled N_T) → RC_24. `rc` is a 0/1 bit
+    # vector (not a field element), so it stays uint64 and masks chi via select.
     rc = jnp.zeros(STATE_BITS, jnp.uint64)
-    rc_a = jnp.zeros(2, jnp.uint64)
-    rc_b = jnp.zeros(2, jnp.uint64)
+    rc_a = _ZERO_G
+    rc_b = _ZERO_G
     for r in range(N_T):
-        mask = rc[:, None]
-        rc_a = rc_a ^ jnp.bitwise_xor.reduce(chi_a[r] * mask, axis=0)
-        rc_b = rc_b ^ jnp.bitwise_xor.reduce(chi_b[r] * mask, axis=0)
+        m = rc.astype(bool)
+        rc_a = rc_a + jnp.sum(jnp.where(m, chi_a[r], _zeros_g(STATE_BITS)))
+        rc_b = rc_b + jnp.sum(jnp.where(m, chi_b[r], _zeros_g(STATE_BITS)))
         rc = jnp.bitwise_xor.reduce(rc[_PRE_FWD_DEV], axis=1)      # forward φ_bool
         rc = rc.at[_RC_TOGGLE_DEV].set(rc[_RC_TOGGLE_DEV] ^ _RC_BITS[r])
-    rc_pin = jnp.bitwise_xor.reduce(vec_pin * rc[:, None], axis=0)
-    zc_a = zc_a ^ rc_a ^ rc_pin
-    zc_b = zc_b ^ rc_b
+    rc_pin = jnp.sum(jnp.where(rc.astype(bool), vec_pin, _zeros_g(STATE_BITS)))
+    zc_a = zc_a + rc_a + rc_pin
+    zc_b = zc_b + rc_b
 
     # A-side transpose recurrence (unrolled): rows_t[j] ← K^A_{j+1}, col_state0 ← K^A_0.
     ra = [None] * N_T
     ra[N_T - 1] = vec_pin                                          # K^A_24
-    k_a = _gather_xor(vec_pin, _FWD_T) ^ chi_a[N_T - 1]            # K^A_23
+    k_a = _gather_xor(vec_pin, _FWD_T) + chi_a[N_T - 1]            # K^A_23
     for r in range(N_T - 1, 0, -1):
         ra[r - 1] = k_a                                           # K^A_r → rows_t[r-1]
-        k_a = _gather_xor(k_a, _FWD_T) ^ chi_a[r - 1]
-    cs0_a = e_s0 ^ k_a                                            # state_0 self-loop ⊕ K^A_0
+        k_a = _gather_xor(k_a, _FWD_T) + chi_a[r - 1]
+    cs0_a = e_s0 + k_a                                            # state_0 self-loop ⊕ K^A_0
 
     # B-side (K^B_24 = 0): rows_t[j] ← K^B_{j+1} (0 at j=N_T-1), col_state0 ← K^B_0.
     rb = [None] * N_T
-    rb[N_T - 1] = jnp.zeros((STATE_BITS, 2), jnp.uint64)
+    rb[N_T - 1] = _zeros_g(STATE_BITS)
     k_b = chi_b[N_T - 1]                                          # K^B_23
     for r in range(N_T - 1, 0, -1):
         rb[r - 1] = k_b
-        k_b = _gather_xor(k_b, _FWD_T) ^ chi_b[r - 1]
+        k_b = _gather_xor(k_b, _FWD_T) + chi_b[r - 1]
     cs0_b = k_b                                                   # K^B_0
 
     return jnp.stack(ra), jnp.stack(rb), cs0_a, cs0_b, zc_a, zc_b
@@ -208,22 +213,21 @@ def _fold_walker_dev(eq, alpha, sub_cols, z_const):
     multiply. `eq` is (n_cols, 2); `sub_cols` a list of (col_state0, col_state24,
     rows_t) device index arrays; `z_const` a static int column."""
     n_cols = eq.shape[0]
-    comb_a = jnp.zeros((n_cols, 2), jnp.uint64)
-    comb_b = jnp.zeros((n_cols, 2), jnp.uint64)
-    zc_a = jnp.zeros(2, jnp.uint64)
-    zc_b = jnp.zeros(2, jnp.uint64)
+    comb_a = _zeros_g(n_cols)
+    comb_b = _zeros_g(n_cols)
+    zc_a = _ZERO_G
+    zc_b = _ZERO_G
     for col_state0, col_state24, rows_t in sub_cols:
         ra, rb, ca, cb, za, zb = _accumulate_subkeccak_dev(eq, col_state0, col_state24, rows_t)
         rtf = rows_t.reshape(-1)
-        comb_a = comb_a.at[rtf].set(ra.reshape(-1, 2)).at[col_state0].set(ca)
-        comb_b = comb_b.at[rtf].set(rb.reshape(-1, 2)).at[col_state0].set(cb)
-        zc_a = zc_a ^ za
-        zc_b = zc_b ^ zb
+        comb_a = comb_a.at[rtf].set(ra.reshape(-1)).at[col_state0].set(ca)
+        comb_b = comb_b.at[rtf].set(rb.reshape(-1)).at[col_state0].set(cb)
+        zc_a = zc_a + za
+        zc_b = zc_b + zb
     e0 = eq[z_const]                                             # row-0 const (shared)
-    comb_a = comb_a.at[z_const].set(zc_a ^ e0)
-    comb_b = comb_b.at[z_const].set(zc_b ^ e0)
-    a_g, ca_g, cb_g = field.to_ghash(alpha), field.to_ghash(comb_a), field.to_ghash(comb_b)
-    return field.from_ghash(a_g * ca_g + cb_g)                  # α·comb_a ⊕ comb_b
+    comb_a = comb_a.at[z_const].set(zc_a + e0)
+    comb_b = comb_b.at[z_const].set(zc_b + e0)
+    return alpha * comb_a + comb_b
 
 
 def _device_sub_cols(sub_cols):
@@ -236,7 +240,7 @@ def _fold_walker(eq_inner, alpha, sub_cols_dev, z_const):
     """Production entry: reshape eq on device and fold, staying device-resident (the
     caller reuses the result on device, like `CscCircuit`). `sub_cols_dev` is the
     circuit's device index arrays (built once via `_device_sub_cols`)."""
-    eq = jnp.asarray(eq_inner, dtype=jnp.uint64).reshape(-1, 2)
+    eq = jnp.asarray(eq_inner).reshape(-1)
     return _fold_walker_dev(eq, jnp.asarray(alpha), sub_cols_dev, int(z_const))
 
 

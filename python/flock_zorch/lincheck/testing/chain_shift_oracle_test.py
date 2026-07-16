@@ -18,7 +18,7 @@ import frx
 
 frx.config.update("jax_enable_x64", True)
 
-from flock_zorch import field  # noqa: E402
+from flock_zorch import ghash  # noqa: E402
 from flock_zorch.lincheck import chain  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 
@@ -51,20 +51,21 @@ def run():
 
     # ---- Gate A: shift sumcheck on a fresh shared challenger.
     ch = Challenger(b"flock-chain-shift-v0")
-    rounds, g_at, claims = chain.prove_chain_shift(ga["in_vals"], ga["out_vals"], ch)
-    got_r = np.array([np.concatenate([e1, ei]) for e1, ei in rounds]) if rounds else np.zeros((0, 4), np.uint64)
+    rounds, g_at, claims = chain.prove_chain_shift(ghash.to_ghash(ga["in_vals"]), ghash.to_ghash(ga["out_vals"]), ch)
+    got_r = np.array([np.concatenate([ghash.to_lanes(e1).reshape(2), ghash.to_lanes(ei).reshape(2)])
+                      for e1, ei in rounds]) if rounds else np.zeros((0, 4), np.uint64)
     want_r = np.array([np.concatenate([e1, ei]) for e1, ei in ga["rounds"]]) if ga["rounds"] else np.zeros((0, 4), np.uint64)
     results.append(("shift rounds", got_r.shape == want_r.shape and np.array_equal(got_r, want_r)))
-    results.append(("shift g_at_point", np.array_equal(g_at, ga["g_at_point"])))
+    results.append(("shift g_at_point", np.array_equal(ghash.to_lanes(g_at).reshape(2), ga["g_at_point"])))
     results.append(("shift claim.instance_point", np.array_equal(claims["instance_point"], ga["instance_point"])))
     results.append(("shift claim.sel0", np.array_equal(claims["sel0"], ga["sel0"])))
-    results.append(("shift claim.value", np.array_equal(claims["value"], ga["value"])))
+    results.append(("shift claim.value", np.array_equal(ghash.to_lanes(claims["value"]).reshape(2), ga["value"])))
 
     # ---- Gate B: region fold.
     fin, fout = chain.fold_in_out(gb["packed"], gb["k_log"], gb["tau_pos"],
                                   gb["input_byte_off"], gb["output_byte_off"])
-    results.append(("fold in_vals", np.array_equal(fin, gb["in_vals"])))
-    results.append(("fold out_vals", np.array_equal(fout, gb["out_vals"])))
+    results.append(("fold in_vals", np.array_equal(ghash.from_ghash_host(fin), gb["in_vals"])))
+    results.append(("fold out_vals", np.array_equal(ghash.from_ghash_host(fout), gb["out_vals"])))
     return ga["n"], results
 
 

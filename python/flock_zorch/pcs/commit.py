@@ -27,10 +27,10 @@ from frx import lax
 
 from zorch.coding.additive_reed_solomon import AdditiveReedSolomon
 
-from flock_zorch import field
+from flock_zorch import ghash
 from flock_zorch.hash import merkle
 
-LOG_PACKING = field.LOG_PACKING
+LOG_PACKING = ghash.LOG_PACKING
 
 
 def _encode_codeword(z_packed, m: int, log_inv_rate: int, log_batch_size: int):
@@ -51,9 +51,9 @@ def _encode_codeword(z_packed, m: int, log_inv_rate: int, log_batch_size: int):
     # then transpose back to the SoA layout. The bitcasts are pure reinterprets, so
     # the codeword stays device-resident.
     code = AdditiveReedSolomon(n_pos_msg, 1 << log_inv_rate, jnp.binary_field_ghash)
-    msg = field.to_ghash(jnp.asarray(z_packed).reshape(n_pos_msg, num_ntts, 2))
+    msg = ghash.to_ghash(jnp.asarray(z_packed).reshape(n_pos_msg, num_ntts, 2))
     cw = code.encode(msg.T)  # [num_ntts, n_pos_code]
-    codeword = field.from_ghash(cw.T).reshape(n_pos_code * num_ntts, 2)
+    codeword = ghash.from_ghash(cw.T).reshape(n_pos_code * num_ntts, 2)
     return codeword, n_pos_code, num_ntts
 
 

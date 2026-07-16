@@ -15,41 +15,39 @@ Requires `jax_enable_x64`.
 """
 from __future__ import annotations
 
-import numpy as np
 import frx.numpy as jnp
 
-from flock_zorch import field, sumcheck
+from flock_zorch import ghash, sumcheck
 from flock_zorch.challenger import Challenger
 from zorch.pcs import ring_switch as zrs
 
-LOG_PACKING = field.LOG_PACKING
+LOG_PACKING = ghash.LOG_PACKING
 LABEL = b"flock-ring-switch-v0"
 
 
 def _reduce_one(packed, x_outer, ch: Challenger):
     """One claim's observe-and-reduce (the block prove and prove_batched share):
     observe LABEL + s_hat_v, sample r'', compute the sumcheck claim. Returns
-    (s_hat_v [128,2], suffix_tensor [ghash], eq_r_dprime [128,2 lanes], claim [2]);
+    (s_hat_v [128,2], suffix_tensor [ghash], eq_r_dprime [128] ghash, claim [ghash]);
     the caller turns eq_r_dprime into rs_eq_ind (with or without a gamma scale)."""
     ch.observe_label(LABEL)
-    suffix = jnp.asarray(np.asarray(x_outer)[1:])             # x_outer[1:], length L
-    suffix_tensor = field.to_ghash(sumcheck.build_eq_fused(suffix))
+    suffix = x_outer[1:]                                       # ghash coords, length L
+    suffix_tensor = sumcheck.build_eq_fused_from_g(suffix)
     s_hat_v = zrs.bit_slice_evals(packed, suffix_tensor)     # (128,) ghash
-    s_hat_v_lanes = field.from_ghash_host(s_hat_v)                     # [128,2]
-    ch.observe_f128_slice(s_hat_v_lanes)
-    r_dprime = jnp.asarray(ch.sample_f128_vec(LOG_PACKING))  # [7,2]
-    eq_r_dprime = sumcheck.build_eq_fused(r_dprime)  # [128,2], kept in lanes for gamma
-    claim = zrs.inner_product(zrs.tensor_algebra_transpose(s_hat_v), field.to_ghash(eq_r_dprime))
-    return s_hat_v_lanes, suffix_tensor, eq_r_dprime, field.from_ghash_host(claim)
+    ch.observe_f128(s_hat_v)                          # observe device ghash directly
+    r_dprime = ghash.from_ghash(ch.sample_f128(LOG_PACKING))  # [7,2]
+    eq_r_dprime = sumcheck.build_eq_fused_g(r_dprime)  # [128] ghash, kept for the gamma combine
+    claim = zrs.inner_product(zrs.tensor_algebra_transpose(s_hat_v), eq_r_dprime)
+    return s_hat_v, suffix_tensor, eq_r_dprime, claim          # claim native ghash
 
 
 def prove(packed_witness, x_outer, ch: Challenger):
-    """Returns (s_hat_v [128,2], rs_eq_ind [2^L,2], sumcheck_claim [2]).
+    """Returns (s_hat_v [128,2], rs_eq_ind [2^L] ghash, sumcheck_claim [ghash]).
     Byte-identical to flock `ring_switch::prove`."""
-    packed = field.to_ghash(packed_witness)
-    s_hat_v_lanes, suffix_tensor, eq_r_dprime, claim = _reduce_one(packed, x_outer, ch)
-    rs_eq_ind = zrs.rs_eq_ind(suffix_tensor, field.to_ghash(eq_r_dprime))
-    return s_hat_v_lanes, field.from_ghash_host(rs_eq_ind), claim
+    packed = ghash.to_ghash(packed_witness)
+    s_hat_v, suffix_tensor, eq_r_dprime, claim = _reduce_one(packed, x_outer, ch)
+    rs_eq_ind = zrs.rs_eq_ind(suffix_tensor, eq_r_dprime)
+    return s_hat_v, rs_eq_ind, claim                          # rs_eq_ind native ghash (BaseFold b)
 
 
 def prove_batched(packed_witness, x_outers, ch: Challenger):
@@ -61,14 +59,14 @@ def prove_batched(packed_witness, x_outers, ch: Challenger):
     THEN bake gamma_i into each `rs_eq_ind_i` (the caller-owned linear combination
     — see the zorch module's contract). Returns
     (s_hat_vs, rs_eq_inds[gamma-baked], sumcheck_claims, gammas)."""
-    packed = field.to_ghash(packed_witness)
+    packed = ghash.to_ghash(packed_witness)
     works = [_reduce_one(packed, x_outer, ch) for x_outer in x_outers]
     gammas = [ch.sample_f128() for _ in range(len(x_outers))]
 
     s_hat_vs, rs_eq_inds, sumcheck_claims = [], [], []
-    for (s_hat_v_lanes, suffix_tensor, eq_r_dprime, claim), g in zip(works, gammas):
-        scaled = field.to_ghash(jnp.asarray(g)) * field.to_ghash(jnp.asarray(eq_r_dprime))  # gamma baked into eq
-        rs_eq_inds.append(field.from_ghash_host(zrs.rs_eq_ind(suffix_tensor, scaled)))
-        s_hat_vs.append(s_hat_v_lanes)
+    for (s_hat_v, suffix_tensor, eq_r_dprime, claim), g in zip(works, gammas):
+        scaled = g * eq_r_dprime  # gamma baked into eq
+        rs_eq_inds.append(zrs.rs_eq_ind(suffix_tensor, scaled))  # ghash [2^L], device-resident
+        s_hat_vs.append(s_hat_v)
         sumcheck_claims.append(claim)
     return s_hat_vs, rs_eq_inds, sumcheck_claims, gammas

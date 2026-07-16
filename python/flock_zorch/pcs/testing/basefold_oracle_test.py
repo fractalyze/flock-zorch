@@ -18,7 +18,7 @@ import frx
 
 frx.config.update("jax_enable_x64", True)
 
-from flock_zorch import field  # noqa: E402
+from flock_zorch import ghash  # noqa: E402
 from flock_zorch.pcs import basefold  # noqa: E402
 from flock_zorch.hash import merkle  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
@@ -58,16 +58,16 @@ def _check(name):
     init_tree = merkle.merkle_tree(codeword.reshape(n_leaves, num_ntts * 2).view(np.uint8))
 
     ch = Challenger(b"flock-basefold-test")
-    p = basefold.prove(z_packed, b, codeword, init_tree, k_code, lir, lbs, n_queries, ch)
+    p = basefold.prove(z_packed, ghash.to_ghash(b), codeword, init_tree, k_code, lir, lbs, n_queries, ch)
 
     def eq(x, y): return np.array_equal(np.asarray(x), np.asarray(y))
     checks = {
-        "round_messages": all(eq(a, c) and eq(b_, d) for (a, b_), (c, d) in zip(p.round_messages, g_rm)) and len(p.round_messages) == n_rm,
+        "round_messages": all(eq(ghash.to_lanes(a), c) and eq(ghash.to_lanes(b_), d) for (a, b_), (c, d) in zip(p.round_messages, g_rm)) and len(p.round_messages) == n_rm,
         "post_row_batch_commit": eq(p.post_row_batch_commit, g_post_root),
         "round_commitments": eq(np.stack(p.round_commitments) if p.round_commitments else np.zeros((0, 32), np.uint8), g_rc),
-        "final_a": eq(p.final_a, g_fa),
-        "final_b": eq(p.final_b, g_fb),
-        "final_codeword": eq(p.final_codeword, g_fcw),
+        "final_a": eq(ghash.to_lanes(p.final_a), g_fa),
+        "final_b": eq(ghash.to_lanes(p.final_b), g_fb),
+        "final_codeword": eq(ghash.to_lanes(p.final_codeword), g_fcw),
         "queries": all(q[0] == gq[0] and eq(q[1], gq[1]) and eq(q[2], gq[2]) and all(eq(x, y) for x, y in zip(q[3], gq[3]))
                        for q, gq in zip(p.queries, g_q)),
         "initial_multi_proof": eq(p.initial_multi_proof, g_imp),

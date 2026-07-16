@@ -23,9 +23,9 @@ import numpy as np
 import frx
 import frx.numpy as jnp
 
-from flock_zorch import field, sumcheck
+from flock_zorch import ghash, sumcheck
 from flock_zorch.zerocheck import _urm
-from flock_zorch.field import _lanes_to_ghash, _ghash_to_lanes
+from flock_zorch.ghash import _lanes_to_ghash, _ghash_to_lanes
 from flock_zorch.challenger import Challenger
 from flock_zorch.zerocheck._fold import (
     _lagrange_weights, _interpolate_at_z_on_lambda, _fold_at_z_dev,
@@ -94,7 +94,11 @@ def medium_challenges() -> np.ndarray:
     gamma = _lanes_to_ghash(np.array([[1 << e, 0] for e in (1, 2, 4, 8)], np.uint64))
     one_plus = _lanes_to_ghash(np.array([[1 ^ (1 << e), 0] for e in (1, 2, 4, 8)], np.uint64))
     return _ghash_to_lanes(
-        np.array([g * gp1 ** -1 for g, gp1 in zip(gamma, one_plus)], field._GHASH_HOST))
+        np.array([g * gp1 ** -1 for g, gp1 in zip(gamma, one_plus)], ghash._GHASH_HOST))
+
+
+_SMALL_G = ghash.to_ghash(jnp.asarray(small_challenges()))    # [3] ghash — fixed inner challenges
+_MEDIUM_G = ghash.to_ghash(jnp.asarray(medium_challenges()))  # [4] ghash
 
 
 @frx.jit
@@ -132,15 +136,10 @@ class _SetupRound(Round):
     def __call__(self, carry, transcript):
         m, k_skip = self._m, self._k_skip
         transcript.observe_label(LABEL)
-        r_skip = transcript.sample_f128_vec(k_skip)               # [6, 2]
-        r_outer = transcript.sample_f128_vec(m - k_skip - N_INNER)  # [m-13, 2]
-        # r = r_skip ++ small ++ medium ++ r_outer
-        r = np.zeros((m, 2), dtype=np.uint64)
-        r[:k_skip] = r_skip
-        r[k_skip:k_skip + 3] = small_challenges()
-        r[k_skip + 3:k_skip + N_INNER] = medium_challenges()
-        if m - k_skip - N_INNER > 0:
-            r[k_skip + N_INNER:] = r_outer
+        # r = r_skip ++ small ++ medium ++ r_outer, assembled on the dtype.
+        r_skip = transcript.sample_f128(k_skip)
+        r_outer = transcript.sample_f128(m - k_skip - N_INNER)
+        r = jnp.concatenate([r_skip, _SMALL_G, _MEDIUM_G, r_outer])
         return replace(carry, r=r), transcript, None
 
 
@@ -160,8 +159,8 @@ class _UrmRound(Round):
         b_rows = _urm.witness_to_rows(carry.b_bits, m, k_skip)
         c_rows = _urm.witness_to_rows(carry.c_bits, m, k_skip)
         round1_ab, round1_c = _urm.round1_rows(a_rows, b_rows, c_rows, m, k_skip, carry.r)
-        transcript.observe_f128_slice(round1_ab)
-        transcript.observe_f128_slice(round1_c)
+        transcript.observe_f128(ghash.to_ghash(jnp.asarray(round1_ab)))
+        transcript.observe_f128(ghash.to_ghash(jnp.asarray(round1_c)))
         z = transcript.sample_f128()
         # c-claim: interpolate round1_c at z.
         final_c_eval = _interpolate_at_z_on_lambda(round1_c, k_skip, z)
@@ -188,7 +187,7 @@ class _MultilinearRound(Round):
         weights = _lagrange_weights(k_skip, carry.z, 0)  # S-domain, ghash [ell]
         a_g = _fold_at_z_dev(carry.a_rows, weights)
         b_g = _fold_at_z_dev(carry.b_rows, weights)
-        r_g = field.to_ghash(jnp.asarray(carry.r))
+        r_g = carry.r
 
         t = transcript._t
         # All rounds' eq suffix tables in one program (round i reads
@@ -198,16 +197,16 @@ class _MultilinearRound(Round):
         for i in range(n_mlv):
             a_g, b_g, t, m1, minf, rho = _mlv_round(
                 a_g, b_g, eq_tables[i], sumcheck.eq._ONE_G, t)
-            rounds.append((field.from_ghash_host(m1), field.from_ghash_host(minf)))
+            rounds.append((m1, minf))
             rhos.append(rho)
         final_a, final_b = a_g[0], b_g[0]
         transcript._t = _observe_finals(t, final_a, final_b)
 
-        final_a_eval = field.from_ghash_host(final_a)
-        final_b_eval = field.from_ghash_host(final_b)
+        final_a_eval = final_a
+        final_b_eval = final_b
         carry = replace(carry, multilinear_rounds=rounds, final_a_eval=final_a_eval,
                         final_b_eval=final_b_eval,
-                        mlv_challenges=field.from_ghash_host(jnp.stack(rhos)))
+                        mlv_challenges=jnp.stack(rhos))       # native ghash open-point coords
         return carry, transcript, (rounds, final_a_eval, final_b_eval)
 
 
@@ -243,5 +242,5 @@ def prove_packed(a_bits, b_bits, c_bits, m: int, domain: bytes | None = None,
         final_c_eval=carry.final_c_eval,
         z=carry.z,
         mlv_challenges=carry.mlv_challenges,
-        r_rest=carry.r[k_skip:],
+        r_rest=carry.r[k_skip:],   # native ghash: the c-open point coords; byte-gate lanes-converts
     )

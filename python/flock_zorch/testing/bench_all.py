@@ -14,7 +14,7 @@ import frx.numpy as jnp  # noqa: E402
 
 from zorch.coding.additive_reed_solomon import AdditiveReedSolomon  # noqa: E402
 
-from flock_zorch import sumcheck, field  # noqa: E402
+from flock_zorch import sumcheck, ghash  # noqa: E402
 
 
 def _rand(n, seed):
@@ -43,7 +43,7 @@ def main():
         n = 1 << log
         d = _rand(n, 3)
         code = AdditiveReedSolomon(n, 1, jnp.binary_field_ghash)
-        fn = frx.jit(lambda dd, c=code: c.encode(field.to_ghash(dd)))
+        fn = frx.jit(lambda dd, c=code: c.encode(ghash.to_ghash(dd)))
         try:
             dt = _bench(fn, (d,), 20)
             print(f"  log_d={log:<2} {dt*1e3:8.2f} ms/transform  {n/dt/1e9:6.3f} G elem/s")

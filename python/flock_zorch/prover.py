@@ -17,7 +17,7 @@ import frx
 import frx.numpy as jnp
 from frx import Array
 
-from flock_zorch import field, zerocheck, lincheck
+from flock_zorch import ghash, zerocheck, lincheck
 from flock_zorch.pcs import ring_switch, basefold, fri, ligerito as zorch_ligerito
 from flock_zorch.sumcheck import build_eq
 from flock_zorch.challenger import Challenger  # noqa: F401  (re-exported for callers)
@@ -81,18 +81,17 @@ def _combine_claims(rs_eq_inds, gammas, sumcheck_claims, packed_direct=(), gamma
     their XOR-sum; target = Σ γ_i·sumcheck_claim_i. Packed-direct claims add
     γ_pd_j·eq(point_j) to b and γ_pd_j·value_j to target. NB: all observe/sample stay
     at the call sites — this is pure arithmetic, so it cannot perturb the transcript."""
-    b_combined = field.to_ghash(jnp.asarray(rs_eq_inds[0]))
+    b_combined = rs_eq_inds[0]                                     # native ghash [2^L]
     for r in rs_eq_inds[1:]:
-        b_combined = b_combined + field.to_ghash(jnp.asarray(r))   # γ_rs already baked in
-    target = field.to_ghash(jnp.zeros(2, jnp.uint64))              # ghash scalar zero
-    for g, sc in zip(gammas, sumcheck_claims):
-        target = target + field.to_ghash(jnp.asarray(g)) * field.to_ghash(jnp.asarray(sc))
-    for pd, g in zip(packed_direct, gammas_pd):
-        eq_pd = field.to_ghash(build_eq(jnp.asarray(pd.point)))   # length L = 2^(m-7)
-        gj = field.to_ghash(jnp.asarray(g))
-        b_combined = b_combined + gj * eq_pd
-        target = target + gj * field.to_ghash(jnp.asarray(pd.value))
-    return field.from_ghash(b_combined), field.from_ghash(target)
+        b_combined = b_combined + r                                # γ_rs already baked in
+    target = ghash.to_ghash(jnp.zeros(2, jnp.uint64))              # ghash scalar zero
+    for g, sc in zip(gammas, sumcheck_claims):                     # both native ghash
+        target = target + g * sc
+    for pd, g in zip(packed_direct, gammas_pd):                    # g native ghash
+        eq_pd = ghash.to_ghash(build_eq(jnp.asarray(pd.point)))   # length L = 2^(m-7)
+        b_combined = b_combined + g * eq_pd
+        target = target + g * pd.value                             # pd.value native ghash
+    return b_combined, target  # native ghash: [2^L], scalar
 
 
 def open_batch(z_packed, codeword, init_tree, x_outers, k_code, log_inv_rate,
@@ -107,7 +106,6 @@ def open_batch(z_packed, codeword, init_tree, x_outers, k_code, log_inv_rate,
     ch.observe_label(b"flock-pcs-open-batch-v0")
     s_hat_vs, rs_eq_inds, sumcheck_claims, gammas = ring_switch.prove_batched(z_packed, x_outers, ch)
     b_combined, _target = _combine_claims(rs_eq_inds, gammas, sumcheck_claims)  # BaseFold ignores target
-    b_combined = np.asarray(b_combined)
     n_queries = fri.default_fri_queries(log_inv_rate)
     bf = basefold.prove(z_packed, b_combined, codeword, init_tree, k_code,
                         log_inv_rate, log_batch_size, n_queries, ch)
@@ -140,7 +138,7 @@ def open_batch_mixed_ligerito(config, z_packed, pdata, x_outers, packed_direct,
     # Packed-direct: observe each claim's value, THEN sample the γ_pd (flock order).
     for pd in packed_direct:
         ch.observe_label(b"flock-pcs-packed-direct-v0")
-        ch.observe_f128(pd.value)
+        ch.observe_f128(pd.value)                                  # native ghash scalar
     gammas_pd = [ch.sample_f128() for _ in packed_direct]
 
     b_combined, target = _combine_claims(rs_eq_inds, gammas, sumcheck_claims,
@@ -235,10 +233,10 @@ class _PcsOpenStage(Stage):
         inner_rest = self._k_log - self._k_skip
         zc, lc_claim = carry.zc, carry.lc_claim
         x_outer = zc.mlv_challenges[inner_rest:]
-        ab_full = np.concatenate([lc_claim.r_inner_rest, x_outer], axis=0)
+        ab_full = jnp.concatenate([lc_claim.r_inner_rest, x_outer], axis=0)
         # c_full split-then-rejoined (not just zc.r_rest) to mirror Rust's
         # QuirkyPoint / quirky_x_outer_full.
-        c_full = np.concatenate([zc.r_rest[:inner_rest], zc.r_rest[inner_rest:]], axis=0)
+        c_full = jnp.concatenate([zc.r_rest[:inner_rest], zc.r_rest[inner_rest:]], axis=0)
         pcs = self._pcs
         pcs_open_proof = open_batch(
             carry.z_packed, carry.codeword, carry.tree, [ab_full, c_full], pcs.k_code,

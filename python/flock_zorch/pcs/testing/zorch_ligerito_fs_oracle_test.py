@@ -84,8 +84,8 @@ def test_observe_framing():
     t = t.observe(vs[0]).observe(vs).observe(jnp.asarray(root))
 
     ch = Challenger(DOMAIN)
-    ch.observe_f128(_lohi(vs[0])[0])
-    for v in _lohi(vs):
+    ch.observe_f128(vs[0])
+    for v in vs:
         ch.observe_f128(v)
     ch.observe_bytes(bytes(root))
     check("observe framing", _state_eq(t.inner, ch._t))
@@ -100,11 +100,11 @@ def test_sample_framing():
 
     ch = Challenger(DOMAIN)
     ref_one = ch.sample_f128()
-    ref_vec = ch.sample_f128_vec(5)
+    ref_vec = ch.sample_f128(5)
     check(
         "sample values",
-        np.array_equal(_lohi(one)[0], ref_one)
-        and np.array_equal(_lohi(vec), ref_vec),
+        np.array_equal(_lohi(one)[0], _lohi(ref_one)[0])
+        and np.array_equal(_lohi(vec), _lohi(ref_vec)),
     )
     check("sample framing", _state_eq(t.inner, ch._t))
 
@@ -135,7 +135,7 @@ def _ref_distinct_queries(ch: Challenger, block_len: int, count: int) -> list[in
     seen: set[int] = set()
     out: list[int] = []
     while len(out) < count:
-        q = int(ch.sample_f128()[0]) % block_len
+        q = int(_lohi(ch.sample_f128())[0, 0]) % block_len
         if q not in seen:
             seen.add(q)
             out.append(q)

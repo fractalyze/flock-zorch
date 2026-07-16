@@ -19,7 +19,7 @@ import frx
 
 frx.config.update("jax_enable_x64", True)
 
-from flock_zorch import field, zerocheck  # noqa: E402
+from flock_zorch import ghash, zerocheck  # noqa: E402
 
 _MAGIC = b"FLKZC001"
 K_SKIP = 6
@@ -52,7 +52,7 @@ class _Reader:
 
 
 def _eq(name, got, golden):
-    got = np.asarray(got).reshape(-1, 2)
+    got = ghash.to_lanes(got).reshape(-1, 2)
     golden = np.asarray(golden).reshape(-1, 2)
     if not np.array_equal(got, golden):
         i = int(np.flatnonzero(np.any(got != golden, axis=1))[0])
@@ -92,7 +92,7 @@ def run(path: Path | None = None):
 
         # Localization cross-checks (claim) first.
         _eq(f"r_rest(m={m})", out.r_rest, r_rest)
-        _eq(f"z(m={m})", out.z, z)
+        _eq(f"z(m={m})", ghash.from_ghash_host(out.z), z)
         _eq(f"mlv_challenges(m={m})", out.mlv_challenges, mlv_ch)
 
         # The proof — the actual gate.

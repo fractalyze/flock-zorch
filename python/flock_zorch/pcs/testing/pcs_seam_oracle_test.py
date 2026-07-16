@@ -16,6 +16,7 @@ import frx
 
 frx.config.update("jax_enable_x64", True)
 
+from flock_zorch import ghash  # noqa: E402
 from flock_zorch.pcs import commit as pcs_commit, open as pcs_open  # noqa: E402
 from flock_zorch.pcs import FlockPcsProver  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
@@ -55,6 +56,7 @@ def _deep_eq(a, b) -> bool:
 def main() -> int:
     print(f"device: {frx.devices()[0]} | backend: {frx.default_backend()}")
     m, lir, lbs, z_packed, x_outer, g_codeword = _read_golden_inputs()
+    x_outer = ghash.to_ghash(x_outer)     # open consumes ghash open-point coords
     k_code = (m - 7 - lbs) + lir
 
     root_r, cw_r, tree_r = pcs_commit.commit(z_packed, m, lir, lbs)

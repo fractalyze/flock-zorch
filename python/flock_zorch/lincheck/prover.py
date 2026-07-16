@@ -25,8 +25,8 @@ import numpy as np
 import frx
 import frx.numpy as jnp
 
-from flock_zorch import field
-from flock_zorch.sumcheck import build_eq_fused, ONE
+from flock_zorch import ghash
+from flock_zorch.sumcheck import build_eq_fused, build_eq_fused_from_g, ONE
 from flock_zorch.zerocheck import _lagrange_weights, ZerocheckProof
 from flock_zorch.challenger import Challenger
 from flock_zorch.lincheck._csc_fold import _flatten_nz, _csc_segments, _seg_xor_fold
@@ -35,32 +35,33 @@ from zorch.round import ProveChain, Round
 
 U64 = jnp.uint64
 LABEL = b"flock-lincheck-v0"
+_ZERO_G = frx.lax.bitcast_convert_type(jnp.zeros(2, U64), jnp.binary_field_ghash)
 
 
 def build_quirky_eq_table(z_skip, x_inner_rest, k_skip: int):
     """eq_inner[i_skip + i_rest·2^k_skip] = λ_skip[i_skip]·eq_rest[i_rest]
-    (flock `build_quirky_eq_table`; i_skip in the LOW bits). z_skip: uint64 [2]."""
+    (flock `build_quirky_eq_table`; i_skip in the LOW bits). z_skip: ghash scalar
+    (the zerocheck fold point). Returns the eq table as native ghash [ell_rest·ell_skip]."""
     lam = _lagrange_weights(k_skip, z_skip, 0)
-    eq_rest = field.to_ghash(build_eq_fused(jnp.asarray(x_inner_rest)))  # [ell_rest] — fused (avoids per-layer eager dispatch)
+    eq_rest = build_eq_fused_from_g(x_inner_rest)             # ghash coords -> [ell_rest]
     prod = eq_rest[:, None] * lam[None, :]                    # [ell_rest, ell_skip]
-    return field.from_ghash(prod.reshape(-1))                 # [ell_rest·ell_skip, 2]
+    return prod.reshape(-1)
 
 
 def _mat_fold(mat_dense, eq):
     """Transposed binary-matrix·vector: out[c] = Σ_{r: M[r,c]=1} eq[r].
 
-    mat_dense: uint64 [k, k] (0/1, indexed [row, col]); eq: [k, 2] -> [k, 2]."""
-    sel = mat_dense[:, :, None] * eq[:, None, :]              # M[r,c]·eq[r]  (0/1 select)
-    return field.from_ghash(jnp.sum(field.to_ghash(sel), axis=0))  # XOR over rows -> [c, 2]
+    mat_dense: uint64 [k, k] (0/1, indexed [row, col]); eq: ghash [k] -> ghash [k].
+    The 0/1 marginal is a dtype-native select (mask · ghash isn't a field mul)."""
+    return jnp.sum(jnp.where(mat_dense.astype(bool), eq[:, None], _ZERO_G), axis=0)
 
 
 def fold_alpha_batched(alpha, a_dense, b_dense, eq_inner):
     """comb[c] = α·(A₀ᵀ·eq_inner)[c] ⊕ (B₀ᵀ·eq_inner)[c] (flock
     `sparse_row_fold_alpha_batched`)."""
-    ae = field.to_ghash(_mat_fold(a_dense, eq_inner))
-    be = field.to_ghash(_mat_fold(b_dense, eq_inner))
-    alpha_g = field.to_ghash(jnp.asarray(alpha))
-    return field.from_ghash(alpha_g * ae + be)
+    ae = _mat_fold(a_dense, eq_inner)
+    be = _mat_fold(b_dense, eq_inner)
+    return alpha * ae + be
 
 
 class CscCircuit:
@@ -82,12 +83,11 @@ class CscCircuit:
         self._b_seg = _csc_segments(b_col, b_row)
 
     def fold_alpha_batched(self, alpha, eq_inner):
-        eq = jnp.asarray(np.asarray(eq_inner, np.uint64).reshape(-1, 2))
-        zero = jnp.zeros((self.k, 2), U64)
+        eq = jnp.asarray(eq_inner).reshape(-1)                # ghash [k]
+        zero = frx.lax.bitcast_convert_type(jnp.zeros((self.k, 2), U64), jnp.binary_field_ghash)
         out_a = _seg_xor_fold(eq, *self._a_seg, self.k) if self._a_seg else zero
         out_b = _seg_xor_fold(eq, *self._b_seg, self.k) if self._b_seg else zero
-        alpha_g = field.to_ghash(jnp.asarray(alpha))
-        return field.from_ghash(alpha_g * field.to_ghash(out_a) + field.to_ghash(out_b))
+        return alpha * out_a + out_b
 
 
 def partial_fold_packed_z(z_packed_bytes: bytes, m: int, k_log: int, eq_outer):
@@ -108,9 +108,8 @@ def _partial_fold_dev(zp, eq_outer, n_outer):
     """z_vec[i_inner] = Σ_{i_outer} bit·eq_outer[i_outer], device+jit so the large
     [n_outer,k,2] intermediate stays fused on device and never lands in HBM."""
     bits = ((zp[:, None, :] >> jnp.arange(8, dtype=jnp.uint8)[None, :, None]) & 1)  # [nb,8,k]
-    bits = bits.reshape(n_outer, zp.shape[1]).astype(jnp.uint64)                    # i_outer=byte·8+r
-    sel = bits[:, :, None] * eq_outer[:, None, :]                                   # 0/1 select, [n_outer,k,2]
-    return field.from_ghash(jnp.sum(field.to_ghash(sel), axis=0))                 # [k, 2]
+    bits = bits.reshape(n_outer, zp.shape[1]).astype(bool)                          # i_outer=byte·8+r
+    return jnp.sum(jnp.where(bits, eq_outer[:, None], _ZERO_G), axis=0)  # dtype-native 0/1 select
 
 
 @runtime_checkable
@@ -191,7 +190,8 @@ class _LincheckCarry:
     comb: Any = None                 # ← _CombRound
     rounds: Any = None               # ← _SumcheckRound
     r_rounds: Any = None             # ← _SumcheckRound (read by _ClaimRound)
-    z_partial: Any = None            # ← _SumcheckRound
+    z_partial: Any = None            # ← _SumcheckRound (lanes, for the wire)
+    z_partial_g: Any = None          # ← _SumcheckRound (for observe + w, no host lift)
     z_vec_pre: Any = None            # ← _SumcheckRound (capture)
     claim: Any = None                # ← _ClaimRound
 
@@ -208,15 +208,14 @@ class _CombRound(Round):
         k_skip = self._k_skip
         x_ab, circuit = carry.x_ab, carry.circuit
         transcript.observe_label(LABEL)
-        alpha = jnp.asarray(transcript.sample_f128())
+        alpha = transcript.sample_f128()
         eq_inner = build_quirky_eq_table(x_ab.z_skip, x_ab.x_inner_rest, k_skip)
         if circuit is not None:
-            comb = jnp.asarray(circuit.fold_alpha_batched(alpha, eq_inner))
+            comb = circuit.fold_alpha_batched(alpha, eq_inner)
             if circuit.const_pin is not None:
-                beta = jnp.asarray(transcript.sample_f128())   # sampled AFTER alpha (flock order)
+                beta = transcript.sample_f128()               # sampled AFTER alpha (flock order)
                 col = circuit.const_pin
-                comb = comb.at[col].set(
-                    field.from_ghash(field.to_ghash(comb[col]) + field.to_ghash(beta)))
+                comb = comb.at[col].set(comb[col] + beta)
         else:
             comb = fold_alpha_batched(alpha, jnp.asarray(carry.a_dense),
                                       jnp.asarray(carry.b_dense), eq_inner)
@@ -234,24 +233,24 @@ class _SumcheckRound(Round):
         m, k_log, k_skip = self._m, self._k_log, self._k_skip
         inner_rest = k_log - k_skip
         comb = carry.comb
-        eq_outer = build_eq_fused(jnp.asarray(carry.x_ab.x_outer))
+        eq_outer = build_eq_fused_from_g(carry.x_ab.x_outer)
         z_vec = partial_fold_packed_z(carry.z_packed_bytes, m, k_log, eq_outer)
-        z_vec_pre = np.asarray(z_vec) if self._capture else None  # pre-sumcheck (PCS open reuse)
+        z_vec_pre = ghash.from_ghash_host(z_vec) if self._capture else None  # pre-sumcheck (PCS open reuse)
 
         rounds, r_rounds = [], []
         if inner_rest > 0:
-            stacked = jnp.stack([field.to_ghash(jnp.asarray(comb)),
-                                 field.to_ghash(z_vec)])
+            stacked = jnp.stack([comb, z_vec])
             stacked, transcript._t, msgs = prove_inf_product(
                 stacked, transcript._t, inner_rest)
             for e1, einf, r in msgs:
-                rounds.append((field.from_ghash_host(e1), field.from_ghash_host(einf)))
-                r_rounds.append(field.from_ghash_host(r))
-            z_partial = field.from_ghash_host(stacked[1])
+                rounds.append((e1, einf))
+                r_rounds.append(r)                            # native ghash fold challenge
+            z_partial_g = stacked[1]
         else:
-            z_partial = np.asarray(z_vec)
+            z_partial_g = z_vec
+        z_partial = z_partial_g
         carry = replace(carry, rounds=rounds, r_rounds=r_rounds, z_partial=z_partial,
-                        z_vec_pre=z_vec_pre)
+                        z_partial_g=z_partial_g, z_vec_pre=z_vec_pre)
         return carry, transcript, (rounds, z_partial)
 
 
@@ -265,16 +264,15 @@ class _ClaimRound(Round):
 
     def __call__(self, carry, transcript):
         k_skip = self._k_skip
-        z_partial = carry.z_partial
-        transcript.observe_f128_slice(z_partial)              # 6. observe z_partial
+        transcript.observe_f128(carry.z_partial_g)      # 6. observe z_partial
         r_inner_skip = transcript.sample_f128()               # 7. fresh z_skip AFTER
         lam = _lagrange_weights(k_skip, r_inner_skip, 0)       # 8. φ8 S-domain weights
-        w = field.from_ghash_host(jnp.sum(                     # inner_product
-            lam * field.to_ghash(jnp.asarray(z_partial)), axis=0))
-        r_inner_rest = [np.asarray(r) for r in reversed(carry.r_rounds)]  # 9. LSB-first
+        w = jnp.sum(lam * carry.z_partial_g, axis=0)          # inner_product (ghash)
+        r_inner_rest = list(reversed(carry.r_rounds))         # 9. LSB-first (ghash scalars)
         claim = LincheckClaim(
-            r_inner_skip=np.asarray(r_inner_skip),
-            r_inner_rest=np.stack(r_inner_rest) if r_inner_rest else np.zeros((0, 2), np.uint64),
+            r_inner_skip=r_inner_skip,
+            r_inner_rest=(jnp.stack(r_inner_rest) if r_inner_rest
+                          else ghash.to_ghash(jnp.zeros((0, 2), jnp.uint64))),
             w=w)
         return replace(carry, claim=claim), transcript, claim
 

@@ -21,7 +21,9 @@ import frx
 
 frx.config.update("jax_enable_x64", True)
 
-from flock_zorch import field, zerocheck, lincheck, prover  # noqa: E402
+import frx.numpy as jnp  # noqa: E402
+
+from flock_zorch import ghash, zerocheck, lincheck, prover  # noqa: E402
 from flock_zorch.pcs import commit as pcs_commit  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 
@@ -53,7 +55,7 @@ def _unpack(z_packed, m):
 
 
 def _eq(name, got, want, results):
-    g = np.asarray(got, np.uint64).reshape(-1, 2); w = np.asarray(want, np.uint64).reshape(-1, 2)
+    g = ghash.to_lanes(got).reshape(-1, 2); w = np.asarray(want, np.uint64).reshape(-1, 2)
     results.append((name, g.shape == w.shape and np.array_equal(g, w)))
 
 
@@ -93,7 +95,8 @@ def run():
     zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch)
     _eq("zc round1_ab", zc.round1_ab, g["zc"]["r1ab"], results)
     _eq("zc round1_c", zc.round1_c, g["zc"]["r1c"], results)
-    got_mlv = np.array([np.concatenate([a, b]) for a, b in zc.multilinear_rounds])
+    got_mlv = np.array([np.concatenate([ghash.to_lanes(a).reshape(2), ghash.to_lanes(b).reshape(2)])
+                        for a, b in zc.multilinear_rounds])
     want_mlv = np.array([np.concatenate([a, b]) for a, b in g["zc"]["mlv"]])
     _eq("zc multilinear_rounds", got_mlv, want_mlv, results)
     _eq("zc final_a", zc.final_a_eval, g["zc"]["fa"], results)
@@ -107,20 +110,22 @@ def run():
     x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, ir)
     lc_rounds, lc_zp, lc_claim, _zvp = lincheck.prove(
         g["zlc"], None, None, x_ab, m, g["meta"]["k_log"], g["meta"]["k_skip"], ch=ch, capture=True, circuit=csc)
-    got_lcr = np.array([np.concatenate([a, b]) for a, b in lc_rounds]) if lc_rounds else np.zeros((0, 4), np.uint64)
+    got_lcr = np.array([np.concatenate([ghash.to_lanes(a).reshape(2), ghash.to_lanes(b).reshape(2)])
+                        for a, b in lc_rounds]) if lc_rounds else np.zeros((0, 4), np.uint64)
     want_lcr = np.array([np.concatenate([a, b]) for a, b in g["lc"]["rounds"]]) if g["lc"]["rounds"] else np.zeros((0, 4), np.uint64)
     results.append(("lc rounds (CSC, inner_rest=9)", got_lcr.shape == want_lcr.shape and np.array_equal(got_lcr, want_lcr)))
     _eq("lc z_partial", lc_zp, g["lc"]["zp"], results)
 
     # Stage D: batched dual-claim open (ab from lincheck, c from zerocheck)
-    ab_full = np.concatenate([lc_claim.r_inner_rest, x_ab.x_outer], axis=0)
-    c_full = np.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
+    ab_full = jnp.concatenate([lc_claim.r_inner_rest, x_ab.x_outer], axis=0)
+    c_full = jnp.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
     out = prover.open_batch(g["z"], codeword, tree, [ab_full, c_full], (m - 7 - lbs) + lir,
                             lir, lbs, ch)
     for i in range(2):
         _eq(f"open ring_switch[{i}]", out.ring_switches[i], g["rs"][i], results)
     bf = out.basefold; gbf = g["bf"]
-    got_rm = np.array([np.concatenate([a, b]) for a, b in bf.round_messages])
+    got_rm = np.array([np.concatenate([ghash.to_lanes(a).reshape(2), ghash.to_lanes(b).reshape(2)])
+                       for a, b in bf.round_messages])
     want_rm = np.array([np.concatenate([a, b]) for a, b in gbf["rm"]])
     _eq("open bf round_messages", got_rm, want_rm, results)
     _eq("open bf post_rb_commit", bf.post_row_batch_commit, gbf["post_rb_root"], results)

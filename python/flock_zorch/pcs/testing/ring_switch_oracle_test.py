@@ -7,7 +7,7 @@ import frx
 
 frx.config.update("jax_enable_x64", True)
 
-from flock_zorch import field  # noqa: E402
+from flock_zorch import ghash  # noqa: E402
 from flock_zorch.pcs import ring_switch  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 
@@ -30,10 +30,10 @@ def _check(name):
     g_claim = np.frombuffer(raw, np.uint64, 2, o).copy()
 
     ch = Challenger(b"flock-ring-switch-test")
-    shv, rei, claim = ring_switch.prove(pw, xo, ch)
-    ok = (np.array_equal(shv, g_shv) and np.array_equal(rei, g_rei) and np.array_equal(claim, g_claim))
-    bad = [k for k, v in {"s_hat_v": np.array_equal(shv, g_shv), "rs_eq_ind": np.array_equal(rei, g_rei),
-                          "sumcheck_claim": np.array_equal(claim, g_claim)}.items() if not v]
+    shv, rei, claim = ring_switch.prove(pw, ghash.to_ghash(xo), ch)
+    ok = (np.array_equal(ghash.to_lanes(shv), g_shv) and np.array_equal(ghash.to_lanes(rei), g_rei) and np.array_equal(ghash.to_lanes(claim), g_claim))
+    bad = [k for k, v in {"s_hat_v": np.array_equal(ghash.to_lanes(shv), g_shv), "rs_eq_ind": np.array_equal(ghash.to_lanes(rei), g_rei),
+                          "sumcheck_claim": np.array_equal(ghash.to_lanes(claim), g_claim)}.items() if not v]
     print(f"ring_switch byte-match vs flock ({name}): {'PASS' if ok else 'FAIL ' + str(bad)}")
     return ok
 

@@ -22,7 +22,9 @@ import frx
 
 frx.config.update("jax_enable_x64", True)
 
-from flock_zorch import field, zerocheck, lincheck, prover  # noqa: E402
+import frx.numpy as jnp  # noqa: E402
+
+from flock_zorch import ghash, zerocheck, lincheck, prover  # noqa: E402
 from flock_zorch.pcs import commit as pcs_commit  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 from flock_zorch.lincheck.keccak import KeccakLincheckCircuit  # noqa: E402
@@ -42,7 +44,7 @@ class R:
 
 
 def _eq(name, got, want, results):
-    g = np.asarray(got, np.uint64).reshape(-1, 2); w = np.asarray(want, np.uint64).reshape(-1, 2)
+    g = ghash.to_lanes(got).reshape(-1, 2); w = np.asarray(want, np.uint64).reshape(-1, 2)
     results.append((name, g.shape == w.shape and np.array_equal(g, w)))
 
 
@@ -88,7 +90,8 @@ def run():
     zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch)
     _eq("zerocheck round1_ab", zc.round1_ab, g["zc"]["r1ab"], results)
     _eq("zerocheck round1_c", zc.round1_c, g["zc"]["r1c"], results)
-    got_mlv = np.array([np.concatenate([a, b]) for a, b in zc.multilinear_rounds])
+    got_mlv = np.array([np.concatenate([ghash.to_lanes(a).reshape(2), ghash.to_lanes(b).reshape(2)])
+                        for a, b in zc.multilinear_rounds])
     want_mlv = np.array([np.concatenate([a, b]) for a, b in g["zc"]["mlv"]])
     _eq("zerocheck multilinear_rounds", got_mlv, want_mlv, results)
     _eq("zerocheck final_c", zc.final_c_eval, g["zc"]["fc"], results)
@@ -107,13 +110,14 @@ def run():
 
     # Stage D: batched dual-claim open (ab from lincheck, c from zerocheck)
     k_code = (m - 7 - lbs) + lir
-    ab_full = np.concatenate([lc_claim.r_inner_rest, x_ab.x_outer], axis=0)
-    c_full = np.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
+    ab_full = jnp.concatenate([lc_claim.r_inner_rest, x_ab.x_outer], axis=0)
+    c_full = jnp.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
     out = prover.open_batch(g["z"], codeword, tree, [ab_full, c_full], k_code, lir, lbs, ch)
     for i in range(len(g["rs"])):
         _eq(f"open ring_switch[{i}]", out.ring_switches[i], g["rs"][i], results)
     bf = out.basefold; gbf = g["bf"]
-    got_rm = np.array([np.concatenate([a, b]) for a, b in bf.round_messages])
+    got_rm = np.array([np.concatenate([ghash.to_lanes(a).reshape(2), ghash.to_lanes(b).reshape(2)])
+                       for a, b in bf.round_messages])
     want_rm = np.array([np.concatenate([a, b]) for a, b in gbf["rm"]])
     _eq("open bf round_messages", got_rm, want_rm, results)
     _eq("open bf post_rb_commit", bf.post_row_batch_commit, gbf["post_rb_root"], results)
@@ -139,7 +143,7 @@ def run():
 
     # Stage W: the M1 walker port — KeccakLincheckCircuit.fold_alpha_batched (standalone)
     for i, p in enumerate(g["probes"]):
-        comb = circ.fold_alpha_batched(p["alpha"], p["eq"])
+        comb = ghash.from_ghash_host(circ.fold_alpha_batched(ghash.to_ghash(p["alpha"]), ghash.to_ghash(p["eq"])))
         results.append((f"walker probe {i} (fold_alpha_batched)", np.array_equal(comb, p["comb"])))
     return m, results
 

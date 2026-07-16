@@ -22,7 +22,9 @@ import frx
 
 frx.config.update("jax_enable_x64", True)
 
-from flock_zorch import zerocheck, lincheck, prover  # noqa: E402
+import frx.numpy as jnp  # noqa: E402
+
+from flock_zorch import zerocheck, lincheck, prover, ghash  # noqa: E402
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 from flock_zorch.lincheck.keccak3 import Keccak3LincheckCircuit  # noqa: E402
@@ -98,14 +100,14 @@ def run():
     circ = Keccak3LincheckCircuit()
     x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, ir)
     _lr, lc_zp, lc_claim, _zv = lincheck.prove(g["zlc"], None, None, x_ab, m, k_log, k_skip, ch=ch, capture=True, circuit=circ)
-    results.append(("lincheck z_partial", np.array_equal(lc_zp, g["lc"]["zp"])))
+    results.append(("lincheck z_partial", np.array_equal(ghash.to_lanes(lc_zp), g["lc"]["zp"])))
 
-    ab_full = np.concatenate([lc_claim.r_inner_rest, x_ab.x_outer], axis=0)
-    c_full = np.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
+    ab_full = jnp.concatenate([lc_claim.r_inner_rest, x_ab.x_outer], axis=0)
+    c_full = jnp.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
     out = prover.open_batch_ligerito(cfg, g["z"], pdata, [ab_full, c_full], ch)
 
     for i in range(len(g["rs"])):
-        results.append((f"open ring_switch[{i}]", np.array_equal(out.ring_switches[i], g["rs"][i])))
+        results.append((f"open ring_switch[{i}]", np.array_equal(ghash.to_lanes(out.ring_switches[i]), g["rs"][i])))
     p, gl = out.ligerito, g["lig"]
 
     def pairs(t): return np.array([np.concatenate([a, b]) for a, b in t]) if t else np.zeros((0, 4), np.uint64)
@@ -130,7 +132,7 @@ def run():
 
     # Stage W: the keccak3 walker port — Keccak3LincheckCircuit.fold_alpha_batched (standalone)
     for i, pb in enumerate(g["probes"]):
-        comb = circ.fold_alpha_batched(pb["alpha"], pb["eq"])
+        comb = ghash.from_ghash_host(circ.fold_alpha_batched(ghash.to_ghash(pb["alpha"]), ghash.to_ghash(pb["eq"])))
         results.append((f"walker probe {i} (fold_alpha_batched)", np.array_equal(comb, pb["comb"])))
     return m, results
 

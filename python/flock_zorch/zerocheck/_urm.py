@@ -25,7 +25,7 @@ import frx.numpy as jnp
 import zk_dtypes
 from frx import lax
 
-from flock_zorch import field, sumcheck
+from flock_zorch import ghash, sumcheck
 
 # ---------------------------------------------------------------------------
 # phi8: F8 -> F128 embedding (256-entry table). F2-linear, so the full table is
@@ -59,6 +59,7 @@ def _build_phi8_table() -> np.ndarray:
 PHI_8_TABLE = _build_phi8_table()  # uint64 [256, 2] = F128 (host; `_fold` indexes it)
 
 _PHI_DEV = jnp.asarray(PHI_8_TABLE)
+_PHI_DEV_G = ghash.to_ghash(_PHI_DEV)        # [256] ghash — indexed in-kernel, no lane bitcast
 _AES = np.dtype(zk_dtypes.binary_field_gf8_aes)
 
 
@@ -91,11 +92,10 @@ def _round1_core(a, b, c, k_skip, eqx):
     b_l = _extend_rows(b, k_skip)
     c_l = _to_u8(_extend_rows(c, k_skip))
     ab = _to_u8(a_l * b_l).astype(jnp.int32)
-    phi_ab = field.to_ghash(_PHI_DEV[ab])
-    phi_c = field.to_ghash(_PHI_DEV[c_l.astype(jnp.int32)])
-    eqx_g = field.to_ghash(eqx)                        # [n_chunks, 1]
-    return (field.from_ghash(jnp.sum(eqx_g * phi_ab, axis=0)),
-            field.from_ghash(jnp.sum(eqx_g * phi_c, axis=0)))
+    phi_ab = _PHI_DEV_G[ab]
+    phi_c = _PHI_DEV_G[c_l.astype(jnp.int32)]
+    return (ghash.from_ghash(jnp.sum(eqx * phi_ab, axis=0)),
+            ghash.from_ghash(jnp.sum(eqx * phi_c, axis=0)))
 
 
 @functools.partial(frx.jit, static_argnums=(1, 2))
@@ -137,8 +137,7 @@ def round1_rows(a, b, c, m: int, k_skip: int, r):
     """Round-1 URM from device witness rows (uint8 [2^(m-k_skip), 2^k_skip]). The
     compute half of `round1_naive`, so the witness can be transferred once and
     reused by `zerocheck._fold_at_z_dev`. Returns (P^AB, P^C) as numpy."""
-    r = np.asarray(r, dtype=np.uint64)
-    eqx = sumcheck.build_eq_fused(jnp.asarray(r[k_skip:]))[:, None, :]  # [n_chunks, 1, 2]
+    eqx = sumcheck.build_eq_fused_from_g(r[k_skip:])[:, None]  # r is ghash [m]; [n_chunks, 1]
     p_ab, p_c = _round1_core(a, b, c, k_skip, eqx)  # fused extend+phi+accum
     return np.asarray(p_ab), np.asarray(p_c)
 

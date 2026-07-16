@@ -32,7 +32,7 @@ import frx
 frx.config.update("jax_enable_x64", True)
 import frx.numpy as jnp  # noqa: E402
 
-from flock_zorch import field, sumcheck  # noqa: E402
+from flock_zorch import ghash, sumcheck  # noqa: E402
 from flock_zorch.sumcheck.testing import sumcheck_oracle_test as oracle  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[4]

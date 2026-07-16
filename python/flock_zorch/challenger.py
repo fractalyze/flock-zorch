@@ -23,14 +23,13 @@ import frx.numpy as jnp
 
 from zorch.sha256_field_transcript import Sha256FieldTranscript
 
-from flock_zorch import field, fs
+from flock_zorch import fs
 
 
 class Challenger:
     """Mutable wrapper over the functional device transcript, mirroring flock's
-    `&mut self` `FsChallenger` API. F128 values are `uint64[..., 2]` arrays at
-    this boundary (the `field.py` representation); the transcript holds native
-    `binary_field_ghash` elements."""
+    `&mut self` `FsChallenger` API. Observes and samples carry native
+    `binary_field_ghash` elements; host-int consumers convert at their own edge."""
 
     def __init__(self, domain: bytes):
         self._t = Sha256FieldTranscript.new(domain, jnp.binary_field_ghash)
@@ -42,20 +41,25 @@ class Challenger:
         self._t = fs.observe_bytes(
             self._t, np.frombuffer(bytes(data), np.uint8))
 
-    def observe_f128(self, v) -> None:
-        self._t = fs.observe_scalar(self._t, field.to_ghash(jnp.asarray(v)))
+    def observe_f128(self, g) -> None:
+        """Observe F128 (native `binary_field_ghash`) — a scalar or a slice,
+        framed by shape (flock scalar-frames a single element, slice-frames many)."""
+        if jnp.ndim(g) == 0:
+            self._t = fs.observe_scalar(self._t, g)
+        else:
+            self._t = fs.observe_slice(self._t, g)
 
-    def observe_f128_slice(self, vs) -> None:
-        vs = jnp.asarray(np.asarray(vs, np.uint64).reshape(-1, 2))
-        self._t = fs.observe_slice(self._t, field.to_ghash(vs))
-
-    def sample_f128(self) -> np.ndarray:
-        self._t, g = fs.sample_scalar(self._t)
-        return field.from_ghash_host(g)
-
-    def sample_f128_vec(self, n: int) -> np.ndarray:
+    def sample_f128(self, n: int | None = None):
+        """Sample F128 as native `binary_field_ghash`. Bare `sample_f128()` is a
+        single scalar draw; `sample_f128(n)` is a length-`n` slice — the two frame
+        differently on the wire, so a length-1 vector still passes an explicit `n=1`
+        (scalar vs slice(1) are NOT the same bytes). Host-int consumers (Lagrange
+        nodes, query positions) do `ghash.from_ghash_host` themselves."""
+        if n is None:
+            self._t, g = fs.sample_scalar(self._t)
+            return g
         self._t, g = fs.sample_slice(self._t, n)
-        return field.from_ghash_host(g)
+        return g
 
     def grind_pow(self, bits: int) -> int:
         self._t, witness = fs.grind(self._t, bits)

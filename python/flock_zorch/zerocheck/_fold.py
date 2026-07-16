@@ -11,11 +11,11 @@ import numpy as np
 import frx
 import frx.numpy as jnp
 
-from flock_zorch import field
+from flock_zorch import ghash
 from flock_zorch.zerocheck import _urm
 
 _ONE = np.array([1, 0], dtype=np.uint64)
-_ONE_G = field.to_ghash(jnp.asarray(_ONE))  # binary_field_ghash scalar one
+_ONE_G = ghash.to_ghash(jnp.asarray(_ONE))  # binary_field_ghash scalar one
 
 
 def _prod_axis1(mat):
@@ -61,7 +61,7 @@ def _batch_inv(ag):
     return result
 
 
-def _lagrange_weights(k_skip: int, z, offset: int):
+def _lagrange_weights(k_skip: int, zg, offset: int):
     """L_i(z) over the φ₈-embedded nodes PHI_8_TABLE[offset+i], i∈[0, 2^k_skip).
     offset=0 → the S domain; offset=2^k_skip → the Λ domain.
 
@@ -69,20 +69,20 @@ def _lagrange_weights(k_skip: int, z, offset: int):
     jit is essential — it keeps the native ghash multiplies fused).
     Same field math → byte-identical weights (gated).
 
-    z: uint64 [2]; returns `binary_field_ghash [2^k_skip]` — every consumer folds
-    it on the dtype, so the weights never leave it."""
-    sg = field.to_ghash(jnp.asarray(_urm.PHI_8_TABLE[offset:offset + (1 << k_skip)]))
-    num, den = _lag_numden(sg, field.to_ghash(jnp.asarray(z)))
+    zg: `binary_field_ghash` scalar (z is a value in the L_i formula, not an index).
+    Returns `binary_field_ghash [2^k_skip]` — never leaves the dtype."""
+    sg = ghash.to_ghash(jnp.asarray(_urm.PHI_8_TABLE[offset:offset + (1 << k_skip)]))
+    num, den = _lag_numden(sg, zg)
     return _lag_w(num, _batch_inv(den))
 
 
-def _interpolate_at_z_on_lambda(values, k_skip: int, z) -> np.ndarray:
+def _interpolate_at_z_on_lambda(values, k_skip: int, zg) -> np.ndarray:
     """Σ_i L_i^Λ(z)·values[i] (flock `interpolate_at_z_on_lambda`).
 
-    values: uint64 [2^k_skip, 2]; z: uint64 [2]; returns uint64 [2] (a proof field)."""
-    w = _lagrange_weights(k_skip, z, 1 << k_skip)
-    prod = w * field.to_ghash(jnp.asarray(values))
-    return field.from_ghash_host(jnp.sum(prod))  # XOR-sum inner product
+    values: uint64 [2^k_skip, 2]; zg: ghash scalar; returns uint64 [2] (a proof field)."""
+    w = _lagrange_weights(k_skip, zg, 1 << k_skip)
+    prod = w * ghash.to_ghash(jnp.asarray(values))
+    return ghash.from_ghash_host(jnp.sum(prod))  # XOR-sum inner product
 
 
 @frx.jit
@@ -95,6 +95,6 @@ def _fold_at_z_dev(rows, w_g):
     GPU instead of materialized in host numpy. The select drops to the lo/hi lanes —
     it zeroes a weight by integer-multiplying it against the 0/1 witness bit, which
     the field multiply can't express."""
-    w = field.from_ghash(w_g)                                     # [ell, 2]
+    w = ghash.from_ghash(w_g)                                     # [ell, 2]
     masked = rows[:, :, None].astype(jnp.uint64) * w[None, :, :]  # 0 or w[s], uint64 [n,ell,2]
-    return jnp.sum(field.to_ghash(masked), axis=1)                # ghash [n]
+    return jnp.sum(ghash.to_ghash(masked), axis=1)                # ghash [n]

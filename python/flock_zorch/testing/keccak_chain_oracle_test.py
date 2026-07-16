@@ -21,7 +21,9 @@ import frx
 
 frx.config.update("jax_enable_x64", True)
 
-from flock_zorch import zerocheck, lincheck, prover  # noqa: E402
+import frx.numpy as jnp  # noqa: E402
+
+from flock_zorch import zerocheck, lincheck, prover, ghash  # noqa: E402
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
 from flock_zorch.lincheck import chain  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
@@ -94,33 +96,34 @@ def run():
     prover.bind_statement(ch, g["stmt"], root)
     a_bits, b_bits, c_bits = _unpack(g["a"], m), _unpack(g["b"], m), _unpack(g["z"], m)
     zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch)
-    results.append(("zerocheck round1_ab", np.array_equal(zc.round1_ab, g["zc"]["r1ab"])))
-    results.append(("zerocheck final_c", np.array_equal(zc.final_c_eval, g["zc"]["fc"])))
+    results.append(("zerocheck round1_ab", np.array_equal(ghash.to_lanes(zc.round1_ab), g["zc"]["r1ab"])))
+    results.append(("zerocheck final_c", np.array_equal(ghash.to_lanes(zc.final_c_eval).reshape(2), g["zc"]["fc"])))
 
     circ = KeccakLincheckCircuit()
     x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, ir)
     _lr, lc_zp, lc_claim, _zv = lincheck.prove(g["zlc"], None, None, x_ab, m, k_log, k_skip, ch=ch, capture=True, circuit=circ)
-    results.append(("lincheck z_partial", np.array_equal(lc_zp, g["lc"]["zp"])))
+    results.append(("lincheck z_partial", np.array_equal(ghash.to_lanes(lc_zp), g["lc"]["zp"])))
 
     # ---- chain: τ_pos → region fold → shift sumcheck → assemble packed-direct claim
-    tau_pos = ch.sample_f128_vec(region_log - chain.LOG_PACKING)
+    tau_pos = ghash.from_ghash_host(ch.sample_f128(region_log - chain.LOG_PACKING))
     in_vals, out_vals = chain.fold_in_out(g["z"], k_log, tau_pos,
                                           meta["input_byte_off"], meta["output_byte_off"])
     sh_rounds, _g_at, sh_claims = chain.prove_chain_shift(in_vals, out_vals, ch)
-    got_sr = np.array([np.concatenate([e1, ei]) for e1, ei in sh_rounds]) if sh_rounds else np.zeros((0, 4), np.uint64)
+    got_sr = np.array([np.concatenate([ghash.to_lanes(e1).reshape(2), ghash.to_lanes(ei).reshape(2)])
+                       for e1, ei in sh_rounds]) if sh_rounds else np.zeros((0, 4), np.uint64)
     want_sr = np.array([np.concatenate([e1, ei]) for e1, ei in g["shift"]["rounds"]]) if g["shift"]["rounds"] else np.zeros((0, 4), np.uint64)
     results.append(("shift rounds", got_sr.shape == want_sr.shape and np.array_equal(got_sr, want_sr)))
-    results.append(("shift g_at_point", np.array_equal(sh_claims["value"], g["shift"]["g_at_point"])))
+    results.append(("shift g_at_point", np.array_equal(ghash.to_lanes(sh_claims["value"]).reshape(2), g["shift"]["g_at_point"])))
     chain_claim = chain.assemble_chain_claim(tau_pos, sh_claims, k_log, region_log)
 
     # ---- mixed open: [ab, c] ring-switched + [chain] packed-direct
-    ab_full = np.concatenate([lc_claim.r_inner_rest, x_ab.x_outer], axis=0)
-    c_full = np.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
+    ab_full = jnp.concatenate([lc_claim.r_inner_rest, x_ab.x_outer], axis=0)
+    c_full = jnp.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
     out = prover.open_batch_mixed_ligerito(cfg, g["z"], pdata,
                                            [ab_full, c_full], [chain_claim], ch)
 
     for i in range(len(g["rs"])):
-        results.append((f"open ring_switch[{i}]", np.array_equal(out.ring_switches[i], g["rs"][i])))
+        results.append((f"open ring_switch[{i}]", np.array_equal(ghash.to_lanes(out.ring_switches[i]), g["rs"][i])))
     p, gl = out.ligerito, g["lig"]
 
     def pairs(t): return np.array([np.concatenate([a, b]) for a, b in t]) if t else np.zeros((0, 4), np.uint64)
