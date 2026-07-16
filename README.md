@@ -62,14 +62,17 @@ python3.11 -m venv .venv
 
 ### Bumping the pins
 
+- **flock** — bump the `rev` on the `flock-core` / `flock-prover` git deps in
+  [`Cargo.toml`](Cargo.toml); cargo re-fetches on the next build.
+- **zorch** — bump the `git_override` commit in [`MODULE.bazel`](MODULE.bazel),
+  and move `requirements.in`'s `frx` / `frxlib` / `frx-cuda12` wheels to the SAME
+  version as zorch's own `requirements.in` — the binary-field GPU kernels must
+  match, and CPU-only CI can't catch a desync.
+
+Then re-verify before pushing:
+
 ```bash
-# flock: edit the rev on the flock-core / flock-prover git deps in Cargo.toml
-# (cargo re-fetches on the next build). zorch: edit the git_override commit in
-# MODULE.bazel, keeping requirements.in's frx / frxlib / frx-cuda12 wheels on the
-# SAME version as zorch's own requirements.in — the binary-field GPU kernels must
-# match, and CPU-only CI can't catch a desync.
-$EDITOR Cargo.toml MODULE.bazel
-scripts/dump_goldens.sh core && bazel test //python:all   # re-verify before pushing
+scripts/dump_goldens.sh core && bazel test //python:all
 ```
 
 ## Reproduce
