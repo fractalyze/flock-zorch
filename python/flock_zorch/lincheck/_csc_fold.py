@@ -15,9 +15,7 @@ import numpy as np
 import frx
 import frx.numpy as jnp
 
-U64 = jnp.uint64
-def _zeros_g(n):
-    return frx.lax.bitcast_convert_type(jnp.zeros((n, 2), U64), jnp.binary_field_ghash)
+from flock_zorch import ghash
 
 
 def _flatten_nz(rows):
@@ -61,6 +59,6 @@ def _seg_xor_fold(eq, row_sorted, seg_end, present, k):
     vals = eq[row_sorted]                                          # ghash [nnz]
     pref = frx.lax.associative_scan(lambda a, b: a + b, vals, axis=0)  # inclusive prefix XOR (ghash add)
     ends = pref[seg_end]                                           # cumulative through each run end
-    prev = jnp.concatenate([_zeros_g(1), ends[:-1]], axis=0)
+    prev = jnp.concatenate([ghash.zeros(1), ends[:-1]], axis=0)
     seg = ends + prev                                            # per-column XOR-reduce (add is its own inverse)
-    return _zeros_g(k).at[present].set(seg)
+    return ghash.zeros(k).at[present].set(seg)

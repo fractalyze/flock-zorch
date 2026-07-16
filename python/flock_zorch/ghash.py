@@ -40,6 +40,13 @@ def from_ghash(g):
     return frx.lax.bitcast_convert_type(g, U64)
 
 
+def zeros(n: int):
+    """`binary_field_ghash [n]` of field zeros — a bitcast of zero bytes, NOT
+    `jnp.zeros(n, binary_field_ghash)` (an int->ghash convert is unimplemented; a
+    scalar default even emits an S64->ghash convert at compile — see CLAUDE.md)."""
+    return frx.lax.bitcast_convert_type(jnp.zeros((n, 2), U64), _GHASH)
+
+
 def from_ghash_host(g) -> np.ndarray:
     """`from_ghash` materialized to host numpy — for the host-consumed uint64 lanes
     (verify replay, transcript serde, the chain / lincheck reductions)."""
