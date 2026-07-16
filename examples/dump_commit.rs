@@ -1,7 +1,7 @@
 //! Golden-fixture dumper for the PCS commit (first full sub-protocol).
 //!
 //! Builds a deterministic Boolean witness, packs it, runs flock's `pcs::commit`,
-//! and dumps the packed witness + the 32-byte Merkle root. The jax port
+//! and dumps the packed witness + the 32-byte Merkle root. The frx port
 //! (`flock_zorch.pcs_commit.commit_root`) reads `z_packed`, recomputes the
 //! interleaved-NTT + Merkle commit, and byte-compares the root.
 //!

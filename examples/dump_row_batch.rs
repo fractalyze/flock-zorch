@@ -2,7 +2,7 @@
 //!
 //! Replicates flock `pcs::basefold::row_batch_fold_all`'s nested fold
 //! `buf[j] = u + r·(u+v)` (a private fn) using flock's real F128 arithmetic on
-//! deterministic inputs. The jax port (`pcs_open.row_batch_fold_all`) recomputes
+//! deterministic inputs. The frx port (`pcs_open.row_batch_fold_all`) recomputes
 //! and byte-compares. (The full byte-identity anchor is the basefold gate; this
 //! isolates the primitive.)
 //!

@@ -1,7 +1,7 @@
 //! Golden-fixture dumper for flock's Fiat-Shamir challenger (the SHA-256
 //! `FsChallenger`). Runs ONE deterministic scripted observe/sample/grind
 //! sequence exercising every op + the duplex re-absorb + PoW, and dumps the
-//! sampled F128s and the grind nonce. The jax port
+//! sampled F128s and the grind nonce. The frx port
 //! (`flock_zorch.challenger.Challenger` over zorch's `Sha256Transcript`) replays
 //! the identical script and byte-compares.
 //!

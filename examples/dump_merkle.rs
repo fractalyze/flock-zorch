@@ -2,7 +2,7 @@
 //!
 //! Builds flock's `merkle::merkle_root` over `n_leaves` leaves of `leaf_size`
 //! bytes each (deterministic SplitMix64 data), so the fixture is byte-anchored to
-//! unmodified flock. The jax port (`flock_zorch.merkle.merkle_root`) reads the
+//! unmodified flock. The frx port (`flock_zorch.merkle.merkle_root`) reads the
 //! data, recomputes the tree, and byte-compares the 32-byte root.
 //!
 //! Usage: `cargo run --release --example dump_merkle -- [n_leaves] [leaf_size] [out]`

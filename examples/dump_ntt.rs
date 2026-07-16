@@ -1,7 +1,7 @@
 //! Golden-fixture dumper for the additive NTT over F128 (port target #2).
 //!
 //! Builds `AdditiveNttF128::standard(log_d)`, runs `forward_transform_scalar` on
-//! a deterministic SplitMix64 input, and dumps (input, twiddles, output). The jax
+//! a deterministic SplitMix64 input, and dumps (input, twiddles, output). The frx
 //! port (`flock_zorch.ntt.forward_transform_scalar`) reads input + twiddles,
 //! recomputes the transform, and byte-compares against output.
 //!

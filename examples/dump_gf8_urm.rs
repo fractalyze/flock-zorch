@@ -3,7 +3,7 @@
 //!
 //! Dumps flock's `PHI_8_TABLE` (256 F128, for a cross-check of the F2-linear
 //! reconstruction) and, for a few (m, k_skip), the reference `round1_naive`
-//! output on a deterministic witness. The jax port recomputes both and
+//! output on a deterministic witness. The frx port recomputes both and
 //! byte-compares.
 //!
 //! Usage: `cargo run --release --example dump_gf8_urm -- [out_path]`

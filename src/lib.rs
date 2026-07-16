@@ -1,8 +1,8 @@
 //! flock-zorch — a GPU port of [succinctlabs/flock](https://github.com/succinctlabs/flock),
-//! an R1CS-over-GF(2) PIOP prover, onto the zorch / zkx compiler stack in the
+//! an R1CS-over-GF(2) PIOP prover, onto the zorch / xla compiler stack in the
 //! style of `bellman-zorch` and `accumulation-zorch`.
 //!
-//! The prover is authored in jax (`python/flock_zorch`) and exported to a fused
+//! The prover is authored in frx (`python/flock_zorch`) and exported to a fused
 //! StableHLO `.mlirbc`; this crate is the thin Rust host driver plus the
 //! byte-match oracles. Correctness is a byte-identical compare against unmodified
 //! upstream flock (`../flock`), layered bottom-up:

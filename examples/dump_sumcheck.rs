@@ -1,7 +1,7 @@
 //! Golden-fixture dumper for the multilinear-sumcheck arithmetic core (iter 10:
 //! the zerocheck/lincheck primitives). Dumps reference outputs of flock-core's
 //! `build_eq`, `round_pair_naive`, and `fold_in_place_single` on deterministic
-//! SplitMix64 inputs; the jax port (`flock_zorch.sumcheck`) reads the inputs,
+//! SplitMix64 inputs; the frx port (`flock_zorch.sumcheck`) reads the inputs,
 //! recomputes each, and byte-compares against the reference outputs.
 //!
 //! Usage: `cargo run --release --example dump_sumcheck -- [out_path]`
