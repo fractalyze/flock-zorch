@@ -141,8 +141,8 @@ def merkle_tree(leaves) -> np.ndarray:
 
 
 def _octopus_levels(positions, num_leaves: int):
-    """flock's octopus dedup schedule — the shared walk behind all three octopus
-    assemblers (`merkle_multi_proof`, `multi_proof_to_paths`, `paths_to_multi_proof`).
+    """flock's octopus dedup schedule — the shared walk behind both octopus
+    assemblers (`merkle_multi_proof` from a tree, `paths_to_multi_proof` from paths).
 
     Yields, per tree level (leaves→root), the sorted-left-to-right list of active
     groups `(p, paired)`: `p` is the group's lower active node index and `paired`
@@ -180,71 +180,12 @@ def merkle_multi_proof(tree: np.ndarray, num_leaves: int, positions) -> np.ndarr
     return np.stack(proof) if proof else np.zeros((0, 32), dtype=np.uint8)
 
 
-def _sha(*parts: bytes) -> bytes:
-    import hashlib
-    h = hashlib.sha256()
-    for p in parts:
-        h.update(p)
-    return h.digest()
-
-
-def multi_proof_to_paths(proof: np.ndarray, num_leaves: int, positions,
-                         leaf_bytes: np.ndarray) -> np.ndarray:
-    """Invert `merkle_multi_proof`: reconstruct each query's per-level sibling
-    path from flock's octopus proof, feeding zorch's `pcs.fold.verify_openings`
-    (which wants per-query `Opening(row, path)` rather than flock's shared/deduped
-    wire — see `merkle.py` header: octopus is flock's proof assembly, kept
-    host-side).
-
-    `positions`: length-Q query leaf indices (dups allowed); `leaf_bytes`:
-    uint8 [Q, leaf_len] the queried leaves aligned to `positions`. Returns
-    `paths` uint8 [Q, depth, 32], leaf-first, `depth = log2(num_leaves)`.
-
-    Replays flock's bottom-up walk, filling each active node's sibling from the
-    next proof element (sibling inactive) or the co-active node's running hash
-    (sibling active, computed from the level below). Roots are NOT trusted from
-    this host walk — `verify_openings` independently rebuilds them on-device."""
-    positions = [int(p) for p in positions]
-    depth = num_leaves.bit_length() - 1
-    q = len(positions)
-    if depth == 0:
-        return np.zeros((q, 0, 32), dtype=np.uint8)
-
-    leaf_hash = {}
-    for qi, p in enumerate(positions):
-        leaf_hash.setdefault(p, _sha(leaf_bytes[qi].tobytes()))
-
-    cur = dict(leaf_hash)                 # node index -> running digest at this level
-    sibling_at_level: list[dict] = []     # level k: node index -> its sibling digest
-    pit = 0
-    for groups in _octopus_levels(positions, num_leaves):
-        sib, parents = {}, {}
-        for p, paired in groups:
-            if paired:                    # sibling co-active → recomputed from below
-                sib[p] = cur[p ^ 1]
-                sib[p ^ 1] = cur[p]
-            else:                         # sibling inactive → next proof element
-                sib[p] = np.asarray(proof[pit], np.uint8); pit += 1
-            lo, hi = (cur[p], sib[p]) if p % 2 == 0 else (sib[p], cur[p])
-            lo = lo if isinstance(lo, bytes) else lo.tobytes()
-            hi = hi if isinstance(hi, bytes) else hi.tobytes()
-            parents[p >> 1] = _sha(lo, hi)
-        sibling_at_level.append(sib)
-        cur = parents
-
-    paths = np.zeros((q, depth, 32), dtype=np.uint8)
-    for qi, p in enumerate(positions):
-        for k in range(depth):
-            s = sibling_at_level[k][p >> k]
-            paths[qi, k] = np.frombuffer(s, np.uint8) if isinstance(s, bytes) else s
-    return paths
-
-
 def paths_to_multi_proof(paths: np.ndarray, num_leaves: int, positions) -> np.ndarray:
-    """Inverse of `multi_proof_to_paths`: assemble flock's octopus multi-proof from a
-    zorch `Opening`'s per-query authentication paths + the sampled query positions,
-    byte-identical to `merkle_multi_proof` (gated by the ligerito oracle tests'
-    `merkle_proof` fields).
+    """Assemble flock's octopus multi-proof from a zorch `Opening`'s per-query
+    authentication paths + the sampled query positions, byte-identical to
+    `merkle_multi_proof` (gated by the ligerito oracle tests' `merkle_proof` fields).
+    This is the prover-side bridge from zorch's per-query openings to flock's
+    deduped octopus wire.
 
     The deduplicated octopus layout is positional (which siblings are emitted depends
     on which nodes are co-active), so it is not recoverable from the paths' shape
