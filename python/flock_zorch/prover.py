@@ -90,7 +90,7 @@ def _combine_claims(rs_eq_inds, gammas, sumcheck_claims, packed_direct=(), gamma
     for pd, g in zip(packed_direct, gammas_pd):                    # g native ghash
         eq_pd = ghash.to_ghash(build_eq(jnp.asarray(pd.point)))   # length L = 2^(m-7)
         b_combined = b_combined + g * eq_pd
-        target = target + g * ghash.to_ghash(jnp.asarray(pd.value))
+        target = target + g * pd.value                             # pd.value native ghash
     return b_combined, target  # native ghash: [2^L], scalar
 
 
@@ -139,7 +139,7 @@ def open_batch_mixed_ligerito(config, z_packed, pdata, x_outers, packed_direct,
     # Packed-direct: observe each claim's value, THEN sample the γ_pd (flock order).
     for pd in packed_direct:
         ch.observe_label(b"flock-pcs-packed-direct-v0")
-        ch.observe_f128(ghash.to_ghash(jnp.asarray(pd.value)))
+        ch.observe_f128(pd.value)                                  # native ghash scalar
     gammas_pd = [ch.sample_f128() for _ in packed_direct]
 
     b_combined, target = _combine_claims(rs_eq_inds, gammas, sumcheck_claims,

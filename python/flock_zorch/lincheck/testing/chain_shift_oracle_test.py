@@ -56,10 +56,10 @@ def run():
                       for e1, ei in rounds]) if rounds else np.zeros((0, 4), np.uint64)
     want_r = np.array([np.concatenate([e1, ei]) for e1, ei in ga["rounds"]]) if ga["rounds"] else np.zeros((0, 4), np.uint64)
     results.append(("shift rounds", got_r.shape == want_r.shape and np.array_equal(got_r, want_r)))
-    results.append(("shift g_at_point", np.array_equal(g_at, ga["g_at_point"])))
+    results.append(("shift g_at_point", np.array_equal(ghash.to_lanes(g_at).reshape(2), ga["g_at_point"])))
     results.append(("shift claim.instance_point", np.array_equal(claims["instance_point"], ga["instance_point"])))
     results.append(("shift claim.sel0", np.array_equal(claims["sel0"], ga["sel0"])))
-    results.append(("shift claim.value", np.array_equal(claims["value"], ga["value"])))
+    results.append(("shift claim.value", np.array_equal(ghash.to_lanes(claims["value"]).reshape(2), ga["value"])))
 
     # ---- Gate B: region fold.
     fin, fout = chain.fold_in_out(gb["packed"], gb["k_log"], gb["tau_pos"],

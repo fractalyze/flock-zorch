@@ -44,7 +44,7 @@ def prove_chain_shift(in_vals, out_vals, ch):
     """flock `chain::prove_chain_shift`. in_vals/out_vals: (2^n, 2) F128 (already
     region-folded per instance). Threads τ, α, and the sumcheck challenges through
     the shared challenger `ch`. Returns (rounds [(e1,einf)], g_at_point, claims)
-    where claims = {instance_point (n,2), sel0 (2,), value (2,)}."""
+    where claims = {instance_point (n,2), sel0 (2,), value [ghash scalar]}."""
     in_vals = jnp.asarray(in_vals).reshape(-1)   # ghash [n_total]
     out_vals = jnp.asarray(out_vals).reshape(-1)
     n_total = in_vals.shape[0]
@@ -71,7 +71,7 @@ def prove_chain_shift(in_vals, out_vals, ch):
 
     # After n+1 folds g[0] = g(τ',s₀*). Build the point: full[d-1-k]=r_pts[k]
     # (bit d-1 = s₀, the HIGH bit); τ' = full[:n], s₀* = full[n].
-    value = ghash.from_ghash_host(stacked[1]).reshape(2)
+    value = stacked[1].reshape(())              # native ghash scalar
     d = n + 1
     full = np.zeros((d, 2), np.uint64)
     for k, r in enumerate(r_pts):
@@ -93,8 +93,7 @@ def assemble_chain_claim(tau_pos, claims, k_log, region_log):
         np.zeros((high, 2), np.uint64),
         np.asarray(claims["instance_point"], np.uint64).reshape(-1, 2),
     ], axis=0)
-    return PackedDirectClaim(point=point,
-                             value=np.asarray(claims["value"], np.uint64).reshape(2))
+    return PackedDirectClaim(point=point, value=claims["value"])   # value native ghash scalar
 
 
 def fold_in_out(packed, k_log, tau_pos, input_byte_off, output_byte_off):
