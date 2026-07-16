@@ -52,7 +52,7 @@ class _Reader:
 
 
 def _eq(name, got, golden):
-    got = np.asarray(got).reshape(-1, 2)
+    got = ghash.to_lanes(got).reshape(-1, 2)
     golden = np.asarray(golden).reshape(-1, 2)
     if not np.array_equal(got, golden):
         i = int(np.flatnonzero(np.any(got != golden, axis=1))[0])

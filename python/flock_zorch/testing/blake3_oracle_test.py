@@ -56,7 +56,7 @@ def _unpack(z_packed, m):
 
 
 def _eq(name, got, want, results):
-    g = np.asarray(got, np.uint64).reshape(-1, 2); w = np.asarray(want, np.uint64).reshape(-1, 2)
+    g = ghash.to_lanes(got).reshape(-1, 2); w = np.asarray(want, np.uint64).reshape(-1, 2)
     results.append((name, g.shape == w.shape and np.array_equal(g, w)))
 
 
@@ -96,7 +96,8 @@ def run():
     zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch)
     _eq("zc round1_ab", zc.round1_ab, g["zc"]["r1ab"], results)
     _eq("zc round1_c", zc.round1_c, g["zc"]["r1c"], results)
-    got_mlv = np.array([np.concatenate([a, b]) for a, b in zc.multilinear_rounds])
+    got_mlv = np.array([np.concatenate([ghash.to_lanes(a).reshape(2), ghash.to_lanes(b).reshape(2)])
+                        for a, b in zc.multilinear_rounds])
     want_mlv = np.array([np.concatenate([a, b]) for a, b in g["zc"]["mlv"]])
     _eq("zc multilinear_rounds", got_mlv, want_mlv, results)
     _eq("zc final_a", zc.final_a_eval, g["zc"]["fa"], results)

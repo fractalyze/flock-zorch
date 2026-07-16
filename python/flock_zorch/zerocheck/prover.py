@@ -197,13 +197,13 @@ class _MultilinearRound(Round):
         for i in range(n_mlv):
             a_g, b_g, t, m1, minf, rho = _mlv_round(
                 a_g, b_g, eq_tables[i], sumcheck.eq._ONE_G, t)
-            rounds.append((ghash.from_ghash_host(m1), ghash.from_ghash_host(minf)))
+            rounds.append((m1, minf))
             rhos.append(rho)
         final_a, final_b = a_g[0], b_g[0]
         transcript._t = _observe_finals(t, final_a, final_b)
 
-        final_a_eval = ghash.from_ghash_host(final_a)
-        final_b_eval = ghash.from_ghash_host(final_b)
+        final_a_eval = final_a
+        final_b_eval = final_b
         carry = replace(carry, multilinear_rounds=rounds, final_a_eval=final_a_eval,
                         final_b_eval=final_b_eval,
                         mlv_challenges=ghash.from_ghash_host(jnp.stack(rhos)))

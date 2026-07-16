@@ -37,7 +37,7 @@ class R:
 
 
 def _eq(name, got, want, results):
-    ok = np.array_equal(np.asarray(got, np.uint64).reshape(-1, 2) if np.asarray(got).size else np.asarray(got),
+    ok = np.array_equal(ghash.to_lanes(got).reshape(-1, 2) if np.asarray(got).size else np.asarray(got),
                         np.asarray(want, np.uint64).reshape(-1, 2) if np.asarray(want).size else np.asarray(want))
     results.append((name, ok))
     return ok
@@ -93,7 +93,8 @@ def run():
     zc = zerocheck.prove_packed(bits, bits, bits, m, ch=ch)
     _eq("zc round1_ab", zc.round1_ab, g_zc["r1ab"], results)
     _eq("zc round1_c", zc.round1_c, g_zc["r1c"], results)
-    got_mlv = np.array([np.concatenate([a, b]) for a, b in zc.multilinear_rounds])
+    got_mlv = np.array([np.concatenate([ghash.to_lanes(a).reshape(2), ghash.to_lanes(b).reshape(2)])
+                        for a, b in zc.multilinear_rounds])
     want_mlv = np.array([np.concatenate([a, b]) for a, b in g_zc["mlv"]])
     _eq("zc multilinear_rounds", got_mlv, want_mlv, results)
     _eq("zc final_a", zc.final_a_eval, g_zc["fa"], results)

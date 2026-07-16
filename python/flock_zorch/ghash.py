@@ -47,6 +47,16 @@ def from_ghash_host(g) -> np.ndarray:
     return np.asarray(from_ghash(g))
 
 
+def to_lanes(x) -> np.ndarray:
+    """Any F128 — native `binary_field_ghash` OR uint64 `[..., 2]` lanes — to host
+    uint64 `[..., 2]`. The proof holds ghash; byte-gate readers pass `got` through
+    this so a ghash array and its lane serialization compare equal."""
+    a = np.asarray(x)
+    if a.dtype == _GHASH_HOST:
+        return a.reshape(-1).view(np.uint64).reshape(*a.shape, 2)
+    return a.astype(np.uint64)
+
+
 # ---- host uint64-lane <-> binary_field_ghash (for small sequential host
 # precomputes: flock's fixed challenge constants, verify replay). The dtype is the
 # same LE bytes as the lo/hi lanes, so this is a numpy view — no device round-trip;
