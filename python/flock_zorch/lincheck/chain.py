@@ -23,7 +23,7 @@ from typing import Any
 import numpy as np
 import frx.numpy as jnp
 
-from flock_zorch import field
+from flock_zorch import ghash
 from flock_zorch.sumcheck import build_eq
 from flock_zorch.sumcheck.inf_product import prove_inf_product
 
@@ -37,7 +37,7 @@ class PackedDirectClaim:
     point: Any
     value: Any
 
-LOG_PACKING = field.LOG_PACKING  # 128 = 2^7 bits per packed F128 element
+LOG_PACKING = ghash.LOG_PACKING  # 128 = 2^7 bits per packed F128 element
 
 
 def prove_chain_shift(in_vals, out_vals, ch):
@@ -66,16 +66,16 @@ def prove_chain_shift(in_vals, out_vals, ch):
     g = np.concatenate([in_vals, out_vals], axis=0)  # [In ‖ Out]
 
     # Product sumcheck Σ_{y,s₀} W·g over n+1 vars (round msg + fold == lincheck's).
-    stacked = jnp.stack([field.to_ghash(jnp.asarray(wt)),
-                         field.to_ghash(jnp.asarray(g))])
+    stacked = jnp.stack([ghash.to_ghash(jnp.asarray(wt)),
+                         ghash.to_ghash(jnp.asarray(g))])
     stacked, ch._t, msgs = prove_inf_product(stacked, ch._t, n + 1)
-    rounds = [(field.from_ghash_host(e1), field.from_ghash_host(einf))
+    rounds = [(ghash.from_ghash_host(e1), ghash.from_ghash_host(einf))
               for e1, einf, _ in msgs]
-    r_pts = [field.from_ghash_host(r).reshape(2) for _, _, r in msgs]
+    r_pts = [ghash.from_ghash_host(r).reshape(2) for _, _, r in msgs]
 
     # After n+1 folds g[0] = g(τ',s₀*). Build the point: full[d-1-k]=r_pts[k]
     # (bit d-1 = s₀, the HIGH bit); τ' = full[:n], s₀* = full[n].
-    value = field.from_ghash_host(stacked[1]).reshape(2)
+    value = ghash.from_ghash_host(stacked[1]).reshape(2)
     d = n + 1
     full = np.zeros((d, 2), np.uint64)
     for k, r in enumerate(r_pts):
@@ -114,11 +114,11 @@ def fold_in_out(packed, k_log, tau_pos, input_byte_off, output_byte_off):
     out_base = (output_byte_off * 8) >> LOG_PACKING
     assert packed.shape[0] % block_packed == 0
     n_inst = packed.shape[0] // block_packed
-    eq_tau = field.to_ghash(build_eq(jnp.asarray(tau_pos)))  # (n_packed,)
+    eq_tau = ghash.to_ghash(build_eq(jnp.asarray(tau_pos)))  # (n_packed,)
 
-    pk = field.to_ghash(jnp.asarray(packed).reshape(n_inst, block_packed, 2))  # (n_inst, block_packed)
+    pk = ghash.to_ghash(jnp.asarray(packed).reshape(n_inst, block_packed, 2))  # (n_inst, block_packed)
     in_reg = pk[:, in_base:in_base + n_packed]                   # (n_inst, n_packed)
     out_reg = pk[:, out_base:out_base + n_packed]
     in_vals = jnp.sum(in_reg * eq_tau[None], axis=1)            # (n_inst,)
     out_vals = jnp.sum(out_reg * eq_tau[None], axis=1)
-    return field.from_ghash_host(in_vals), field.from_ghash_host(out_vals)
+    return ghash.from_ghash_host(in_vals), ghash.from_ghash_host(out_vals)

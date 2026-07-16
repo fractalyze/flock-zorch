@@ -10,7 +10,7 @@ FoldableCode seam. Requires `jax_enable_x64`.
 """
 from __future__ import annotations
 
-from flock_zorch import field
+from flock_zorch import ghash
 
 LOG_FRI_ARITY = 6        # flock pcs/commit.rs:26
 DEFAULT_FRI_QUERIES = 243
@@ -38,10 +38,10 @@ def row_batch_fold_all(codeword, challenges):
 
     codeword: uint64 [n_pos·num_ntts, 2] (SoA, position-major); challenges:
     uint64 [log_batch_size, 2]. Returns uint64 [n_pos, 2]."""
-    ch = field.to_ghash(challenges)                        # [lbs]
+    ch = ghash.to_ghash(challenges)                        # [lbs]
     lbs = int(ch.shape[0])
     num_ntts = 1 << lbs
-    buf = field.to_ghash(codeword)                         # [n_pos·num_ntts]
+    buf = ghash.to_ghash(codeword)                         # [n_pos·num_ntts]
     n_pos = buf.shape[0] // num_ntts
     buf = buf.reshape(n_pos, num_ntts)
     length = num_ntts
@@ -52,4 +52,4 @@ def row_batch_fold_all(codeword, challenges):
         u, v = br[:, :, 0], br[:, :, 1]
         buf = u + r * (u + v)                              # [n_pos, half]
         length = half
-    return field.from_ghash(buf.reshape(n_pos))            # [n_pos, 2]
+    return ghash.from_ghash(buf.reshape(n_pos))            # [n_pos, 2]

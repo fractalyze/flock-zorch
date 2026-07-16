@@ -40,7 +40,7 @@ from zorch.pcs.basefold.config import BasefoldConfig
 from zorch.pcs.basefold.kernel import SumcheckKernel
 from zorch.pcs.basefold.prover import BasefoldProver, BasefoldProverData
 
-from flock_zorch import field, fs
+from flock_zorch import ghash, fs
 from flock_zorch.hash import merkle
 from flock_zorch.pcs import fri
 from flock_zorch.pcs.ligerito import FlockTranscript
@@ -162,7 +162,7 @@ class FlockBasefoldChoreography(BasefoldChoreography):
         # sorted). Uses the same `fs.sample_chain` primitive flock's verifier
         # re-samples positions with, so the two match by construction.
         inner, pos_g = fs.sample_chain(transcript.inner, count)
-        positions = np.asarray(field.from_ghash_host(pos_g)[:, 0]) % block_len
+        positions = np.asarray(ghash.from_ghash_host(pos_g)[:, 0]) % block_len
         return FlockTranscript(inner), jnp.asarray(positions, jnp.int32)
 
 
@@ -305,9 +305,9 @@ def prove(
     num_ntts = 1 << log_batch_size
     n_pos = 1 << k_code
 
-    a = field.to_ghash(jnp.asarray(z_packed))  # [2^log_msg]
-    b = field.to_ghash(jnp.asarray(b_combined))  # [2^log_msg]
-    cw_g = field.to_ghash(jnp.asarray(codeword))  # [n_pos * num_ntts]
+    a = ghash.to_ghash(jnp.asarray(z_packed))  # [2^log_msg]
+    b = ghash.to_ghash(jnp.asarray(b_combined))  # [2^log_msg]
+    cw_g = ghash.to_ghash(jnp.asarray(codeword))  # [n_pos * num_ntts]
 
     code = AdditiveReedSolomon(1 << log_dim, 1 << log_inv_rate, jnp.binary_field_ghash)
     config = replace(
@@ -329,7 +329,7 @@ def prove(
         leaves=cw_g.reshape(n_pos, num_ntts),
         widths=(num_ntts,),
     )
-    value = field.to_ghash(jnp.zeros(2, jnp.uint64))  # ignored (no target on the wire)
+    value = ghash.to_ghash(jnp.zeros(2, jnp.uint64))  # ignored (no target on the wire)
 
     proof, t = prover.open_with_basis(pd, b, value, FlockTranscript(ch._t))
     ch._t = t.inner
@@ -344,8 +344,8 @@ def prove(
 def _hf_mul(a, b):
     """Host GF(2^128) multiply on a uint64[2] (lo, hi) scalar pair — for the
     verify sumcheck replay, which runs on host numpy scalars (not device)."""
-    ag = np.asarray(a, np.uint64).view(field._GHASH_HOST)
-    bg = np.asarray(b, np.uint64).view(field._GHASH_HOST)
+    ag = np.asarray(a, np.uint64).view(ghash._GHASH_HOST)
+    bg = np.asarray(b, np.uint64).view(ghash._GHASH_HOST)
     return np.asarray(ag * bg).view(np.uint64)
 
 
@@ -448,19 +448,19 @@ def verify(target, proof, initial_codeword_root, k_code, log_inv_rate,
     msgs = np.stack([(np.asarray(u0, np.uint64), np.asarray(u2, np.uint64))
                      for u0, u2 in proof.round_messages])            # [log_msg, 2, 2]
     if arities:
-        post_rb_g = field.to_ghash(
+        post_rb_g = ghash.to_ghash(
             jnp.asarray(_root_f128(np.asarray(proof.post_row_batch_commit)).copy()))
         commits = np.stack(
             [_root_f128(np.asarray(c)).copy() for c in proof.round_commitments]
         ) if num_fri_commits else np.zeros((0, 2), np.uint64)
     else:
-        post_rb_g = field.to_ghash(jnp.zeros(2, jnp.uint64))          # unused (static)
+        post_rb_g = ghash.to_ghash(jnp.zeros(2, jnp.uint64))          # unused (static)
         commits = np.zeros((0, 2), np.uint64)
     ch._t, ch_stack = _replay_round_fs(
-        ch._t, field.to_ghash(jnp.asarray(msgs)), post_rb_g,
-        field.to_ghash(jnp.asarray(commits)), log_batch_size, tuple(arities),
+        ch._t, ghash.to_ghash(jnp.asarray(msgs)), post_rb_g,
+        ghash.to_ghash(jnp.asarray(commits)), log_batch_size, tuple(arities),
         num_epochs)
-    challenges = list(field.from_ghash_host(ch_stack))                # [log_msg] of [2]
+    challenges = list(ghash.from_ghash_host(ch_stack))                # [log_msg] of [2]
 
     running_target = np.asarray(target, np.uint64)
     for rnd in range(log_msg):
@@ -489,11 +489,11 @@ def verify(target, proof, initial_codeword_root, k_code, log_inv_rate,
     # ---- resample query positions (challenger state matches prover) ----
     n_q = len(proof.queries)
     ch._t, pos_g = fs.sample_chain(ch._t, n_q)
-    positions = (field.from_ghash_host(pos_g)[:, 0].astype(np.int64)
+    positions = (ghash.from_ghash_host(pos_g)[:, 0].astype(np.int64)
                  & ((1 << k_code) - 1))
 
     arity_0 = arities[0] if arities else 0
-    ch_g = [field.to_ghash(r.reshape(1, 2)).reshape(()) for r in challenges]  # ghash betas
+    ch_g = [ghash.to_ghash(r.reshape(1, 2)).reshape(()) for r in challenges]  # ghash betas
 
     # Gather per-query leaves (uint64 SoA) once.
     q_pos = np.array([q[0] for q in proof.queries], dtype=np.int64)
@@ -526,11 +526,11 @@ def verify(target, proof, initial_codeword_root, k_code, log_inv_rate,
         got = post_rb_leaves[np.arange(n_q), inner]  # [Q, 2]
         if not np.array_equal(got, prbv):
             return reject("FoldMismatch:t2_crosscheck", challenges)
-        coset_g = field.to_ghash(post_rb_leaves.reshape(-1, 2)).reshape(n_q, 1 << arity_0)
+        coset_g = ghash.to_ghash(post_rb_leaves.reshape(-1, 2)).reshape(n_q, 1 << arity_0)
         expected_g = _fold_coset(code, coset_g,
                                  ch_g[log_batch_size:log_batch_size + arity_0],
                                  k_code, positions >> arity_0, k_code)
-        expected = field.from_ghash_host(expected_g)
+        expected = ghash.from_ghash_host(expected_g)
 
         cum = arity_0
         for i in range(num_fri_commits):
@@ -543,11 +543,11 @@ def verify(target, proof, initial_codeword_root, k_code, log_inv_rate,
             got = leaves_i[np.arange(n_q), offset]  # [Q, 2]
             if not np.array_equal(got, expected):
                 return reject(f"FoldMismatch:epoch{i}", challenges)
-            leaf_g = field.to_ghash(leaves_i.reshape(-1, 2)).reshape(n_q, 1 << next_arity)
+            leaf_g = ghash.to_ghash(leaves_i.reshape(-1, 2)).reshape(n_q, 1 << next_arity)
             expected_g = _fold_coset(code, leaf_g,
                                      ch_g[log_batch_size + cum:log_batch_size + cum + next_arity],
                                      k_code - cum, p_at >> next_arity, k_code)
-            expected = field.from_ghash_host(expected_g)
+            expected = ghash.from_ghash_host(expected_g)
             cum += next_arity
 
         p_final = positions >> cum

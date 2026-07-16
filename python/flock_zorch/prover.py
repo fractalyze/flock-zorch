@@ -17,7 +17,7 @@ import frx
 import frx.numpy as jnp
 from frx import Array
 
-from flock_zorch import field, zerocheck, lincheck
+from flock_zorch import ghash, zerocheck, lincheck
 from flock_zorch.pcs import ring_switch, basefold, fri, ligerito as zorch_ligerito
 from flock_zorch.sumcheck import build_eq
 from flock_zorch.challenger import Challenger  # noqa: F401  (re-exported for callers)
@@ -84,13 +84,13 @@ def _combine_claims(rs_eq_inds, gammas, sumcheck_claims, packed_direct=(), gamma
     b_combined = rs_eq_inds[0]                                     # native ghash [2^L]
     for r in rs_eq_inds[1:]:
         b_combined = b_combined + r                                # γ_rs already baked in
-    target = field.to_ghash(jnp.zeros(2, jnp.uint64))              # ghash scalar zero
+    target = ghash.to_ghash(jnp.zeros(2, jnp.uint64))              # ghash scalar zero
     for g, sc in zip(gammas, sumcheck_claims):                     # g native ghash
-        target = target + g * field.to_ghash(jnp.asarray(sc))
+        target = target + g * ghash.to_ghash(jnp.asarray(sc))
     for pd, g in zip(packed_direct, gammas_pd):                    # g native ghash
-        eq_pd = field.to_ghash(build_eq(jnp.asarray(pd.point)))   # length L = 2^(m-7)
+        eq_pd = ghash.to_ghash(build_eq(jnp.asarray(pd.point)))   # length L = 2^(m-7)
         b_combined = b_combined + g * eq_pd
-        target = target + g * field.to_ghash(jnp.asarray(pd.value))
+        target = target + g * ghash.to_ghash(jnp.asarray(pd.value))
     return b_combined, target  # native ghash: [2^L], scalar
 
 
@@ -106,7 +106,7 @@ def open_batch(z_packed, codeword, init_tree, x_outers, k_code, log_inv_rate,
     ch.observe_label(b"flock-pcs-open-batch-v0")
     s_hat_vs, rs_eq_inds, sumcheck_claims, gammas = ring_switch.prove_batched(z_packed, x_outers, ch)
     b_combined, _target = _combine_claims(rs_eq_inds, gammas, sumcheck_claims)  # BaseFold ignores target
-    b_combined = field.from_ghash_host(b_combined)  # BaseFold b is uint64 lanes
+    b_combined = ghash.from_ghash_host(b_combined)  # BaseFold b is uint64 lanes
     n_queries = fri.default_fri_queries(log_inv_rate)
     bf = basefold.prove(z_packed, b_combined, codeword, init_tree, k_code,
                         log_inv_rate, log_batch_size, n_queries, ch)

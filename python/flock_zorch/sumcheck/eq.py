@@ -31,13 +31,13 @@ from zorch.poly.eq import expand_eq_to_hypercube
 from zorch.sumcheck.domain import compressed_domain, fold, summand_evals
 from zorch.sumcheck.prover import ProductSummand
 
-from flock_zorch import field
+from flock_zorch import ghash
 
 _PRODUCT2 = ProductSummand(2)._combine
 
 U64 = jnp.uint64
 ONE = jnp.asarray([1, 0], dtype=U64)  # F128::ONE = {lo: 1, hi: 0}
-_ONE_G = field.to_ghash(ONE)  # scalar binary_field_ghash one
+_ONE_G = ghash.to_ghash(ONE)  # scalar binary_field_ghash one
 
 
 def build_eq_g(rg):
@@ -57,7 +57,7 @@ def build_eq(r):
     layer is one elementwise multiply over a doubling table → fully parallel per
     layer, n sequential layers (n static).
     """
-    return field.from_ghash(build_eq_g(field.to_ghash(r)))
+    return ghash.from_ghash(build_eq_g(ghash.to_ghash(r)))
 
 
 _BUILD_EQ_FUSED = frx.jit(build_eq)
@@ -72,7 +72,7 @@ def build_eq_fused(r):
     return _BUILD_EQ_FUSED(jnp.asarray(r))
 
 
-_BUILD_EQ_FUSED_G = frx.jit(lambda r: build_eq_g(field.to_ghash(r)))
+_BUILD_EQ_FUSED_G = frx.jit(lambda r: build_eq_g(ghash.to_ghash(r)))
 
 
 def build_eq_fused_g(r):
@@ -88,8 +88,8 @@ def fold_single(a, challenge):
 
     a: uint64 [2^k, 2] (k ≥ 1); returns uint64 [2^(k-1), 2].
     """
-    return field.from_ghash(
-        fold(field.to_ghash(a), field.to_ghash(challenge), msb=False))
+    return ghash.from_ghash(
+        fold(ghash.to_ghash(a), ghash.to_ghash(challenge), msb=False))
 
 
 def fold_pair(a, b, challenge):
@@ -146,6 +146,6 @@ def round_pair(a_mlv, b_mlv, r):
     r[0] is this round's bound-variable challenge and r[1:] is the eq over the
     remaining variables.
     """
-    g1, ginf = round_pair_g(field.to_ghash(a_mlv), field.to_ghash(b_mlv),
-                            field.to_ghash(jnp.asarray(r, U64)))
-    return field.from_ghash(g1), field.from_ghash(ginf)
+    g1, ginf = round_pair_g(ghash.to_ghash(a_mlv), ghash.to_ghash(b_mlv),
+                            ghash.to_ghash(jnp.asarray(r, U64)))
+    return ghash.from_ghash(g1), ghash.from_ghash(ginf)

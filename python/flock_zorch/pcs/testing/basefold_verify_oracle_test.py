@@ -19,7 +19,7 @@ import frx.numpy as jnp
 
 frx.config.update("jax_enable_x64", True)
 
-from flock_zorch import field  # noqa: E402
+from flock_zorch import ghash  # noqa: E402
 from flock_zorch.pcs import basefold, fri  # noqa: E402
 from flock_zorch.hash import merkle  # noqa: E402
 from flock_zorch.pcs import commit as pcs_commit  # noqa: E402
@@ -53,8 +53,8 @@ def _target(x, b):
     bi = np.asarray(b, np.uint64).reshape(-1, 2)
     acc = 0
     for xe, be in zip(xi, bi):
-        acc ^= _gf128_mul(field._to_int(xe), field._to_int(be))
-    return field._to_lohi(acc)
+        acc ^= _gf128_mul(ghash._to_int(xe), ghash._to_int(be))
+    return ghash._to_lohi(acc)
 
 
 class _R:
@@ -97,7 +97,7 @@ def _check_golden(path):
         final_codeword=fcw, queries=queries, initial_multi_proof=imp,
         post_row_batch_multi_proof=prmp, epoch_multi_proofs=emp,
     )
-    k_code = (m - field.LOG_PACKING - lbs) + lir
+    k_code = (m - ghash.LOG_PACKING - lbs) + lir
     num_ntts = 1 << lbs
     n_leaves = 1 << k_code
     tree = merkle.merkle_tree(codeword.reshape(n_leaves, num_ntts * 2).view(np.uint8))
@@ -114,7 +114,7 @@ def _check_golden(path):
 
 def _build(m, lir, lbs, seed):
     """Prove a random claim; return (proof, target, root, k_code)."""
-    LOGP = field.LOG_PACKING
+    LOGP = ghash.LOG_PACKING
     k_code = (m - LOGP - lbs) + lir
     n_a = 1 << (m - LOGP)
     n_q = fri.default_fri_queries(lir)

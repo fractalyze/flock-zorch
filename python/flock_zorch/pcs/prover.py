@@ -17,7 +17,7 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from flock_zorch import field
+from flock_zorch import ghash
 from flock_zorch.pcs import commit as pcs_commit, open as pcs_open
 from flock_zorch.challenger import Challenger
 
@@ -43,14 +43,14 @@ class FlockPcsProver:
 
     @property
     def k_code(self) -> int:
-        return (self.m - field.LOG_PACKING - self.log_batch_size) + self.log_inv_rate
+        return (self.m - ghash.LOG_PACKING - self.log_batch_size) + self.log_inv_rate
 
     def commit(self, polys: Sequence[Any]) -> tuple[np.ndarray, FlockPcsProverData]:
         if len(polys) != 1:
             raise ValueError(
                 f"flock's PCS commits exactly one packed witness, got {len(polys)}")
         z_packed = polys[0]
-        expect = 1 << (self.m - field.LOG_PACKING)
+        expect = 1 << (self.m - ghash.LOG_PACKING)
         if len(z_packed) != expect:
             raise ValueError(
                 f"packed witness has {len(z_packed)} positions, m={self.m} expects {expect}")

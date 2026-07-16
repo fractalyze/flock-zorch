@@ -23,7 +23,7 @@ import frx.numpy as jnp  # noqa: E402
 from frx import lax  # noqa: E402
 from zorch.coding.additive_reed_solomon import AdditiveReedSolomon  # noqa: E402
 
-from flock_zorch import field, zerocheck, lincheck  # noqa: E402
+from flock_zorch import ghash, zerocheck, lincheck  # noqa: E402
 from flock_zorch.pcs import commit as pcs_commit, open as pcs_open  # noqa: E402
 from flock_zorch.hash import merkle  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402

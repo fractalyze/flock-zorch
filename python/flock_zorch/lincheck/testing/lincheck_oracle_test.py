@@ -16,7 +16,7 @@ import frx
 
 frx.config.update("jax_enable_x64", True)
 
-from flock_zorch import field, lincheck  # noqa: E402
+from flock_zorch import ghash, lincheck  # noqa: E402
 
 ART = Path(__file__).resolve().parents[4] / "artifacts"
 

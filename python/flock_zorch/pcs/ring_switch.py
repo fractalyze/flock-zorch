@@ -18,11 +18,11 @@ from __future__ import annotations
 import numpy as np
 import frx.numpy as jnp
 
-from flock_zorch import field, sumcheck
+from flock_zorch import ghash, sumcheck
 from flock_zorch.challenger import Challenger
 from zorch.pcs import ring_switch as zrs
 
-LOG_PACKING = field.LOG_PACKING
+LOG_PACKING = ghash.LOG_PACKING
 LABEL = b"flock-ring-switch-v0"
 
 
@@ -36,20 +36,20 @@ def _reduce_one(packed, x_outer, ch: Challenger):
     suffix_tensor = sumcheck.build_eq_fused_g(suffix)
     s_hat_v = zrs.bit_slice_evals(packed, suffix_tensor)     # (128,) ghash
     ch.observe_f128_slice_g(s_hat_v)                          # observe device ghash directly
-    s_hat_v_lanes = field.from_ghash_host(s_hat_v)           # [128,2] — materialized for the proof only
+    s_hat_v_lanes = ghash.from_ghash_host(s_hat_v)           # [128,2] — materialized for the proof only
     r_dprime = jnp.asarray(ch.sample_f128_vec(LOG_PACKING))  # [7,2]
     eq_r_dprime = sumcheck.build_eq_fused_g(r_dprime)  # [128] ghash, kept for the gamma combine
     claim = zrs.inner_product(zrs.tensor_algebra_transpose(s_hat_v), eq_r_dprime)
-    return s_hat_v_lanes, suffix_tensor, eq_r_dprime, field.from_ghash_host(claim)
+    return s_hat_v_lanes, suffix_tensor, eq_r_dprime, ghash.from_ghash_host(claim)
 
 
 def prove(packed_witness, x_outer, ch: Challenger):
     """Returns (s_hat_v [128,2], rs_eq_ind [2^L,2], sumcheck_claim [2]).
     Byte-identical to flock `ring_switch::prove`."""
-    packed = field.to_ghash(packed_witness)
+    packed = ghash.to_ghash(packed_witness)
     s_hat_v_lanes, suffix_tensor, eq_r_dprime, claim = _reduce_one(packed, x_outer, ch)
     rs_eq_ind = zrs.rs_eq_ind(suffix_tensor, eq_r_dprime)
-    return s_hat_v_lanes, field.from_ghash_host(rs_eq_ind), claim
+    return s_hat_v_lanes, ghash.from_ghash_host(rs_eq_ind), claim
 
 
 def prove_batched(packed_witness, x_outers, ch: Challenger):
@@ -61,7 +61,7 @@ def prove_batched(packed_witness, x_outers, ch: Challenger):
     THEN bake gamma_i into each `rs_eq_ind_i` (the caller-owned linear combination
     — see the zorch module's contract). Returns
     (s_hat_vs, rs_eq_inds[gamma-baked], sumcheck_claims, gammas)."""
-    packed = field.to_ghash(packed_witness)
+    packed = ghash.to_ghash(packed_witness)
     works = [_reduce_one(packed, x_outer, ch) for x_outer in x_outers]
     gammas = [ch.sample_f128_g() for _ in range(len(x_outers))]  # native ghash
 

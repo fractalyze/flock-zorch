@@ -18,7 +18,7 @@ import frx
 
 frx.config.update("jax_enable_x64", True)
 
-from flock_zorch import field, zerocheck, lincheck, prover  # noqa: E402
+from flock_zorch import ghash, zerocheck, lincheck, prover  # noqa: E402
 from flock_zorch.pcs import commit as pcs_commit, ring_switch  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 

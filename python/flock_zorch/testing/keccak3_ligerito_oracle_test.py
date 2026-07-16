@@ -22,7 +22,7 @@ import frx
 
 frx.config.update("jax_enable_x64", True)
 
-from flock_zorch import zerocheck, lincheck, prover, field  # noqa: E402
+from flock_zorch import zerocheck, lincheck, prover, ghash  # noqa: E402
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 from flock_zorch.lincheck.keccak3 import Keccak3LincheckCircuit  # noqa: E402
@@ -130,7 +130,7 @@ def run():
 
     # Stage W: the keccak3 walker port — Keccak3LincheckCircuit.fold_alpha_batched (standalone)
     for i, pb in enumerate(g["probes"]):
-        comb = field.from_ghash_host(circ.fold_alpha_batched(field.to_ghash(pb["alpha"]), field.to_ghash(pb["eq"])))
+        comb = ghash.from_ghash_host(circ.fold_alpha_batched(ghash.to_ghash(pb["alpha"]), ghash.to_ghash(pb["eq"])))
         results.append((f"walker probe {i} (fold_alpha_batched)", np.array_equal(comb, pb["comb"])))
     return m, results
 

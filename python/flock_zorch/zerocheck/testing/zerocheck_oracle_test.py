@@ -19,7 +19,7 @@ import frx
 
 frx.config.update("jax_enable_x64", True)
 
-from flock_zorch import field, zerocheck  # noqa: E402
+from flock_zorch import ghash, zerocheck  # noqa: E402
 
 _MAGIC = b"FLKZC001"
 K_SKIP = 6

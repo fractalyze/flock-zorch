@@ -25,7 +25,7 @@ import numpy as np
 import frx
 import frx.numpy as jnp
 
-from flock_zorch import field
+from flock_zorch import ghash
 from flock_zorch.sumcheck import build_eq_fused, build_eq_fused_g, ONE
 from flock_zorch.zerocheck import _lagrange_weights, ZerocheckProof
 from flock_zorch.challenger import Challenger
@@ -235,7 +235,7 @@ class _SumcheckRound(Round):
         comb = carry.comb
         eq_outer = build_eq_fused_g(jnp.asarray(carry.x_ab.x_outer))
         z_vec = partial_fold_packed_z(carry.z_packed_bytes, m, k_log, eq_outer)
-        z_vec_pre = field.from_ghash_host(z_vec) if self._capture else None  # pre-sumcheck (PCS open reuse)
+        z_vec_pre = ghash.from_ghash_host(z_vec) if self._capture else None  # pre-sumcheck (PCS open reuse)
 
         rounds, r_rounds = [], []
         if inner_rest > 0:
@@ -243,12 +243,12 @@ class _SumcheckRound(Round):
             stacked, transcript._t, msgs = prove_inf_product(
                 stacked, transcript._t, inner_rest)
             for e1, einf, r in msgs:
-                rounds.append((field.from_ghash_host(e1), field.from_ghash_host(einf)))
-                r_rounds.append(field.from_ghash_host(r))
+                rounds.append((ghash.from_ghash_host(e1), ghash.from_ghash_host(einf)))
+                r_rounds.append(ghash.from_ghash_host(r))
             z_partial_g = stacked[1]
         else:
             z_partial_g = z_vec
-        z_partial = field.from_ghash_host(z_partial_g)
+        z_partial = ghash.from_ghash_host(z_partial_g)
         carry = replace(carry, rounds=rounds, r_rounds=r_rounds, z_partial=z_partial,
                         z_partial_g=z_partial_g, z_vec_pre=z_vec_pre)
         return carry, transcript, (rounds, z_partial)
@@ -267,7 +267,7 @@ class _ClaimRound(Round):
         transcript.observe_f128_slice_g(carry.z_partial_g)    # 6. observe z_partial (device ghash)
         r_inner_skip = transcript.sample_f128()               # 7. fresh z_skip AFTER
         lam = _lagrange_weights(k_skip, r_inner_skip, 0)       # 8. φ8 S-domain weights
-        w = field.from_ghash_host(jnp.sum(                     # inner_product
+        w = ghash.from_ghash_host(jnp.sum(                     # inner_product
             lam * carry.z_partial_g, axis=0))
         r_inner_rest = [np.asarray(r) for r in reversed(carry.r_rounds)]  # 9. LSB-first
         claim = LincheckClaim(

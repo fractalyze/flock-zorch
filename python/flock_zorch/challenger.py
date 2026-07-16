@@ -23,7 +23,7 @@ import frx.numpy as jnp
 
 from zorch.sha256_field_transcript import Sha256FieldTranscript
 
-from flock_zorch import field, fs
+from flock_zorch import ghash, fs
 
 
 class Challenger:
@@ -43,7 +43,7 @@ class Challenger:
             self._t, np.frombuffer(bytes(data), np.uint8))
 
     def observe_f128(self, v) -> None:
-        self._t = fs.observe_scalar(self._t, field.to_ghash(jnp.asarray(v)))
+        self._t = fs.observe_scalar(self._t, ghash.to_ghash(jnp.asarray(v)))
 
     def observe_f128_g(self, g) -> None:
         """Observe a native `binary_field_ghash` scalar — no host lift (for values
@@ -52,7 +52,7 @@ class Challenger:
 
     def observe_f128_slice(self, vs) -> None:
         vs = jnp.asarray(np.asarray(vs, np.uint64).reshape(-1, 2))
-        self._t = fs.observe_slice(self._t, field.to_ghash(vs))
+        self._t = fs.observe_slice(self._t, ghash.to_ghash(vs))
 
     def observe_f128_slice_g(self, gs) -> None:
         """Observe a native `binary_field_ghash` slice — no host lift. The caller
@@ -61,7 +61,7 @@ class Challenger:
 
     def sample_f128(self) -> np.ndarray:
         self._t, g = fs.sample_scalar(self._t)
-        return field.from_ghash_host(g)
+        return ghash.from_ghash_host(g)
 
     def sample_f128_g(self):
         """Sample one F128 as a native `binary_field_ghash` scalar — no host
@@ -71,7 +71,7 @@ class Challenger:
 
     def sample_f128_vec(self, n: int) -> np.ndarray:
         self._t, g = fs.sample_slice(self._t, n)
-        return field.from_ghash_host(g)
+        return ghash.from_ghash_host(g)
 
     def grind_pow(self, bits: int) -> int:
         self._t, witness = fs.grind(self._t, bits)

@@ -25,7 +25,7 @@ from zorch.coding.additive_reed_solomon import (  # noqa: E402
     AdditiveReedSolomon,
     additive_ntt_twiddles,
 )
-from flock_zorch import field  # noqa: E402
+from flock_zorch import ghash  # noqa: E402
 
 ART = Path(__file__).resolve().parents[4] / "artifacts"
 
@@ -55,8 +55,8 @@ def _load_fri():
 
 
 def _ghash(soa):
-    """uint64 [..., 2] SoA -> binary_field_ghash [...] (via field.to_ghash)."""
-    return field.to_ghash(soa)
+    """uint64 [..., 2] SoA -> binary_field_ghash [...] (via ghash.to_ghash)."""
+    return ghash.to_ghash(soa)
 
 
 def _soa(g):

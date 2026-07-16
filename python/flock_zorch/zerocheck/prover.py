@@ -23,9 +23,9 @@ import numpy as np
 import frx
 import frx.numpy as jnp
 
-from flock_zorch import field, sumcheck
+from flock_zorch import ghash, sumcheck
 from flock_zorch.zerocheck import _urm
-from flock_zorch.field import _lanes_to_ghash, _ghash_to_lanes
+from flock_zorch.ghash import _lanes_to_ghash, _ghash_to_lanes
 from flock_zorch.challenger import Challenger
 from flock_zorch.zerocheck._fold import (
     _lagrange_weights, _interpolate_at_z_on_lambda, _fold_at_z_dev,
@@ -94,7 +94,7 @@ def medium_challenges() -> np.ndarray:
     gamma = _lanes_to_ghash(np.array([[1 << e, 0] for e in (1, 2, 4, 8)], np.uint64))
     one_plus = _lanes_to_ghash(np.array([[1 ^ (1 << e), 0] for e in (1, 2, 4, 8)], np.uint64))
     return _ghash_to_lanes(
-        np.array([g * gp1 ** -1 for g, gp1 in zip(gamma, one_plus)], field._GHASH_HOST))
+        np.array([g * gp1 ** -1 for g, gp1 in zip(gamma, one_plus)], ghash._GHASH_HOST))
 
 
 @frx.jit
@@ -188,7 +188,7 @@ class _MultilinearRound(Round):
         weights = _lagrange_weights(k_skip, carry.z, 0)  # S-domain, ghash [ell]
         a_g = _fold_at_z_dev(carry.a_rows, weights)
         b_g = _fold_at_z_dev(carry.b_rows, weights)
-        r_g = field.to_ghash(jnp.asarray(carry.r))
+        r_g = ghash.to_ghash(jnp.asarray(carry.r))
 
         t = transcript._t
         # All rounds' eq suffix tables in one program (round i reads
@@ -198,16 +198,16 @@ class _MultilinearRound(Round):
         for i in range(n_mlv):
             a_g, b_g, t, m1, minf, rho = _mlv_round(
                 a_g, b_g, eq_tables[i], sumcheck.eq._ONE_G, t)
-            rounds.append((field.from_ghash_host(m1), field.from_ghash_host(minf)))
+            rounds.append((ghash.from_ghash_host(m1), ghash.from_ghash_host(minf)))
             rhos.append(rho)
         final_a, final_b = a_g[0], b_g[0]
         transcript._t = _observe_finals(t, final_a, final_b)
 
-        final_a_eval = field.from_ghash_host(final_a)
-        final_b_eval = field.from_ghash_host(final_b)
+        final_a_eval = ghash.from_ghash_host(final_a)
+        final_b_eval = ghash.from_ghash_host(final_b)
         carry = replace(carry, multilinear_rounds=rounds, final_a_eval=final_a_eval,
                         final_b_eval=final_b_eval,
-                        mlv_challenges=field.from_ghash_host(jnp.stack(rhos)))
+                        mlv_challenges=ghash.from_ghash_host(jnp.stack(rhos)))
         return carry, transcript, (rounds, final_a_eval, final_b_eval)
 
 

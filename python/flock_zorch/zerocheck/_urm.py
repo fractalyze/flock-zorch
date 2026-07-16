@@ -25,7 +25,7 @@ import frx.numpy as jnp
 import zk_dtypes
 from frx import lax
 
-from flock_zorch import field, sumcheck
+from flock_zorch import ghash, sumcheck
 
 # ---------------------------------------------------------------------------
 # phi8: F8 -> F128 embedding (256-entry table). F2-linear, so the full table is
@@ -59,7 +59,7 @@ def _build_phi8_table() -> np.ndarray:
 PHI_8_TABLE = _build_phi8_table()  # uint64 [256, 2] = F128 (host; `_fold` indexes it)
 
 _PHI_DEV = jnp.asarray(PHI_8_TABLE)
-_PHI_DEV_G = field.to_ghash(_PHI_DEV)        # [256] ghash — indexed in-kernel, no lane bitcast
+_PHI_DEV_G = ghash.to_ghash(_PHI_DEV)        # [256] ghash — indexed in-kernel, no lane bitcast
 _AES = np.dtype(zk_dtypes.binary_field_gf8_aes)
 
 
@@ -94,8 +94,8 @@ def _round1_core(a, b, c, k_skip, eqx):
     ab = _to_u8(a_l * b_l).astype(jnp.int32)
     phi_ab = _PHI_DEV_G[ab]
     phi_c = _PHI_DEV_G[c_l.astype(jnp.int32)]
-    return (field.from_ghash(jnp.sum(eqx * phi_ab, axis=0)),
-            field.from_ghash(jnp.sum(eqx * phi_c, axis=0)))
+    return (ghash.from_ghash(jnp.sum(eqx * phi_ab, axis=0)),
+            ghash.from_ghash(jnp.sum(eqx * phi_c, axis=0)))
 
 
 @functools.partial(frx.jit, static_argnums=(1, 2))
