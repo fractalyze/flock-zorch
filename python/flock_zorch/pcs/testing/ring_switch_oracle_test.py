@@ -31,9 +31,9 @@ def _check(name):
 
     ch = Challenger(b"flock-ring-switch-test")
     shv, rei, claim = ring_switch.prove(pw, xo, ch)
-    ok = (np.array_equal(ghash.to_lanes(shv), g_shv) and np.array_equal(rei, g_rei) and np.array_equal(claim, g_claim))
+    ok = (np.array_equal(ghash.to_lanes(shv), g_shv) and np.array_equal(rei, g_rei) and np.array_equal(ghash.to_lanes(claim), g_claim))
     bad = [k for k, v in {"s_hat_v": np.array_equal(ghash.to_lanes(shv), g_shv), "rs_eq_ind": np.array_equal(rei, g_rei),
-                          "sumcheck_claim": np.array_equal(claim, g_claim)}.items() if not v]
+                          "sumcheck_claim": np.array_equal(ghash.to_lanes(claim), g_claim)}.items() if not v]
     print(f"ring_switch byte-match vs flock ({name}): {'PASS' if ok else 'FAIL ' + str(bad)}")
     return ok
 

@@ -29,7 +29,7 @@ LABEL = b"flock-ring-switch-v0"
 def _reduce_one(packed, x_outer, ch: Challenger):
     """One claim's observe-and-reduce (the block prove and prove_batched share):
     observe LABEL + s_hat_v, sample r'', compute the sumcheck claim. Returns
-    (s_hat_v [128,2], suffix_tensor [ghash], eq_r_dprime [128] ghash, claim [2]);
+    (s_hat_v [128,2], suffix_tensor [ghash], eq_r_dprime [128] ghash, claim [ghash]);
     the caller turns eq_r_dprime into rs_eq_ind (with or without a gamma scale)."""
     ch.observe_label(LABEL)
     suffix = jnp.asarray(np.asarray(x_outer)[1:])             # x_outer[1:], length L
@@ -39,11 +39,11 @@ def _reduce_one(packed, x_outer, ch: Challenger):
     r_dprime = ghash.from_ghash(ch.sample_f128(LOG_PACKING))  # [7,2]
     eq_r_dprime = sumcheck.build_eq_fused_g(r_dprime)  # [128] ghash, kept for the gamma combine
     claim = zrs.inner_product(zrs.tensor_algebra_transpose(s_hat_v), eq_r_dprime)
-    return s_hat_v, suffix_tensor, eq_r_dprime, ghash.from_ghash_host(claim)
+    return s_hat_v, suffix_tensor, eq_r_dprime, claim          # claim native ghash
 
 
 def prove(packed_witness, x_outer, ch: Challenger):
-    """Returns (s_hat_v [128,2], rs_eq_ind [2^L,2], sumcheck_claim [2]).
+    """Returns (s_hat_v [128,2], rs_eq_ind [2^L,2], sumcheck_claim [ghash]).
     Byte-identical to flock `ring_switch::prove`."""
     packed = ghash.to_ghash(packed_witness)
     s_hat_v, suffix_tensor, eq_r_dprime, claim = _reduce_one(packed, x_outer, ch)

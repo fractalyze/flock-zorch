@@ -85,8 +85,8 @@ def _combine_claims(rs_eq_inds, gammas, sumcheck_claims, packed_direct=(), gamma
     for r in rs_eq_inds[1:]:
         b_combined = b_combined + r                                # γ_rs already baked in
     target = ghash.to_ghash(jnp.zeros(2, jnp.uint64))              # ghash scalar zero
-    for g, sc in zip(gammas, sumcheck_claims):                     # g native ghash
-        target = target + g * ghash.to_ghash(jnp.asarray(sc))
+    for g, sc in zip(gammas, sumcheck_claims):                     # both native ghash
+        target = target + g * sc
     for pd, g in zip(packed_direct, gammas_pd):                    # g native ghash
         eq_pd = ghash.to_ghash(build_eq(jnp.asarray(pd.point)))   # length L = 2^(m-7)
         b_combined = b_combined + g * eq_pd
