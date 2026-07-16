@@ -111,7 +111,7 @@ def _mlv_round(a_g, b_g, eq_g, r0_g, t):
     an operand — building it in-round re-compiled the whole doubling chain into
     every round program (~13 s × n_mlv of the cold wall). All-ghash in-trace —
     the operands arrive on the dtype and only the proof messages leave it."""
-    m1, minf = sumcheck.round_pair_eq_g(a_g, b_g, eq_g, r0_g)
+    m1, minf = sumcheck.round_pair_eq(a_g, b_g, eq_g, r0_g)
     t = t.observe_scalar(m1).observe_scalar(minf)
     t, rho = t.sample_scalar()
     return fold(a_g, rho, msb=False), fold(b_g, rho, msb=False), \
@@ -123,7 +123,7 @@ def _observe_finals(t, final_a, final_b):
     return t.observe_scalar(final_a).observe_scalar(final_b)
 
 
-_EQ_TABLES = frx.jit(sumcheck.build_eq_suffix_tables_g)
+_EQ_TABLES = frx.jit(sumcheck.build_eq_suffix_tables)
 
 
 class _SetupRound(Round):

@@ -87,7 +87,7 @@ def main() -> int:
     worst = float("inf")
     for n in SIZES:
         r = jnp.asarray(np.random.default_rng(7).integers(0, 2**64, size=(n, 2), dtype=np.uint64))
-        fn = frx.jit(lambda rr: sumcheck.build_eq(rr))
+        fn = frx.jit(lambda rr: sumcheck.build_eq_lanes(rr))
         gpu = _gpu_eq_ms(fn, r)
         cpu = _cpu_eq_ms(n)
         spd = cpu / gpu

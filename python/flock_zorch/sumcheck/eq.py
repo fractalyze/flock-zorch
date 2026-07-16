@@ -40,54 +40,38 @@ ONE = jnp.asarray([1, 0], dtype=U64)  # F128::ONE = {lo: 1, hi: 0}
 _ONE_G = ghash.to_ghash(ONE)  # scalar binary_field_ghash one
 
 
-def build_eq_g(rg):
-    """`build_eq` on native ghash: `[n]` challenges -> `[2^n]` eq table, via zorch's
+def build_eq(rg):
+    """eq evaluation table over `rg`: `out[x] = ∏_i ((1+r_i)·(1⊕x_i) + r_i·x_i)`,
+    `[n]` ghash challenges -> `[2^n]` ghash table, via zorch's
     `expand_eq_to_hypercube` (msb=True places r_i at bit i; its `(1−r_i)` share
-    equals flock's `(1+r_i)` over char 2). Ghash-native so a jitted caller keeps its
-    whole trace on the dtype, with no in-trace lane bitcasts to fuse around."""
+    equals flock's `(1+r_i)` over char 2). flock builds this by power-of-two
+    doubling (`univariate_skip::build_eq`): after absorbing r_i, bit i becomes the
+    new high bit — one elementwise multiply per layer, n sequential layers."""
     return expand_eq_to_hypercube(rg, _ONE_G, msb=True)
 
 
-def build_eq(r):
-    """eq evaluation table over `r`: `out[x] = ∏_i ((1+r_i)·(1⊕x_i) + r_i·x_i)`.
-
-    r: uint64 [n, 2]; returns uint64 [2^n, 2]. flock builds this by power-of-two
-    doubling (`univariate_skip::build_eq`): after absorbing r_i, bit i becomes the
-    new high bit — the bit-0 half scales by (1+r_i), the bit-1 half by r_i. Each
-    layer is one elementwise multiply over a doubling table → fully parallel per
-    layer, n sequential layers (n static).
-    """
-    return ghash.from_ghash(build_eq_g(ghash.to_ghash(r)))
+def build_eq_lanes(r):
+    """`build_eq` on the uint64 [n, 2] lane layout -> uint64 [2^n, 2] — the public
+    golden/test I/O contract; the compute is ghash, bridged at the boundary."""
+    return ghash.from_ghash(build_eq(ghash.to_ghash(r)))
 
 
-_BUILD_EQ_FUSED = frx.jit(build_eq)
+_build_eq_jit = frx.jit(build_eq)
+_build_eq_from_lanes_jit = frx.jit(lambda r: build_eq(ghash.to_ghash(r)))
 
 
-def build_eq_fused(r):
-    """`build_eq` fused into ONE kernel. Byte-identical to `build_eq`, for eager
-    call sites (round-1 URM, lincheck `eq_outer`) where the n doubling layers would
-    otherwise dispatch eagerly with per-layer HBM materialization (~5 ms at n=20 vs
-    ~0.2 ms fused). Inside an outer jit just call `build_eq` directly — it already
-    fuses there."""
-    return _BUILD_EQ_FUSED(jnp.asarray(r))
+def build_eq_fused(rg):
+    """`build_eq` fused into ONE kernel, for eager call sites (round-1 URM, lincheck
+    `eq_outer`, ring-switch) where the n doubling layers would otherwise dispatch
+    eagerly with per-layer HBM materialization (~5 ms at n=20 vs ~0.2 ms fused).
+    Inside an outer jit just call `build_eq` directly — it already fuses there."""
+    return _build_eq_jit(rg)
 
 
-_BUILD_EQ_FUSED_G = frx.jit(lambda r: build_eq_g(ghash.to_ghash(r)))
-
-
-def build_eq_fused_g(r):
-    """`build_eq_fused` returning native ghash — for ghash-consuming callers that
-    would otherwise bitcast the uint64 result straight back with `to_ghash`."""
-    return _BUILD_EQ_FUSED_G(jnp.asarray(r, U64))
-
-
-_BUILD_EQ_FUSED_FROM_G = frx.jit(build_eq_g)
-
-
-def build_eq_fused_from_g(rg):
-    """`build_eq_fused_g` for a challenge vector already on the dtype (no input
-    bitcast) — one fused kernel."""
-    return _BUILD_EQ_FUSED_FROM_G(rg)
+def build_eq_fused_from_lanes(r):
+    """`build_eq_fused` for a uint64-lane challenge vector (bitcasts to the dtype
+    in-kernel) — one fused kernel returning native ghash."""
+    return _build_eq_from_lanes_jit(jnp.asarray(r, U64))
 
 
 def fold_single(a, challenge):
@@ -108,13 +92,13 @@ def fold_pair(a, b, challenge):
     return fold_single(a, challenge), fold_single(b, challenge)
 
 
-def build_eq_suffix_tables_g(cs_g):
+def build_eq_suffix_tables(cs_g):
     """eq tables for every challenge suffix: absorbing `cs_g[i]` as the low bit
     of `eq(cs_g[i+1:])` yields `eq(cs_g[i:])`, so all n+1 tables cost one
-    doubling chain — n mul layers — instead of n separate `build_eq_g` builds
+    doubling chain — n mul layers — instead of n separate `build_eq` builds
     (each layer is a fat clmul kernel XLA compiles for ~0.7 s, so a per-round
     rebuild multiplied that by the round count). Values match per-suffix
-    `build_eq_g` exactly: GF mul is exact, associative, commutative.
+    `build_eq` exactly: GF mul is exact, associative, commutative.
 
     cs_g: `[n]` ghash challenges. Returns `[T_0 .. T_n]`, `T_i = eq(cs_g[i:])`
     of shape `[2^(n-i)]`; `T_n = [1]`."""
@@ -128,9 +112,9 @@ def build_eq_suffix_tables_g(cs_g):
     return out[::-1]
 
 
-def round_pair_eq_g(ag, bg, eq, r0g):
-    """`round_pair_g` with the eq table already built — the per-round core for
-    callers that precompute every suffix table once (`build_eq_suffix_tables_g`).
+def round_pair_eq(ag, bg, eq, r0g):
+    """`round_pair` with the eq table already built — the per-round core for
+    callers that precompute every suffix table once (`build_eq_suffix_tables`).
 
     The message `[G(1), G(∞)]` is zorch's compressed product round on the low bind:
     `summand_evals` over `compressed_domain(1)` with the eq suffix as the per-point
@@ -141,20 +125,17 @@ def round_pair_eq_g(ag, bg, eq, r0g):
     return r0g * g_one, g_inf
 
 
-def round_pair_g(ag, bg, rg):
-    """`round_pair` on native ghash: `[2^log_n]` factor pair + `[log_n]`
-    challenges -> the scalar message pair `(r[0]·G(1), G(∞))`."""
-    return round_pair_eq_g(ag, bg, build_eq_g(rg[1:]), rg[0])
+def round_pair(ag, bg, rg):
+    """Multilinear-sumcheck round message for the AB pair, native ghash (flock
+    `round_pair_naive`): `[2^log_n]` factor pair + `[log_n]` challenges -> the
+    scalar message pair `(r[0]·G(1), G(∞))`. rg[0] is this round's bound-variable
+    challenge, rg[1:] the eq over the remaining variables."""
+    return round_pair_eq(ag, bg, build_eq(rg[1:]), rg[0])
 
 
-def round_pair(a_mlv, b_mlv, r):
-    """Multilinear-sumcheck round message for the AB pair (flock
-    `round_pair_naive`). Returns `(r[0]·G(1), G(∞))`, each uint64 [2].
-
-    a_mlv, b_mlv: uint64 [2^log_n, 2] (log_n ≥ 1); r: uint64 [log_n, 2], where
-    r[0] is this round's bound-variable challenge and r[1:] is the eq over the
-    remaining variables.
-    """
-    g1, ginf = round_pair_g(ghash.to_ghash(a_mlv), ghash.to_ghash(b_mlv),
-                            ghash.to_ghash(jnp.asarray(r, U64)))
+def round_pair_lanes(a_mlv, b_mlv, r):
+    """`round_pair` on the uint64 [.., 2] lane layout — the public golden/test I/O
+    contract; returns `(r[0]·G(1), G(∞))`, each uint64 [2]."""
+    g1, ginf = round_pair(ghash.to_ghash(a_mlv), ghash.to_ghash(b_mlv),
+                          ghash.to_ghash(jnp.asarray(r, U64)))
     return ghash.from_ghash(g1), ghash.from_ghash(ginf)

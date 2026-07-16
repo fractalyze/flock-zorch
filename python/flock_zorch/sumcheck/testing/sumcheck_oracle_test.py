@@ -96,12 +96,12 @@ def run(path: Path | None = None) -> dict:
     path = path or (_artifacts_dir() / "sumcheck_golden.bin")
     eq_cases, rp_cases, fs_cases = load(path)
 
-    build_eq = frx.jit(lambda r: sumcheck.build_eq(r))
+    build_eq = frx.jit(lambda r: sumcheck.build_eq_lanes(r))
     for n, r, eq in eq_cases:
         _check(f"build_eq(n={n})", build_eq(jnp.asarray(r)), eq)
 
     for log_n, a, b, r, msg_one, msg_inf in rp_cases:
-        fn = frx.jit(lambda aa, bb, rr, ln=log_n: sumcheck.round_pair(aa, bb, rr))
+        fn = frx.jit(lambda aa, bb, rr, ln=log_n: sumcheck.round_pair_lanes(aa, bb, rr))
         g_one, g_inf = fn(jnp.asarray(a), jnp.asarray(b), jnp.asarray(r))
         _check(f"round_pair msg_one(log_n={log_n})", g_one, msg_one)
         _check(f"round_pair msg_inf(log_n={log_n})", g_inf, msg_inf)

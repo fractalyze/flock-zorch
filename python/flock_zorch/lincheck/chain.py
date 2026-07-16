@@ -24,7 +24,7 @@ import numpy as np
 import frx.numpy as jnp
 
 from flock_zorch import ghash
-from flock_zorch.sumcheck import build_eq_g, build_eq_fused_g
+from flock_zorch.sumcheck import build_eq, build_eq_fused_from_lanes
 from flock_zorch.sumcheck.inf_product import prove_inf_product
 
 
@@ -54,7 +54,7 @@ def prove_chain_shift(in_vals, out_vals, ch):
     # τ ∈ Fⁿ then α — both before the sumcheck (mirrored by the verifier).
     tau = ch.sample_f128(n)
     alpha = ch.sample_f128()
-    eqtau = build_eq_g(tau)                       # eqtau[y] = eq(τ, y), ghash [n_total]
+    eqtau = build_eq(tau)                       # eqtau[y] = eq(τ, y), ghash [n_total]
 
     # Weight table over (y, s₀), s₀ the HIGH bit (index y + s₀·N):
     #   W(y,0) = shift(τ,y) + α·eq(y,0ⁿ) = eqtau[y-1] (y≥1), α at y==0
@@ -109,7 +109,7 @@ def fold_in_out(packed, k_log, tau_pos, input_byte_off, output_byte_off):
     out_base = (output_byte_off * 8) >> LOG_PACKING
     assert packed.shape[0] % block_packed == 0
     n_inst = packed.shape[0] // block_packed
-    eq_tau = build_eq_fused_g(tau_pos)                           # (n_packed,) ghash
+    eq_tau = build_eq_fused_from_lanes(tau_pos)                           # (n_packed,) ghash
 
     pk = ghash.to_ghash(jnp.asarray(packed).reshape(n_inst, block_packed, 2))  # (n_inst, block_packed)
     in_reg = pk[:, in_base:in_base + n_packed]                   # (n_inst, n_packed)
