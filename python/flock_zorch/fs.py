@@ -56,14 +56,6 @@ def check_witness(t, witness, bits):
     return t.check_witness(witness, bits)
 
 
-@frx.jit
-def observe_pair_sample(t, x, y):
-    """observe_scalar(x) → observe_scalar(y) → sample_scalar(): the
-    (message, challenge) hop every sumcheck round makes, as one device program."""
-    t = t.observe_scalar(x).observe_scalar(y)
-    return t.sample_scalar()
-
-
 @functools.partial(frx.jit, static_argnums=(1,))
 def sample_chain(t, n):
     """n successive scalar-framed squeezes as one device program. Each squeeze
