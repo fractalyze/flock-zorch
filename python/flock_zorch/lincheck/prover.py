@@ -49,18 +49,17 @@ def build_quirky_eq_table(z_skip, x_inner_rest, k_skip: int):
 def _mat_fold(mat_dense, eq):
     """Transposed binary-matrix·vector: out[c] = Σ_{r: M[r,c]=1} eq[r].
 
-    mat_dense: uint64 [k, k] (0/1, indexed [row, col]); eq: [k, 2] -> [k, 2]."""
+    mat_dense: uint64 [k, k] (0/1, indexed [row, col]); eq: [k, 2] -> ghash [k]."""
     sel = mat_dense[:, :, None] * eq[:, None, :]              # M[r,c]·eq[r]  (0/1 select)
-    return field.from_ghash(jnp.sum(field.to_ghash(sel), axis=0))  # XOR over rows -> [c, 2]
+    return jnp.sum(field.to_ghash(sel), axis=0)  # XOR over rows
 
 
 def fold_alpha_batched(alpha, a_dense, b_dense, eq_inner):
     """comb[c] = α·(A₀ᵀ·eq_inner)[c] ⊕ (B₀ᵀ·eq_inner)[c] (flock
     `sparse_row_fold_alpha_batched`)."""
-    ae = field.to_ghash(_mat_fold(a_dense, eq_inner))
-    be = field.to_ghash(_mat_fold(b_dense, eq_inner))
-    alpha_g = field.to_ghash(jnp.asarray(alpha))
-    return field.from_ghash(alpha_g * ae + be)
+    ae = _mat_fold(a_dense, eq_inner)
+    be = _mat_fold(b_dense, eq_inner)
+    return alpha * ae + be
 
 
 class CscCircuit:
@@ -86,8 +85,7 @@ class CscCircuit:
         zero = jnp.zeros((self.k, 2), U64)
         out_a = _seg_xor_fold(eq, *self._a_seg, self.k) if self._a_seg else zero
         out_b = _seg_xor_fold(eq, *self._b_seg, self.k) if self._b_seg else zero
-        alpha_g = field.to_ghash(jnp.asarray(alpha))
-        return field.from_ghash(alpha_g * field.to_ghash(out_a) + field.to_ghash(out_b))
+        return alpha * field.to_ghash(out_a) + field.to_ghash(out_b)
 
 
 def partial_fold_packed_z(z_packed_bytes: bytes, m: int, k_log: int, eq_outer):
@@ -110,7 +108,7 @@ def _partial_fold_dev(zp, eq_outer, n_outer):
     bits = ((zp[:, None, :] >> jnp.arange(8, dtype=jnp.uint8)[None, :, None]) & 1)  # [nb,8,k]
     bits = bits.reshape(n_outer, zp.shape[1]).astype(jnp.uint64)                    # i_outer=byte·8+r
     sel = bits[:, :, None] * eq_outer[:, None, :]                                   # 0/1 select, [n_outer,k,2]
-    return field.from_ghash(jnp.sum(field.to_ghash(sel), axis=0))                 # [k, 2]
+    return jnp.sum(field.to_ghash(sel), axis=0)
 
 
 @runtime_checkable
@@ -191,7 +189,8 @@ class _LincheckCarry:
     comb: Any = None                 # ← _CombRound
     rounds: Any = None               # ← _SumcheckRound
     r_rounds: Any = None             # ← _SumcheckRound (read by _ClaimRound)
-    z_partial: Any = None            # ← _SumcheckRound
+    z_partial: Any = None            # ← _SumcheckRound (lanes, for the wire)
+    z_partial_g: Any = None          # ← _SumcheckRound (for observe + w, no host lift)
     z_vec_pre: Any = None            # ← _SumcheckRound (capture)
     claim: Any = None                # ← _ClaimRound
 
@@ -208,15 +207,14 @@ class _CombRound(Round):
         k_skip = self._k_skip
         x_ab, circuit = carry.x_ab, carry.circuit
         transcript.observe_label(LABEL)
-        alpha = jnp.asarray(transcript.sample_f128())
+        alpha = transcript.sample_f128_g()
         eq_inner = build_quirky_eq_table(x_ab.z_skip, x_ab.x_inner_rest, k_skip)
         if circuit is not None:
-            comb = jnp.asarray(circuit.fold_alpha_batched(alpha, eq_inner))
+            comb = circuit.fold_alpha_batched(alpha, eq_inner)
             if circuit.const_pin is not None:
-                beta = jnp.asarray(transcript.sample_f128())   # sampled AFTER alpha (flock order)
+                beta = transcript.sample_f128_g()              # sampled AFTER alpha (flock order)
                 col = circuit.const_pin
-                comb = comb.at[col].set(
-                    field.from_ghash(field.to_ghash(comb[col]) + field.to_ghash(beta)))
+                comb = comb.at[col].set(comb[col] + beta)
         else:
             comb = fold_alpha_batched(alpha, jnp.asarray(carry.a_dense),
                                       jnp.asarray(carry.b_dense), eq_inner)
@@ -236,22 +234,22 @@ class _SumcheckRound(Round):
         comb = carry.comb
         eq_outer = build_eq_fused(jnp.asarray(carry.x_ab.x_outer))
         z_vec = partial_fold_packed_z(carry.z_packed_bytes, m, k_log, eq_outer)
-        z_vec_pre = np.asarray(z_vec) if self._capture else None  # pre-sumcheck (PCS open reuse)
+        z_vec_pre = field.from_ghash_host(z_vec) if self._capture else None  # pre-sumcheck (PCS open reuse)
 
         rounds, r_rounds = [], []
         if inner_rest > 0:
-            stacked = jnp.stack([field.to_ghash(jnp.asarray(comb)),
-                                 field.to_ghash(z_vec)])
+            stacked = jnp.stack([comb, z_vec])
             stacked, transcript._t, msgs = prove_inf_product(
                 stacked, transcript._t, inner_rest)
             for e1, einf, r in msgs:
                 rounds.append((field.from_ghash_host(e1), field.from_ghash_host(einf)))
                 r_rounds.append(field.from_ghash_host(r))
-            z_partial = field.from_ghash_host(stacked[1])
+            z_partial_g = stacked[1]
         else:
-            z_partial = np.asarray(z_vec)
+            z_partial_g = z_vec
+        z_partial = field.from_ghash_host(z_partial_g)
         carry = replace(carry, rounds=rounds, r_rounds=r_rounds, z_partial=z_partial,
-                        z_vec_pre=z_vec_pre)
+                        z_partial_g=z_partial_g, z_vec_pre=z_vec_pre)
         return carry, transcript, (rounds, z_partial)
 
 
@@ -265,12 +263,11 @@ class _ClaimRound(Round):
 
     def __call__(self, carry, transcript):
         k_skip = self._k_skip
-        z_partial = carry.z_partial
-        transcript.observe_f128_slice(z_partial)              # 6. observe z_partial
+        transcript.observe_f128_slice_g(carry.z_partial_g)    # 6. observe z_partial (device ghash)
         r_inner_skip = transcript.sample_f128()               # 7. fresh z_skip AFTER
         lam = _lagrange_weights(k_skip, r_inner_skip, 0)       # 8. φ8 S-domain weights
         w = field.from_ghash_host(jnp.sum(                     # inner_product
-            lam * field.to_ghash(jnp.asarray(z_partial)), axis=0))
+            lam * carry.z_partial_g, axis=0))
         r_inner_rest = [np.asarray(r) for r in reversed(carry.r_rounds)]  # 9. LSB-first
         claim = LincheckClaim(
             r_inner_skip=np.asarray(r_inner_skip),
