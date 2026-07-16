@@ -114,16 +114,6 @@ _TREE = _Sha256MerkleTree(_Sha256LeafHasher(), _Sha256Compressor())
 GHASH_TREE = _Sha256MerkleTree(_GhashSha256LeafHasher(), _Sha256Compressor())
 
 
-def verify_openings(legs) -> bool:
-    """`zorch.pcs.fold.verify_openings` over flock's SHA-256 Merkle tree: AND of
-    "every opened leaf rebuilds its committed root" across `legs`
-    (`(root, indices, Opening)`). The BaseFold verifier assembles legs by
-    expanding flock's octopus proof (`multi_proof_to_paths`) into per-query
-    `Opening`s. Returns a python bool."""
-    from zorch.pcs.fold import verify_openings as _verify_openings
-    return bool(_verify_openings(_TREE, legs))
-
-
 @frx.jit
 def _root_dev(leaves):
     return _TREE.commit(leaves)[0]
@@ -201,10 +191,10 @@ def _sha(*parts: bytes) -> bytes:
 def multi_proof_to_paths(proof: np.ndarray, num_leaves: int, positions,
                          leaf_bytes: np.ndarray) -> np.ndarray:
     """Invert `merkle_multi_proof`: reconstruct each query's per-level sibling
-    path from flock's octopus proof, so the BaseFold verifier can feed zorch's
-    `pcs.fold.verify_openings` (which wants per-query `Opening(row, path)` rather
-    than flock's shared/deduped wire — see `merkle.py` header: octopus is flock's
-    proof assembly, kept host-side).
+    path from flock's octopus proof, feeding zorch's `pcs.fold.verify_openings`
+    (which wants per-query `Opening(row, path)` rather than flock's shared/deduped
+    wire — see `merkle.py` header: octopus is flock's proof assembly, kept
+    host-side).
 
     `positions`: length-Q query leaf indices (dups allowed); `leaf_bytes`:
     uint8 [Q, leaf_len] the queried leaves aligned to `positions`. Returns

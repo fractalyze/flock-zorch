@@ -22,7 +22,6 @@ py_library(
         "@zorch//zorch/hash:sha256",
         "@zorch//zorch/pcs:fold",
         "@zorch//zorch/pcs:ring_switch",
-        "@zorch//zorch/pcs/basefold",
         "@zorch//zorch/pcs/ligerito",
         requirement("frx"),
         requirement("numpy"),
@@ -49,14 +48,12 @@ py_library(
 _HEAVY = [
     "commit",
     "zorch_ligerito_driver",
-    "keccak",
     "keccak_ligerito",
     "keccak_chain",
     "keccak3_ligerito",
-    "sha2",
     "sha2_ligerito",
-    "blake3",
     "blake3_ligerito",
+    "e2e_ligerito",
 ]
 
 [

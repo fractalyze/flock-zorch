@@ -7,8 +7,7 @@ Anchors: (1) the device twiddle table byte-matches `ntt_golden.bin`'s table;
 (2) `code.encode` reproduces the NTT golden's output through the SoA↔ghash
 boundary; (3) `code.fold` reproduces `fri_fold_golden.bin`; (4) `code.fold_values`
 agrees with `code.fold` on the golden codeword. The multi-layer fold chain +
-final-codeword equality are covered against a real flock-core golden by
-`basefold_oracle_test`.
+final-codeword equality are covered against the `fri_fold_golden.bin` golden.
 
 Run:
   bazel test //python:coding_oracle_test

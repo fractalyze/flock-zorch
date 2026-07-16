@@ -1,6 +1,3 @@
-"""flock PCS (Ligerito / BaseFold over F₂¹²⁸) in zorch's PcsProver seam shape.
-
-The prover seam is authored in `prover`; `commit`/`open` are its phases.
-Re-exported so `from flock_zorch.pcs import FlockPcsProver` resolves unchanged.
+"""flock PCS (Ligerito over F₂¹²⁸): ring-switch reduction + the recursive Ligerito
+open, assembled over zorch's blocks. The fused prover seam lives in `flock_zorch.prover`.
 """
-from flock_zorch.pcs.prover import FlockPcsProver, FlockPcsProverData  # noqa: F401
