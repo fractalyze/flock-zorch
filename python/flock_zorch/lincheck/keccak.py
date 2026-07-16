@@ -24,11 +24,7 @@ import numpy as np
 import frx
 import frx.numpy as jnp
 
-_ZERO_G = frx.lax.bitcast_convert_type(jnp.zeros(2, jnp.uint64), jnp.binary_field_ghash)
-
-
-def _zeros_g(n):
-    return frx.lax.bitcast_convert_type(jnp.zeros((n, 2), jnp.uint64), jnp.binary_field_ghash)
+_GHASH = jnp.binary_field_ghash
 
 # --- Layout constants (keccak.rs) -----------------------------------------
 N_LANES = 25
@@ -172,15 +168,16 @@ def _accumulate_subkeccak(eq, col_state0, col_state24, rows_t):
     # Round-constant GF(2) state machine (unrolled N_T) → RC_24. `rc` is a 0/1 bit
     # vector (not a field element), so it stays uint64 and masks chi via select.
     rc = jnp.zeros(STATE_BITS, jnp.uint64)
-    rc_a = _ZERO_G
-    rc_b = _ZERO_G
+    rc_a = jnp.zeros((), _GHASH)
+    rc_b = jnp.zeros((), _GHASH)
     for r in range(N_T):
-        m = rc.astype(bool)
-        rc_a = rc_a + jnp.sum(jnp.where(m, chi_a[r], _zeros_g(STATE_BITS)))
-        rc_b = rc_b + jnp.sum(jnp.where(m, chi_b[r], _zeros_g(STATE_BITS)))
+        if r > 0:  # rc_0 == 0, so round 0's masked select is identically the field zero
+            m = rc.astype(bool)
+            rc_a = rc_a + jnp.sum(jnp.where(m, chi_a[r], jnp.zeros(STATE_BITS, _GHASH)))
+            rc_b = rc_b + jnp.sum(jnp.where(m, chi_b[r], jnp.zeros(STATE_BITS, _GHASH)))
         rc = jnp.bitwise_xor.reduce(rc[_PRE_FWD_DEV], axis=1)      # forward φ_bool
         rc = rc.at[_RC_TOGGLE_DEV].set(rc[_RC_TOGGLE_DEV] ^ _RC_BITS[r])
-    rc_pin = jnp.sum(jnp.where(rc.astype(bool), vec_pin, _zeros_g(STATE_BITS)))
+    rc_pin = jnp.sum(jnp.where(rc.astype(bool), vec_pin, jnp.zeros(STATE_BITS, _GHASH)))
     zc_a = zc_a + rc_a + rc_pin
     zc_b = zc_b + rc_b
 
@@ -195,7 +192,7 @@ def _accumulate_subkeccak(eq, col_state0, col_state24, rows_t):
 
     # B-side (K^B_24 = 0): rows_t[j] ← K^B_{j+1} (0 at j=N_T-1), col_state0 ← K^B_0.
     rb = [None] * N_T
-    rb[N_T - 1] = _zeros_g(STATE_BITS)
+    rb[N_T - 1] = jnp.zeros(STATE_BITS, _GHASH)
     k_b = chi_b[N_T - 1]                                          # K^B_23
     for r in range(N_T - 1, 0, -1):
         rb[r - 1] = k_b
@@ -213,10 +210,10 @@ def _fold_walker_kernel(eq, alpha, sub_cols, z_const):
     multiply. `eq` is (n_cols, 2); `sub_cols` a list of (col_state0, col_state24,
     rows_t) device index arrays; `z_const` a static int column."""
     n_cols = eq.shape[0]
-    comb_a = _zeros_g(n_cols)
-    comb_b = _zeros_g(n_cols)
-    zc_a = _ZERO_G
-    zc_b = _ZERO_G
+    comb_a = jnp.zeros(n_cols, _GHASH)
+    comb_b = jnp.zeros(n_cols, _GHASH)
+    zc_a = jnp.zeros((), _GHASH)
+    zc_b = jnp.zeros((), _GHASH)
     for col_state0, col_state24, rows_t in sub_cols:
         ra, rb, ca, cb, za, zb = _accumulate_subkeccak(eq, col_state0, col_state24, rows_t)
         rtf = rows_t.reshape(-1)
