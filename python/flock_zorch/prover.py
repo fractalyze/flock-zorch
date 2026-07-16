@@ -219,7 +219,7 @@ class _PcsOpenStage(Stage):
         return carry, transcript, pcs_open_proof
 
 
-def prove_fast(z_packed: Array, m: int, k_log: int, k_skip: int, useful_bits: int,
+def prove_fast(z_packed: Array, m: int, k_log: int, k_skip: int,
                a0: Array, b0: Array, z_lincheck: bytes, statement_digest: bytes,
                cfg, circuit=None, domain: bytes = b"flock-test-v0") -> ProveFastResult:
     """Fused single-call R1CS prover on the Ligerito PCS, byte-identical to flock

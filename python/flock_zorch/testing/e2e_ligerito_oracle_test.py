@@ -86,7 +86,7 @@ def run():
     k = 1 << k_log
     a0 = np.eye(k, dtype=np.uint64)
     b0 = np.eye(k, dtype=np.uint64)
-    res = prover.prove_fast(g["z"], m, k_log, k_skip, ub, a0, b0, g["zlc"], g["stmt"],
+    res = prover.prove_fast(g["z"], m, k_log, k_skip, a0, b0, g["zlc"], g["stmt"],
                             cfg, domain=DOMAIN)
 
     zc, gzc = res.zerocheck, g["zc"]
