@@ -108,15 +108,34 @@ def partial_fold_packed_z(z_packed_bytes: bytes, m: int, k_log: int, x_outer):
     return _partial_fold(zp, x_outer, n_outer)          # device + jit (keeps the intermediate off HBM)
 
 
+# Rows of the [C·8, k] ghash temp each `_partial_fold` chunk materializes. The ghash
+# select+reduce does NOT fuse (XLA builds the whole [n_outer, k] array — 16 GB at
+# m=30), so the reduction is chunked to bound the temp. 64 bytes → ~1 GB at k=2^17;
+# m ≤ 26 is a single chunk (identical to the unchunked fold).
+_PARTIAL_FOLD_CHUNK_BYTES = 64
+
+
 @functools.partial(frx.jit, static_argnums=(2,))
 def _partial_fold(zp, x_outer, n_outer):
-    """z_vec[i_inner] = Σ_{i_outer} bit·eq_outer[i_outer], device+jit so the large
-    [n_outer,k,2] intermediate stays fused on device and never lands in HBM. `build_eq`
-    is in-kernel (no `build_eq_fused`), so the eq build fuses with the fold."""
-    eq_outer = build_eq(x_outer)
-    bits = ((zp[:, None, :] >> fnp.arange(8, dtype=fnp.uint8)[None, :, None]) & 1)  # [nb,8,k]
-    bits = bits.reshape(n_outer, zp.shape[1]).astype(bool)                          # i_outer=byte·8+r
-    return fnp.sum(fnp.where(bits, eq_outer[:, None], fnp.zeros((), _GHASH)), axis=0)  # dtype-native 0/1 select
+    """z_vec[i_inner] = Σ_{i_outer} bit·eq_outer[i_outer]. Accumulate over i_outer in
+    chunks of `_PARTIAL_FOLD_CHUNK_BYTES` bytes so the [n_outer, k] ghash select+reduce
+    is never materialized (it doesn't fuse — 16 GB at m=30). Byte-identical: XOR-sum is
+    order-independent. `build_eq` is in-kernel (no `build_eq_fused`)."""
+    eq_outer = build_eq(x_outer)                        # [n_outer] ghash
+    k = zp.shape[1]
+    c = min(_PARTIAL_FOLD_CHUNK_BYTES, zp.shape[0])
+    n_chunks = zp.shape[0] // c
+    ar8 = fnp.arange(8, dtype=fnp.uint8)
+    zpc = zp.reshape(n_chunks, c, k)                    # [n_chunks, C, k]
+    eqc = eq_outer.reshape(n_chunks, c * 8)             # [n_chunks, C·8]  (i_outer = byte·8 + r)
+
+    def step(acc, cb):
+        zb, eqb = cb                                    # zb [C, k] uint8, eqb [C·8] ghash
+        bits = ((zb[:, None, :] >> ar8[None, :, None]) & 1).reshape(c * 8, k).astype(bool)  # [C·8, k]
+        return acc + fnp.sum(fnp.where(bits, eqb[:, None], fnp.zeros((), _GHASH)), axis=0), None
+
+    acc, _ = frx.lax.scan(step, fnp.zeros(k, _GHASH), (zpc, eqc))
+    return acc                                          # [k] ghash
 
 
 @runtime_checkable
