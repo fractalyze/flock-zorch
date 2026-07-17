@@ -26,7 +26,7 @@ import frx
 import frx.numpy as jnp
 
 from flock_zorch import ghash
-from flock_zorch.sumcheck import build_eq_fused, ONE
+from flock_zorch.sumcheck import build_eq, build_eq_fused, ONE
 from flock_zorch.zerocheck import _lagrange_weights, ZerocheckProof
 from flock_zorch.challenger import Challenger
 from flock_zorch.lincheck._csc_fold import _flatten_nz, _csc_segments, _seg_xor_fold
@@ -38,12 +38,16 @@ _GHASH = jnp.binary_field_ghash
 LABEL = b"flock-lincheck-v0"
 
 
+@functools.partial(frx.jit, static_argnums=(2,))
 def build_quirky_eq_table(z_skip, x_inner_rest, k_skip: int):
     """eq_inner[i_skip + i_rest·2^k_skip] = λ_skip[i_skip]·eq_rest[i_rest]
     (flock `build_quirky_eq_table`; i_skip in the LOW bits). z_skip: ghash scalar
-    (the zerocheck fold point). Returns the eq table as native ghash [ell_rest·ell_skip]."""
+    (the zerocheck fold point). Returns the eq table as native ghash [ell_rest·ell_skip].
+
+    One jitted kernel (k_skip static), so the Lagrange weights and `build_eq` (called
+    directly, not `build_eq_fused`) fuse — the eager caller gets one fused build."""
     lam = _lagrange_weights(k_skip, z_skip, 0)
-    eq_rest = build_eq_fused(x_inner_rest)             # ghash coords -> [ell_rest]
+    eq_rest = build_eq(x_inner_rest)                   # ghash coords -> [ell_rest]
     prod = eq_rest[:, None] * lam[None, :]                    # [ell_rest, ell_skip]
     return prod.reshape(-1)
 
