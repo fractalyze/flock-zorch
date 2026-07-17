@@ -15,9 +15,9 @@ Requires `jax_enable_x64`.
 """
 from __future__ import annotations
 
-import frx.numpy as jnp
+import frx
 
-from flock_zorch import ghash, sumcheck
+from flock_zorch import fs, ghash, sumcheck
 from flock_zorch.challenger import Challenger
 from zorch.pcs import ring_switch as zrs
 
@@ -25,27 +25,35 @@ LOG_PACKING = ghash.LOG_PACKING
 LABEL = b"flock-ring-switch-v0"
 
 
-def _reduce_one(packed, x_outer, ch: Challenger):
+@frx.jit
+def _reduce_one(t, packed, x_outer):
     """One claim's observe-and-reduce (the block prove and prove_batched share):
-    observe LABEL + s_hat_v, sample r'', compute the sumcheck claim. Returns
-    (s_hat_v [128,2], suffix_tensor [ghash], eq_r_dprime [128] ghash, claim [ghash]);
-    the caller turns eq_r_dprime into rs_eq_ind (with or without a gamma scale)."""
-    ch.observe_label(LABEL)
+    observe LABEL + s_hat_v, sample r'', compute the sumcheck claim. A pure jitted
+    region that THREADS the functional transcript `t` in and out — so the whole
+    observe/build/sample/reduce fuses as one program. `build_eq` is called directly
+    (no `build_eq_fused`: under this outer jit it already fuses), and the sampled
+    challenge stays native ghash — no `from_ghash`→`to_ghash` lane round-trip.
+
+    Returns (t, s_hat_v [128] ghash, suffix_tensor [ghash], eq_r_dprime [128] ghash,
+    claim [ghash]); the caller turns eq_r_dprime into rs_eq_ind (with or without a
+    gamma scale)."""
+    t = fs.observe_label(t, LABEL)
     suffix = x_outer[1:]                                       # ghash coords, length L
-    suffix_tensor = sumcheck.build_eq_fused(suffix)
+    suffix_tensor = sumcheck.build_eq(suffix)
     s_hat_v = zrs.bit_slice_evals(packed, suffix_tensor)     # (128,) ghash
-    ch.observe_f128(s_hat_v)                          # observe device ghash directly
-    r_dprime = ghash.from_ghash(ch.sample_f128(LOG_PACKING))  # [7,2]
-    eq_r_dprime = sumcheck.build_eq_fused_from_lanes(r_dprime)  # [128] ghash, kept for the gamma combine
+    t = fs.observe_slice(t, s_hat_v)                  # observe device ghash directly
+    t, r_dprime = fs.sample_slice(t, LOG_PACKING)     # [7] ghash, kept native
+    eq_r_dprime = sumcheck.build_eq(r_dprime)          # [128] ghash, for the gamma combine
     claim = zrs.inner_product(zrs.tensor_algebra_transpose(s_hat_v), eq_r_dprime)
-    return s_hat_v, suffix_tensor, eq_r_dprime, claim          # claim native ghash
+    return t, s_hat_v, suffix_tensor, eq_r_dprime, claim       # claim native ghash
 
 
 def prove(packed_witness, x_outer, ch: Challenger):
     """Returns (s_hat_v [128,2], rs_eq_ind [2^L] ghash, sumcheck_claim [ghash]).
     Byte-identical to flock `ring_switch::prove`."""
     packed = ghash.to_ghash(packed_witness)
-    s_hat_v, suffix_tensor, eq_r_dprime, claim = _reduce_one(packed, x_outer, ch)
+    # Thread the mutable Challenger's functional transcript through the jitted region.
+    ch._t, s_hat_v, suffix_tensor, eq_r_dprime, claim = _reduce_one(ch._t, packed, x_outer)
     rs_eq_ind = zrs.rs_eq_ind(suffix_tensor, eq_r_dprime)
     return s_hat_v, rs_eq_ind, claim                          # rs_eq_ind native ghash (the open's b)
 
@@ -60,7 +68,10 @@ def prove_batched(packed_witness, x_outers, ch: Challenger):
     — see the zorch module's contract). Returns
     (s_hat_vs, rs_eq_inds[gamma-baked], sumcheck_claims, gammas)."""
     packed = ghash.to_ghash(packed_witness)
-    works = [_reduce_one(packed, x_outer, ch) for x_outer in x_outers]
+    works = []
+    for x_outer in x_outers:
+        ch._t, *work = _reduce_one(ch._t, packed, x_outer)
+        works.append(work)                                    # [s_hat_v, suffix_tensor, eq_r_dprime, claim]
     gammas = [ch.sample_f128() for _ in range(len(x_outers))]
 
     s_hat_vs, rs_eq_inds, sumcheck_claims = [], [], []
