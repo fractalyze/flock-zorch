@@ -82,21 +82,52 @@ def _to_u8(x):
     return lax.bitcast_convert_type(x, fnp.uint8)
 
 
-@functools.partial(frx.jit, static_argnums=(3,))
-def _round1_core(a, b, c, k_skip, r):
-    """Fused round-1 core: build eqx, extend a/b/c S→Λ, a·b, φ8-embed, AND
-    eq-accumulate — all in ONE jit kernel so the large [N,ell,2] φ8 intermediate is
-    consumed in-fusion and never written to HBM (halves round1's bandwidth vs the
-    separate extend + accumulate). `build_eq` is in-kernel (no `build_eq_fused`)."""
-    eqx = sumcheck.build_eq(r[k_skip:])[:, None]           # r is ghash [m]; [n_chunks, 1]
+# Rows per `_round1_core` block. Two m=30 blockers make row-blocking necessary:
+#   1. frx `lax.ntt` caps flattened length (batch·2ℓ) at 2^31 (int32); the forward
+#      extend NTT hits it at N=2^24 (m=30, k_skip=6).
+#   2. the [N, ℓ] φ8 select+reduce materializes (16 GB at m=30) — same as _partial_fold.
+# 2^20 rows keeps NTT flat = block·2ℓ ≤ 2^27 and the [block, ℓ] φ8 temp ~1 GB; m ≤ 26 is
+# a single block (identical to the unblocked core).
+_ROUND1_BLOCK_ROWS = 1 << 20
+
+
+def _round1_block(a, b, c, eq, k_skip):
+    """One row-block's contribution: extend S→Λ, a·b, φ8-embed, eq-weighted sum over
+    the block's rows. Returns (ab, c) partial sums, each [ℓ] ghash."""
     a_l = _extend_rows(a, k_skip)
     b_l = _extend_rows(b, k_skip)
     c_l = _to_u8(_extend_rows(c, k_skip))
     ab = _to_u8(a_l * b_l).astype(fnp.int32)
     phi_ab = _PHI_DEV_G[ab]
     phi_c = _PHI_DEV_G[c_l.astype(fnp.int32)]
-    return (ghash.from_ghash(fnp.sum(eqx * phi_ab, axis=0)),
-            ghash.from_ghash(fnp.sum(eqx * phi_c, axis=0)))
+    eqx = eq[:, None]
+    return fnp.sum(eqx * phi_ab, axis=0), fnp.sum(eqx * phi_c, axis=0)
+
+
+@functools.partial(frx.jit, static_argnums=(3,))
+def _round1_core(a, b, c, k_skip, r):
+    """Round-1 core: build eqx, extend a/b/c S→Λ, a·b, φ8-embed, eq-accumulate. Blocked
+    over rows (`_ROUND1_BLOCK_ROWS`) so each extend NTT stays under frx's 2^31 flattened
+    cap and the [block, ℓ] φ8 temp is bounded (the unblocked [N, ℓ] select+reduce is
+    16 GB at m=30). Byte-identical: XOR-sum over blocks is order-independent. `build_eq`
+    is in-kernel (no `build_eq_fused`)."""
+    eqx = sumcheck.build_eq(r[k_skip:])                    # r is ghash [m]; [N] ghash
+    ell = 1 << k_skip
+    N = a.shape[0]
+    block = min(_ROUND1_BLOCK_ROWS, N)
+    n_blocks = N // block
+    ar = a.reshape(n_blocks, block, ell)
+    br = b.reshape(n_blocks, block, ell)
+    cr = c.reshape(n_blocks, block, ell)
+    er = eqx.reshape(n_blocks, block)
+    zero = fnp.zeros(ell, fnp.binary_field_ghash)
+
+    def step(acc, blk):
+        ab_p, c_p = _round1_block(*blk, k_skip)
+        return (acc[0] + ab_p, acc[1] + c_p), None
+
+    (acc_ab, acc_c), _ = frx.lax.scan(step, (zero, zero), (ar, br, cr, er))
+    return ghash.from_ghash(acc_ab), ghash.from_ghash(acc_c)
 
 
 @functools.partial(frx.jit, static_argnums=(1, 2))
