@@ -26,7 +26,7 @@ import frx
 import frx.numpy as jnp
 
 from flock_zorch import ghash
-from flock_zorch.sumcheck import build_eq, build_eq_fused, ONE
+from flock_zorch.sumcheck import build_eq, ONE
 from flock_zorch.zerocheck import _lagrange_weights, ZerocheckProof
 from flock_zorch.challenger import Challenger
 from flock_zorch.lincheck._csc_fold import _flatten_nz, _csc_segments, _seg_xor_fold
@@ -94,9 +94,10 @@ class CscCircuit:
         return alpha * out_a + out_b
 
 
-def partial_fold_packed_z(z_packed_bytes: bytes, m: int, k_log: int, eq_outer):
+def partial_fold_packed_z(z_packed_bytes: bytes, m: int, k_log: int, x_outer):
     """z_vec[i_inner] = Σ_{i_outer} z(i_inner, i_outer)·eq_outer[i_outer]
-    (flock `partial_fold_packed_z`, useful_bits = 2^k_log).
+    (flock `partial_fold_packed_z`, useful_bits = 2^k_log). `x_outer` is the outer
+    challenge; the eq table is built inside the jitted core.
 
     z_packed layout: byte `z_packed[byte_idx·k + i_inner]` holds outer bits
     `z[i_inner, 8·byte_idx + r]` at bit r."""
@@ -104,13 +105,15 @@ def partial_fold_packed_z(z_packed_bytes: bytes, m: int, k_log: int, eq_outer):
     n_outer = 1 << (m - k_log)
     n_bytes = n_outer // 8
     zp = jnp.asarray(np.frombuffer(z_packed_bytes, np.uint8).reshape(n_bytes, k))
-    return _partial_fold(zp, eq_outer, n_outer)         # device + jit (keeps the intermediate off HBM)
+    return _partial_fold(zp, x_outer, n_outer)          # device + jit (keeps the intermediate off HBM)
 
 
 @functools.partial(frx.jit, static_argnums=(2,))
-def _partial_fold(zp, eq_outer, n_outer):
+def _partial_fold(zp, x_outer, n_outer):
     """z_vec[i_inner] = Σ_{i_outer} bit·eq_outer[i_outer], device+jit so the large
-    [n_outer,k,2] intermediate stays fused on device and never lands in HBM."""
+    [n_outer,k,2] intermediate stays fused on device and never lands in HBM. `build_eq`
+    is in-kernel (no `build_eq_fused`), so the eq build fuses with the fold."""
+    eq_outer = build_eq(x_outer)
     bits = ((zp[:, None, :] >> jnp.arange(8, dtype=jnp.uint8)[None, :, None]) & 1)  # [nb,8,k]
     bits = bits.reshape(n_outer, zp.shape[1]).astype(bool)                          # i_outer=byte·8+r
     return jnp.sum(jnp.where(bits, eq_outer[:, None], jnp.zeros((), _GHASH)), axis=0)  # dtype-native 0/1 select
@@ -237,8 +240,7 @@ class _SumcheckRound(Round):
         m, k_log, k_skip = self._m, self._k_log, self._k_skip
         inner_rest = k_log - k_skip
         comb = carry.comb
-        eq_outer = build_eq_fused(carry.x_ab.x_outer)
-        z_vec = partial_fold_packed_z(carry.z_packed_bytes, m, k_log, eq_outer)
+        z_vec = partial_fold_packed_z(carry.z_packed_bytes, m, k_log, carry.x_ab.x_outer)
         z_vec_pre = ghash.from_ghash_host(z_vec) if self._capture else None  # pre-sumcheck (PCS open reuse)
 
         rounds, r_rounds = [], []

@@ -83,11 +83,12 @@ def _to_u8(x):
 
 
 @functools.partial(frx.jit, static_argnums=(3,))
-def _round1_core(a, b, c, k_skip, eqx):
-    """Fused round-1 core: extend a/b/c S→Λ, a·b, φ8-embed, AND eq-accumulate —
-    all in ONE jit kernel so the large [N,ell,2] φ8 intermediate is consumed
-    in-fusion and never written to HBM (halves round1's bandwidth vs the
-    separate extend + accumulate)."""
+def _round1_core(a, b, c, k_skip, r):
+    """Fused round-1 core: build eqx, extend a/b/c S→Λ, a·b, φ8-embed, AND
+    eq-accumulate — all in ONE jit kernel so the large [N,ell,2] φ8 intermediate is
+    consumed in-fusion and never written to HBM (halves round1's bandwidth vs the
+    separate extend + accumulate). `build_eq` is in-kernel (no `build_eq_fused`)."""
+    eqx = sumcheck.build_eq(r[k_skip:])[:, None]           # r is ghash [m]; [n_chunks, 1]
     a_l = _extend_rows(a, k_skip)
     b_l = _extend_rows(b, k_skip)
     c_l = _to_u8(_extend_rows(c, k_skip))
@@ -137,8 +138,7 @@ def round1_rows(a, b, c, m: int, k_skip: int, r):
     """Round-1 URM from device witness rows (uint8 [2^(m-k_skip), 2^k_skip]). The
     compute half of `round1_naive`, so the witness can be transferred once and
     reused by `zerocheck._fold_at_z`. Returns (P^AB, P^C) as numpy."""
-    eqx = sumcheck.build_eq_fused(r[k_skip:])[:, None]  # r is ghash [m]; [n_chunks, 1]
-    p_ab, p_c = _round1_core(a, b, c, k_skip, eqx)  # fused extend+phi+accum
+    p_ab, p_c = _round1_core(a, b, c, k_skip, r)  # eqx build + extend+phi+accum, fused
     return np.asarray(p_ab), np.asarray(p_c)
 
 

@@ -24,7 +24,6 @@ Requires `jax_enable_x64`.
 """
 from __future__ import annotations
 
-import frx
 import frx.numpy as jnp
 
 from zorch.poly.eq import expand_eq_to_hypercube
@@ -54,24 +53,6 @@ def build_eq_lanes(r):
     """`build_eq` on the uint64 [n, 2] lane layout -> uint64 [2^n, 2] — the public
     golden/test I/O contract; the compute is ghash, bridged at the boundary."""
     return ghash.from_ghash(build_eq(ghash.to_ghash(r)))
-
-
-_build_eq_jit = frx.jit(build_eq)
-_build_eq_from_lanes_jit = frx.jit(lambda r: build_eq(ghash.to_ghash(r)))
-
-
-def build_eq_fused(rg):
-    """`build_eq` fused into ONE kernel, for eager call sites (round-1 URM, lincheck
-    `eq_outer`, ring-switch) where the n doubling layers would otherwise dispatch
-    eagerly with per-layer HBM materialization (~5 ms at n=20 vs ~0.2 ms fused).
-    Inside an outer jit just call `build_eq` directly — it already fuses there."""
-    return _build_eq_jit(rg)
-
-
-def build_eq_fused_from_lanes(r):
-    """`build_eq_fused` for a uint64-lane challenge vector (bitcasts to the dtype
-    in-kernel) — one fused kernel returning native ghash."""
-    return _build_eq_from_lanes_jit(jnp.asarray(r, U64))
 
 
 def fold_single(a, challenge):
