@@ -21,7 +21,7 @@ import functools
 
 import numpy as np
 import frx
-import frx.numpy as jnp
+import frx.numpy as fnp
 import zk_dtypes
 from frx import lax
 
@@ -58,7 +58,7 @@ def _build_phi8_table() -> np.ndarray:
 
 PHI_8_TABLE = _build_phi8_table()  # uint64 [256, 2] = F128 (host; `_fold` indexes it)
 
-_PHI_DEV = jnp.asarray(PHI_8_TABLE)
+_PHI_DEV = fnp.asarray(PHI_8_TABLE)
 _PHI_DEV_G = ghash.to_ghash(_PHI_DEV)        # [256] ghash — indexed in-kernel, no lane bitcast
 _AES = np.dtype(zk_dtypes.binary_field_gf8_aes)
 
@@ -73,13 +73,13 @@ def _extend_rows(rows, k_skip: int):
     ell = 1 << k_skip
     v = lax.bitcast_convert_type(rows, _AES)
     coeffs = lax.ntt(v, ntt_type="INTT", ntt_length=ell)
-    padded = jnp.concatenate([coeffs, jnp.zeros_like(coeffs)], axis=-1)
+    padded = fnp.concatenate([coeffs, fnp.zeros_like(coeffs)], axis=-1)
     evals = lax.ntt(padded, ntt_type="NTT", ntt_length=2 * ell)
     return evals[..., ell:]
 
 
 def _to_u8(x):
-    return lax.bitcast_convert_type(x, jnp.uint8)
+    return lax.bitcast_convert_type(x, fnp.uint8)
 
 
 @functools.partial(frx.jit, static_argnums=(3,))
@@ -92,11 +92,11 @@ def _round1_core(a, b, c, k_skip, r):
     a_l = _extend_rows(a, k_skip)
     b_l = _extend_rows(b, k_skip)
     c_l = _to_u8(_extend_rows(c, k_skip))
-    ab = _to_u8(a_l * b_l).astype(jnp.int32)
+    ab = _to_u8(a_l * b_l).astype(fnp.int32)
     phi_ab = _PHI_DEV_G[ab]
-    phi_c = _PHI_DEV_G[c_l.astype(jnp.int32)]
-    return (ghash.from_ghash(jnp.sum(eqx * phi_ab, axis=0)),
-            ghash.from_ghash(jnp.sum(eqx * phi_c, axis=0)))
+    phi_c = _PHI_DEV_G[c_l.astype(fnp.int32)]
+    return (ghash.from_ghash(fnp.sum(eqx * phi_ab, axis=0)),
+            ghash.from_ghash(fnp.sum(eqx * phi_c, axis=0)))
 
 
 @functools.partial(frx.jit, static_argnums=(1, 2))
@@ -108,10 +108,10 @@ def _packed_to_rows(packed, m: int, k_skip: int):
     taking the packed form and unpacking here turns a fat host->device transfer
     into a small one + a cheap device kernel — the same device-unpack pattern
     `prover._unpack_bits` uses for the identity path."""
-    bi = jnp.arange(64, dtype=jnp.uint64)
-    lo = ((packed[:, 0:1] >> bi) & jnp.uint64(1)).astype(jnp.uint8)
-    hi = ((packed[:, 1:2] >> bi) & jnp.uint64(1)).astype(jnp.uint8)
-    bits = jnp.concatenate([lo, hi], axis=1).reshape(-1)        # [2^m]
+    bi = fnp.arange(64, dtype=fnp.uint64)
+    lo = ((packed[:, 0:1] >> bi) & fnp.uint64(1)).astype(fnp.uint8)
+    hi = ((packed[:, 1:2] >> bi) & fnp.uint64(1)).astype(fnp.uint8)
+    bits = fnp.concatenate([lo, hi], axis=1).reshape(-1)        # [2^m]
     return bits.reshape(1 << (m - k_skip), 1 << k_skip)
 
 
@@ -128,10 +128,10 @@ def witness_to_rows(bits, m: int, k_skip: int):
     array (transferred once); or an already-device array (reshaped, no copy)."""
     n_chunks, ell = 1 << (m - k_skip), 1 << k_skip
     if getattr(bits, "ndim", 0) == 2 and bits.shape[-1] == 2 and np.dtype(bits.dtype) == np.uint64:
-        return _packed_to_rows(jnp.asarray(bits), m, k_skip)   # packed F128 -> device unpack
+        return _packed_to_rows(fnp.asarray(bits), m, k_skip)   # packed F128 -> device unpack
     if isinstance(bits, frx.Array):
         return bits.reshape(n_chunks, ell)
-    return jnp.asarray(np.asarray(bits, np.uint8).reshape(n_chunks, ell))
+    return fnp.asarray(np.asarray(bits, np.uint8).reshape(n_chunks, ell))
 
 
 def round1_rows(a, b, c, m: int, k_skip: int, r):

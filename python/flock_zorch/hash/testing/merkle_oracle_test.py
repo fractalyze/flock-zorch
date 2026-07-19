@@ -7,7 +7,7 @@ speed target; GPU time is informational.
 
 Run:
   cargo run --release --example dump_merkle -- 4096 64 artifacts/merkle_golden.bin
-  JAX_PLATFORMS=cuda PYTHONPATH=python <venv> python/flock_zorch/hash/testing/merkle_oracle_test.py
+  FRX_PLATFORMS=cuda PYTHONPATH=python <venv> python/flock_zorch/hash/testing/merkle_oracle_test.py
 """
 import sys
 import time

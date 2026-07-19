@@ -33,7 +33,7 @@ from dataclasses import dataclass
 
 from frx.tree_util import register_dataclass
 
-import frx.numpy as jnp
+import frx.numpy as fnp
 import numpy as np
 from frx import Array, lax
 
@@ -71,9 +71,9 @@ class FlockTranscript:
         return self.inner.has_dedicated_fusion
 
     def observe(self, values: Array) -> "FlockTranscript":
-        if values.dtype == jnp.uint8:
+        if values.dtype == fnp.uint8:
             return FlockTranscript(fs.observe_bytes(self.inner, values))
-        if values.dtype != jnp.binary_field_ghash:
+        if values.dtype != fnp.binary_field_ghash:
             raise TypeError(f"no flock framing for observed dtype {values.dtype}")
         return FlockTranscript(fs.observe_scalar(self.inner, values.reshape(-1)))
 
@@ -92,7 +92,7 @@ class FlockTranscript:
 
 def flock_transcript(domain: bytes) -> FlockTranscript:
     """A fresh `FlockTranscript` seeded like flock's `FsChallenger`."""
-    return FlockTranscript(Sha256FieldTranscript.new(domain, jnp.binary_field_ghash))
+    return FlockTranscript(Sha256FieldTranscript.new(domain, fnp.binary_field_ghash))
 
 
 @dataclass(frozen=True)
@@ -140,7 +140,7 @@ class FlockChoreography(LigeritoChoreography):
         self, transcript: FlockTranscript, bits: int
     ) -> tuple[FlockTranscript, Array]:
         inner, witness = fs.grind(transcript.inner, bits)
-        return FlockTranscript(inner), jnp.asarray(witness, jnp.uint64)
+        return FlockTranscript(inner), fnp.asarray(witness, fnp.uint64)
 
     def check_grind(
         self, transcript: FlockTranscript, bits: int, witness: Array
@@ -160,22 +160,22 @@ class FlockChoreography(LigeritoChoreography):
                 f"sample_queries: count ({count}) > block_len ({block_len}) — "
                 "config is too thin for this query count"
             )
-        bl = jnp.uint64(block_len)
-        idx = jnp.arange(count, dtype=jnp.int32)
+        bl = fnp.uint64(block_len)
+        idx = fnp.arange(count, dtype=fnp.int32)
 
         def body(carry):
             inner, out, n = carry
             inner, g = inner.sample_scalar()
             lo = ghash.from_ghash(g).reshape(2)[0]  # low uint64 limb = flock's v.lo
-            pos = (lo % bl).astype(jnp.int32)
-            hit = jnp.any((idx < n) & (out == pos))  # already drawn this level?
-            out = jnp.where(hit, out, out.at[n].set(pos))
-            return inner, out, jnp.where(hit, n, n + jnp.int32(1))
+            pos = (lo % bl).astype(fnp.int32)
+            hit = fnp.any((idx < n) & (out == pos))  # already drawn this level?
+            out = fnp.where(hit, out, out.at[n].set(pos))
+            return inner, out, fnp.where(hit, n, n + fnp.int32(1))
 
         inner, out, _ = lax.while_loop(
             lambda c: c[2] < count, body,
-            (transcript.inner, jnp.zeros(count, jnp.int32), jnp.int32(0)))
-        return FlockTranscript(inner), jnp.sort(out)
+            (transcript.inner, fnp.zeros(count, fnp.int32), fnp.int32(0)))
+        return FlockTranscript(inner), fnp.sort(out)
 
     def observe_residual(
         self, transcript: FlockTranscript, residual: Array
@@ -229,7 +229,7 @@ def flock_ligerito_config(
 
 def _lohi(x) -> np.ndarray:
     """ghash (any shape) -> (-1, 2) uint64 lo‖hi, flock's F128 representation."""
-    b = np.asarray(lax.bitcast_convert_type(x, jnp.uint8))
+    b = np.asarray(lax.bitcast_convert_type(x, fnp.uint8))
     return np.frombuffer(b.tobytes(), np.uint64).reshape(-1, 2)
 
 
@@ -239,7 +239,7 @@ def _bitrev(x: Array) -> Array:
 
 def _make_ghash_code(message_len: int, log_inv_rate: int) -> ReedSolomon:
     return ReedSolomon(
-        message_len=message_len, blowup=1 << log_inv_rate, dtype=jnp.binary_field_ghash
+        message_len=message_len, blowup=1 << log_inv_rate, dtype=fnp.binary_field_ghash
     )
 
 

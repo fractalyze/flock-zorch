@@ -10,7 +10,7 @@ import numpy as np
 import frx
 
 frx.config.update("jax_enable_x64", True)
-import frx.numpy as jnp  # noqa: E402
+import frx.numpy as fnp  # noqa: E402
 
 from zorch.coding.additive_reed_solomon import AdditiveReedSolomon  # noqa: E402
 
@@ -18,7 +18,7 @@ from flock_zorch import sumcheck, ghash  # noqa: E402
 
 
 def _rand(n, seed):
-    return jnp.asarray(np.random.default_rng(seed).integers(0, 2**64, size=(n, 2), dtype=np.uint64))
+    return fnp.asarray(np.random.default_rng(seed).integers(0, 2**64, size=(n, 2), dtype=np.uint64))
 
 
 def _bench(fn, args, iters):
@@ -42,7 +42,7 @@ def main():
     for log in (16, 18, 20):
         n = 1 << log
         d = _rand(n, 3)
-        code = AdditiveReedSolomon(n, 1, jnp.binary_field_ghash)
+        code = AdditiveReedSolomon(n, 1, fnp.binary_field_ghash)
         fn = frx.jit(lambda dd, c=code: c.encode(ghash.to_ghash(dd)))
         try:
             dt = _bench(fn, (d,), 20)

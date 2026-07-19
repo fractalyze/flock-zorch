@@ -18,7 +18,7 @@ project memory `flock-baseline-needs-macbook`.
 Run:
   cargo build --release --example bench_sumcheck_cpu        # once
   export PATH="$HOME/.local/cuda13/bin:$PATH"               # CUDA 13.3 ptxas → compiler emits clmad
-  JAX_PLATFORMS=cuda PYTHONPATH=python <venv> \
+  FRX_PLATFORMS=cuda PYTHONPATH=python <venv> \
       python/flock_zorch/sumcheck/testing/sumcheck_gpu_vs_cpu.py
 """
 import subprocess
@@ -30,7 +30,7 @@ import numpy as np
 import frx
 
 frx.config.update("jax_enable_x64", True)
-import frx.numpy as jnp  # noqa: E402
+import frx.numpy as fnp  # noqa: E402
 
 from flock_zorch import ghash, sumcheck  # noqa: E402
 from flock_zorch.sumcheck.testing import sumcheck_oracle_test as oracle  # noqa: E402
@@ -86,7 +86,7 @@ def main() -> int:
     print(f"\n{'n':>3}  {'2^n elems':>12}  {'CPU flock ms':>13}  {'GPU zorch ms':>13}  {'speedup':>9}")
     worst = float("inf")
     for n in SIZES:
-        r = jnp.asarray(np.random.default_rng(7).integers(0, 2**64, size=(n, 2), dtype=np.uint64))
+        r = fnp.asarray(np.random.default_rng(7).integers(0, 2**64, size=(n, 2), dtype=np.uint64))
         fn = frx.jit(lambda rr: sumcheck.build_eq_lanes(rr))
         gpu = _gpu_eq_ms(fn, r)
         cpu = _cpu_eq_ms(n)

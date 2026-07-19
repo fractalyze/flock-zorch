@@ -15,7 +15,7 @@ The octopus multi-proof stays flock-side: the proof layout is flock's assembly.
 from __future__ import annotations
 
 import frx
-import frx.numpy as jnp
+import frx.numpy as fnp
 import numpy as np
 
 from zorch.commit.merkle import MerkleTree
@@ -24,19 +24,19 @@ from zorch.hash.sha256 import INITIAL_STATE, sha256_chain, U32
 
 
 def _pad_device(msg, length: int):
-    """Device SHA-256 pad: uint8 [B, length] -> uint32 [B, nblocks, 16] BE, all-jnp
+    """Device SHA-256 pad: uint8 [B, length] -> uint32 [B, nblocks, 16] BE, all-fnp
     (no host round-trip) so Merkle nodes stay device-resident across levels. flock-
     local; `length` is static and the compression itself is zorch's `sha256_chain`."""
     b = msg.shape[0]
     bitlen = length * 8
     nblocks = (length + 8) // 64 + 1
     total = nblocks * 64
-    padded = jnp.zeros((b, total), dtype=jnp.uint8)
+    padded = fnp.zeros((b, total), dtype=fnp.uint8)
     padded = padded.at[:, :length].set(msg)
-    padded = padded.at[:, length].set(jnp.uint8(0x80))
+    padded = padded.at[:, length].set(fnp.uint8(0x80))
     for i in range(8):  # 8-byte big-endian bit length at the tail (static bytes)
-        padded = padded.at[:, total - 8 + i].set(jnp.uint8((bitlen >> (8 * (7 - i))) & 0xFF))
-    words = padded.reshape(b, nblocks, 16, 4).astype(jnp.uint32)
+        padded = padded.at[:, total - 8 + i].set(fnp.uint8((bitlen >> (8 * (7 - i))) & 0xFF))
+    words = padded.reshape(b, nblocks, 16, 4).astype(fnp.uint32)
     return (words[..., 0] << U32(24)) | (words[..., 1] << U32(16)) | (words[..., 2] << U32(8)) | words[..., 3]
 
 
@@ -75,7 +75,7 @@ class _GhashSha256LeafHasher(_Sha256LeafHasher):
     device ghash→integer direction (ghash→uint64 returns zeros, zorch#399)."""
 
     def as_bytes(self, matrix):
-        return frx.lax.bitcast_convert_type(matrix, jnp.uint8).reshape(matrix.shape[0], -1)
+        return frx.lax.bitcast_convert_type(matrix, fnp.uint8).reshape(matrix.shape[0], -1)
 
 
 class _Sha256Compressor:
@@ -122,13 +122,13 @@ def _root(leaves):
 @frx.jit
 def _tree(leaves):
     _, layers = _TREE.commit(leaves)
-    return jnp.concatenate(layers, axis=0)  # [2*n_leaves - 1, 32], flock's layout
+    return fnp.concatenate(layers, axis=0)  # [2*n_leaves - 1, 32], flock's layout
 
 
 def merkle_root(leaves) -> np.ndarray:
     """32-byte Merkle root of `n_leaves` equal-sized leaves. uint8 [n_leaves, leaf_size]
     -> uint8 [32], byte-identical to flock. One jit (commit fold is a single scan)."""
-    return np.asarray(_root(jnp.asarray(leaves, dtype=jnp.uint8)))
+    return np.asarray(_root(fnp.asarray(leaves, dtype=fnp.uint8)))
 
 
 def merkle_tree(leaves) -> np.ndarray:
@@ -137,7 +137,7 @@ def merkle_tree(leaves) -> np.ndarray:
 
     leaves: uint8 [n, leaf_size] (n a power of two). Returns uint8 [2n-1, 32].
     One jit (zorch digest_layers, concatenated)."""
-    return np.asarray(_tree(jnp.asarray(leaves, dtype=jnp.uint8)))
+    return np.asarray(_tree(fnp.asarray(leaves, dtype=fnp.uint8)))
 
 
 def _octopus_levels(positions, num_leaves: int):

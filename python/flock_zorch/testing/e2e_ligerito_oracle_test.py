@@ -10,7 +10,7 @@ a0/b0=I, no lincheck circuit.
 
 Run (regen: cargo run --release --example dump_e2e_ligerito -- 22 artifacts/e2e_ligerito_golden.bin):
   export PATH="$HOME/.local/cuda13/bin:$PATH"
-  JAX_PLATFORMS=cuda PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
+  FRX_PLATFORMS=cuda PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
       python/flock_zorch/testing/e2e_ligerito_oracle_test.py
 """
 import sys

@@ -20,7 +20,7 @@ import frx
 frx.config.update("jax_enable_x64", True)
 frx.config.update("jax_platforms", "cpu")
 
-import frx.numpy as jnp  # noqa: E402
+import frx.numpy as fnp  # noqa: E402
 from frx import lax  # noqa: E402
 
 from zorch.coding.reed_solomon import ReedSolomon  # noqa: E402
@@ -41,19 +41,19 @@ from flock_zorch.pcs.ligerito import (  # noqa: E402
 DOMAIN = b"flock-ligerito-test"
 
 
-def _ghash(lohi) -> jnp.ndarray:
+def _ghash(lohi) -> fnp.ndarray:
     return lax.bitcast_convert_type(
-        jnp.asarray(np.asarray(lohi, np.uint64)), jnp.binary_field_ghash
+        fnp.asarray(np.asarray(lohi, np.uint64)), fnp.binary_field_ghash
     )
 
 
-def _rand_ghash(seed: int, n: int) -> jnp.ndarray:
+def _rand_ghash(seed: int, n: int) -> fnp.ndarray:
     rng = np.random.default_rng(seed)
     return _ghash(rng.integers(0, 1 << 63, size=(n, 2), dtype=np.uint64))
 
 
 def _lohi(x) -> np.ndarray:
-    b = np.asarray(lax.bitcast_convert_type(x, jnp.uint8))
+    b = np.asarray(lax.bitcast_convert_type(x, fnp.uint8))
     return np.frombuffer(b.tobytes(), np.uint64).reshape(-1, 2)
 
 
@@ -81,7 +81,7 @@ def test_observe_framing():
     root = np.arange(32, dtype=np.uint8)
 
     t = flock_transcript(DOMAIN)
-    t = t.observe(vs[0]).observe(vs).observe(jnp.asarray(root))
+    t = t.observe(vs[0]).observe(vs).observe(fnp.asarray(root))
 
     ch = Challenger(DOMAIN)
     ch.observe_f128(vs[0])
@@ -195,7 +195,7 @@ def test_round_trip_ghash():
         return ReedSolomon(
             message_len=message_len,
             blowup=1 << log_inv_rate,
-            dtype=jnp.binary_field_ghash,
+            dtype=fnp.binary_field_ghash,
         )
 
     prover = LigeritoProver(make_code, merkle.GHASH_TREE, config, chor)

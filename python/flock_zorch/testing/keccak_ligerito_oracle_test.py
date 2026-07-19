@@ -10,7 +10,7 @@ rows); everything else is the same recursive Ligerito driver gated for sha2.
 
 Run (regen: cargo run --release --example dump_keccak_ligerito -- 64 artifacts/keccak_ligerito_golden.bin):
   export PATH="$HOME/.local/cuda13/bin:$PATH"
-  JAX_PLATFORMS=cuda PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
+  FRX_PLATFORMS=cuda PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
       python/flock_zorch/testing/keccak_ligerito_oracle_test.py
 """
 import sys
@@ -21,7 +21,7 @@ import frx
 
 frx.config.update("jax_enable_x64", True)
 
-import frx.numpy as jnp  # noqa: E402
+import frx.numpy as fnp  # noqa: E402
 
 from flock_zorch import ghash  # noqa: E402
 from flock_zorch import zerocheck, lincheck, prover  # noqa: E402
@@ -101,8 +101,8 @@ def run():
     _lr, lc_zp, lc_claim, _zv = lincheck.prove(g["zlc"], None, None, x_ab, m, k_log, k_skip, ch=ch, capture=True, circuit=circ)
     results.append(("lincheck z_partial", np.array_equal(ghash.to_lanes(lc_zp), g["lc"]["zp"])))
 
-    ab_full = jnp.concatenate([lc_claim.r_inner_rest, x_ab.x_outer], axis=0)
-    c_full = jnp.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
+    ab_full = fnp.concatenate([lc_claim.r_inner_rest, x_ab.x_outer], axis=0)
+    c_full = fnp.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
     out = prover.open_batch_ligerito(cfg, g["z"], pdata, [ab_full, c_full], ch)
 
     for i in range(len(g["rs"])):

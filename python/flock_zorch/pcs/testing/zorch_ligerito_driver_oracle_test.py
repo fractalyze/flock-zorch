@@ -16,7 +16,7 @@ format, not a transcript input — so this driver-level gate does not cover them
 included) produced by `zorch_ligerito.prove_flock_ligerito` over the same golden.
 
 Run:
-  JAX_PLATFORMS=cpu PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" \
+  FRX_PLATFORMS=cpu PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" \
       .venv/bin/python python/flock_zorch/pcs/testing/zorch_ligerito_driver_oracle_test.py
 """
 import sys
@@ -27,7 +27,7 @@ import frx
 
 frx.config.update("jax_enable_x64", True)
 
-import frx.numpy as jnp  # noqa: E402
+import frx.numpy as fnp  # noqa: E402
 from frx import lax  # noqa: E402
 
 from zorch.coding.reed_solomon import ReedSolomon  # noqa: E402
@@ -81,18 +81,18 @@ def load():
     return g
 
 
-def _ghash(lohi) -> jnp.ndarray:
+def _ghash(lohi) -> fnp.ndarray:
     return lax.bitcast_convert_type(
-        jnp.asarray(np.asarray(lohi, np.uint64)), jnp.binary_field_ghash
+        fnp.asarray(np.asarray(lohi, np.uint64)), fnp.binary_field_ghash
     )
 
 
 def _lohi(x) -> np.ndarray:
-    b = np.asarray(lax.bitcast_convert_type(x, jnp.uint8))
+    b = np.asarray(lax.bitcast_convert_type(x, fnp.uint8))
     return np.frombuffer(b.tobytes(), np.uint64).reshape(-1, 2)
 
 
-def _bitrev(x: jnp.ndarray) -> jnp.ndarray:
+def _bitrev(x: fnp.ndarray) -> fnp.ndarray:
     return lax.bit_reverse(x, dimensions=(0,))
 
 
@@ -121,7 +121,7 @@ def main() -> int:
 
     def make_code(message_len: int, log_inv_rate: int) -> ReedSolomon:
         return ReedSolomon(message_len=message_len, blowup=1 << log_inv_rate,
-                           dtype=jnp.binary_field_ghash)
+                           dtype=fnp.binary_field_ghash)
 
     prover = LigeritoProver(make_code, merkle.GHASH_TREE, config, chor)
     verifier = LigeritoVerifier(make_code, merkle.GHASH_TREE, config, chor)

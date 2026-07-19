@@ -5,8 +5,8 @@ Reads reference outputs of flock-core's `build_eq`, `round_pair_naive`, and
 frx port in `flock_zorch.sumcheck` reproduces each byte-for-byte (identical under
 software and `clmad` mul).
 
-Run directly (backend chosen by JAX_PLATFORMS):
-    JAX_PLATFORMS=cuda PYTHONPATH=python <venv>/bin/python \
+Run directly (backend chosen by FRX_PLATFORMS):
+    FRX_PLATFORMS=cuda PYTHONPATH=python <venv>/bin/python \
         python/flock_zorch/sumcheck/testing/sumcheck_oracle_test.py
 """
 import os
@@ -16,7 +16,7 @@ import numpy as np
 import frx
 
 frx.config.update("jax_enable_x64", True)
-import frx.numpy as jnp  # noqa: E402
+import frx.numpy as fnp  # noqa: E402
 
 from flock_zorch import ghash, sumcheck  # noqa: E402
 
@@ -98,17 +98,17 @@ def run(path: Path | None = None) -> dict:
 
     build_eq = frx.jit(lambda r: sumcheck.build_eq_lanes(r))
     for n, r, eq in eq_cases:
-        _check(f"build_eq(n={n})", build_eq(jnp.asarray(r)), eq)
+        _check(f"build_eq(n={n})", build_eq(fnp.asarray(r)), eq)
 
     for log_n, a, b, r, msg_one, msg_inf in rp_cases:
         fn = frx.jit(lambda aa, bb, rr, ln=log_n: sumcheck.round_pair_lanes(aa, bb, rr))
-        g_one, g_inf = fn(jnp.asarray(a), jnp.asarray(b), jnp.asarray(r))
+        g_one, g_inf = fn(fnp.asarray(a), fnp.asarray(b), fnp.asarray(r))
         _check(f"round_pair msg_one(log_n={log_n})", g_one, msg_one)
         _check(f"round_pair msg_inf(log_n={log_n})", g_inf, msg_inf)
 
     fold = frx.jit(lambda a, z: sumcheck.fold_single(a, z))
     for log_n, a, z, folded in fs_cases:
-        _check(f"fold_single(log_n={log_n})", fold(jnp.asarray(a), jnp.asarray(z)), folded)
+        _check(f"fold_single(log_n={log_n})", fold(fnp.asarray(a), fnp.asarray(z)), folded)
 
     return {
         "eq": [n for n, *_ in eq_cases],

@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import numpy as np
 import frx
-import frx.numpy as jnp
+import frx.numpy as fnp
 
 from flock_zorch import ghash
 from flock_zorch.zerocheck import _urm
 
 _ONE = np.array([1, 0], dtype=np.uint64)
-_ONE_G = ghash.to_ghash(jnp.asarray(_ONE))  # binary_field_ghash scalar one
+_ONE_G = ghash.to_ghash(fnp.asarray(_ONE))  # binary_field_ghash scalar one
 
 
 def _prod_axis1(mat):
@@ -25,7 +25,7 @@ def _prod_axis1(mat):
         h = n // 2
         prod = mat[:, :h] * mat[:, h:2 * h]
         if n % 2:
-            prod = jnp.concatenate([prod, mat[:, 2 * h:]], axis=1)
+            prod = fnp.concatenate([prod, mat[:, 2 * h:]], axis=1)
         mat = prod
         n = mat.shape[1]
     return mat[:, 0]
@@ -35,9 +35,9 @@ def _prod_axis1(mat):
 def _lag_numden(sg, zg):
     """num[i]=Π_{j≠i}(z+s_j), den[i]=Π_{j≠i}(s_i+s_j); diagonal terms set to 1."""
     ell = sg.shape[0]
-    eye = jnp.eye(ell, dtype=bool)
-    num_mat = jnp.where(eye, _ONE_G, jnp.broadcast_to((zg + sg)[None, :], (ell, ell)))
-    den_mat = jnp.where(eye, _ONE_G, sg[:, None] + sg[None, :])
+    eye = fnp.eye(ell, dtype=bool)
+    num_mat = fnp.where(eye, _ONE_G, fnp.broadcast_to((zg + sg)[None, :], (ell, ell)))
+    den_mat = fnp.where(eye, _ONE_G, sg[:, None] + sg[None, :])
     return _prod_axis1(num_mat), _prod_axis1(den_mat)
 
 
@@ -57,7 +57,7 @@ def _batch_inv(ag):
         sq = sq * sq
         return sq, result * sq
 
-    _, result = frx.lax.fori_loop(0, 127, body, (ag, jnp.broadcast_to(_ONE_G, ag.shape)))
+    _, result = frx.lax.fori_loop(0, 127, body, (ag, fnp.broadcast_to(_ONE_G, ag.shape)))
     return result
 
 
@@ -71,7 +71,7 @@ def _lagrange_weights(k_skip: int, zg, offset: int):
 
     zg: `binary_field_ghash` scalar (z is a value in the L_i formula, not an index).
     Returns `binary_field_ghash [2^k_skip]` — never leaves the dtype."""
-    sg = ghash.to_ghash(jnp.asarray(_urm.PHI_8_TABLE[offset:offset + (1 << k_skip)]))
+    sg = ghash.to_ghash(fnp.asarray(_urm.PHI_8_TABLE[offset:offset + (1 << k_skip)]))
     num, den = _lag_numden(sg, zg)
     return _lag_w(num, _batch_inv(den))
 
@@ -81,8 +81,8 @@ def _interpolate_at_z_on_lambda(values, k_skip: int, zg) -> np.ndarray:
 
     values: uint64 [2^k_skip, 2]; zg: ghash scalar; returns uint64 [2] (a proof field)."""
     w = _lagrange_weights(k_skip, zg, 1 << k_skip)
-    prod = w * ghash.to_ghash(jnp.asarray(values))
-    return ghash.from_ghash_host(jnp.sum(prod))  # XOR-sum inner product
+    prod = w * ghash.to_ghash(fnp.asarray(values))
+    return ghash.from_ghash_host(fnp.sum(prod))  # XOR-sum inner product
 
 
 @frx.jit
@@ -96,5 +96,5 @@ def _fold_at_z(rows, w_g):
     it zeroes a weight by integer-multiplying it against the 0/1 witness bit, which
     the field multiply can't express."""
     w = ghash.from_ghash(w_g)                                     # [ell, 2]
-    masked = rows[:, :, None].astype(jnp.uint64) * w[None, :, :]  # 0 or w[s], uint64 [n,ell,2]
-    return jnp.sum(ghash.to_ghash(masked), axis=1)                # ghash [n]
+    masked = rows[:, :, None].astype(fnp.uint64) * w[None, :, :]  # 0 or w[s], uint64 [n,ell,2]
+    return fnp.sum(ghash.to_ghash(masked), axis=1)                # ghash [n]
