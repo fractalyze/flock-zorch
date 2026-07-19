@@ -21,7 +21,7 @@ from typing import Any
 
 import numpy as np
 import frx
-import frx.numpy as jnp
+import frx.numpy as fnp
 
 from flock_zorch import ghash, sumcheck
 from flock_zorch.zerocheck import _urm
@@ -97,8 +97,8 @@ def medium_challenges() -> np.ndarray:
         np.array([g * gp1 ** -1 for g, gp1 in zip(gamma, one_plus)], ghash._GHASH_HOST))
 
 
-_SMALL_G = ghash.to_ghash(jnp.asarray(small_challenges()))    # [3] ghash — fixed inner challenges
-_MEDIUM_G = ghash.to_ghash(jnp.asarray(medium_challenges()))  # [4] ghash
+_SMALL_G = ghash.to_ghash(fnp.asarray(small_challenges()))    # [3] ghash — fixed inner challenges
+_MEDIUM_G = ghash.to_ghash(fnp.asarray(medium_challenges()))  # [4] ghash
 
 
 @frx.jit
@@ -139,7 +139,7 @@ class _SetupRound(Round):
         # r = r_skip ++ small ++ medium ++ r_outer, assembled on the dtype.
         r_skip = transcript.sample_f128(k_skip)
         r_outer = transcript.sample_f128(m - k_skip - N_INNER)
-        r = jnp.concatenate([r_skip, _SMALL_G, _MEDIUM_G, r_outer])
+        r = fnp.concatenate([r_skip, _SMALL_G, _MEDIUM_G, r_outer])
         return replace(carry, r=r), transcript, None
 
 
@@ -159,8 +159,8 @@ class _UrmRound(Round):
         b_rows = _urm.witness_to_rows(carry.b_bits, m, k_skip)
         c_rows = _urm.witness_to_rows(carry.c_bits, m, k_skip)
         round1_ab, round1_c = _urm.round1_rows(a_rows, b_rows, c_rows, m, k_skip, carry.r)
-        transcript.observe_f128(ghash.to_ghash(jnp.asarray(round1_ab)))
-        transcript.observe_f128(ghash.to_ghash(jnp.asarray(round1_c)))
+        transcript.observe_f128(ghash.to_ghash(fnp.asarray(round1_ab)))
+        transcript.observe_f128(ghash.to_ghash(fnp.asarray(round1_c)))
         z = transcript.sample_f128()
         # c-claim: interpolate round1_c at z.
         final_c_eval = _interpolate_at_z_on_lambda(round1_c, k_skip, z)
@@ -206,7 +206,7 @@ class _MultilinearRound(Round):
         final_b_eval = final_b
         carry = replace(carry, multilinear_rounds=rounds, final_a_eval=final_a_eval,
                         final_b_eval=final_b_eval,
-                        mlv_challenges=jnp.stack(rhos))       # native ghash open-point coords
+                        mlv_challenges=fnp.stack(rhos))       # native ghash open-point coords
         return carry, transcript, (rounds, final_a_eval, final_b_eval)
 
 

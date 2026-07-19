@@ -10,7 +10,7 @@ pcs_open(ligerito)}.
 
 Run (regen: cargo run --release --example dump_keccak_chain -- artifacts/keccak_chain_golden.bin):
   export PATH="$HOME/.local/cuda13/bin:$PATH"
-  JAX_PLATFORMS=cuda PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
+  FRX_PLATFORMS=cuda PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
       python/flock_zorch/testing/keccak_chain_oracle_test.py
 """
 import sys
@@ -21,7 +21,7 @@ import frx
 
 frx.config.update("jax_enable_x64", True)
 
-import frx.numpy as jnp  # noqa: E402
+import frx.numpy as fnp  # noqa: E402
 
 from flock_zorch import zerocheck, lincheck, prover, ghash  # noqa: E402
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
@@ -117,8 +117,8 @@ def run():
     chain_claim = chain.assemble_chain_claim(tau_pos, sh_claims, k_log, region_log)
 
     # ---- mixed open: [ab, c] ring-switched + [chain] packed-direct
-    ab_full = jnp.concatenate([lc_claim.r_inner_rest, x_ab.x_outer], axis=0)
-    c_full = jnp.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
+    ab_full = fnp.concatenate([lc_claim.r_inner_rest, x_ab.x_outer], axis=0)
+    c_full = fnp.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
     out = prover.open_batch_mixed_ligerito(cfg, g["z"], pdata,
                                            [ab_full, c_full], [chain_claim], ch)
 

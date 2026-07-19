@@ -7,7 +7,7 @@ two new prover pieces of the keccak hash-CHAIN protocol.
 
 Run (regen: cargo run --release --example dump_chain_shift -- artifacts/chain_shift_golden.bin):
   export PATH="$HOME/.local/cuda13/bin:$PATH"
-  JAX_PLATFORMS=cuda PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
+  FRX_PLATFORMS=cuda PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
       python/flock_zorch/lincheck/testing/chain_shift_oracle_test.py
 """
 import sys

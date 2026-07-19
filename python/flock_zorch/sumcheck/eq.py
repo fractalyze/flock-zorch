@@ -4,7 +4,7 @@ flock's `zerocheck::{univariate_skip,multilinear}` primitives.
 These are the reusable kernels shared by BOTH sumchecks in flock's PIOP
 (zerocheck and lincheck): the eq-table expansion, the multilinear fold, and the
 per-round prover message. The GF(2^128) arithmetic runs on the native
-`binary_field_ghash` dtype (multiply → `*`, add → `+`, sum → `jnp.sum`), so it
+`binary_field_ghash` dtype (multiply → `*`, add → `+`, sum → `fnp.sum`), so it
 is fully data-parallel and uses the dtype's hardware-CLMUL multiply on GPU — the
 multilinear sumcheck is the prover's biggest GPU win.
 
@@ -24,7 +24,7 @@ Requires `jax_enable_x64`.
 """
 from __future__ import annotations
 
-import frx.numpy as jnp
+import frx.numpy as fnp
 
 from zorch.poly.eq import expand_eq_to_hypercube
 from zorch.sumcheck.domain import compressed_domain, fold, summand_evals
@@ -34,8 +34,8 @@ from flock_zorch import ghash
 
 _PRODUCT2 = ProductSummand(2)._combine
 
-U64 = jnp.uint64
-ONE = jnp.asarray([1, 0], dtype=U64)  # F128::ONE = {lo: 1, hi: 0}
+U64 = fnp.uint64
+ONE = fnp.asarray([1, 0], dtype=U64)  # F128::ONE = {lo: 1, hi: 0}
 _ONE_G = ghash.to_ghash(ONE)  # scalar binary_field_ghash one
 
 
@@ -81,7 +81,7 @@ def build_eq_suffix_tables(cs_g):
     out = [t]
     for i in range(n - 1, -1, -1):
         c = cs_g[i]
-        t = jnp.stack([t * (c + _ONE_G), t * c], axis=1).reshape(-1)
+        t = fnp.stack([t * (c + _ONE_G), t * c], axis=1).reshape(-1)
         out.append(t)
     return out[::-1]
 
@@ -94,7 +94,7 @@ def round_pair_eq(ag, bg, eq, r0g):
     `summand_evals` over `compressed_domain(1)` with the eq suffix as the per-point
     weight and `msb=False` (`s(∞)`'s char-2 `(a1−a0)` is flock's `(a0+a1)`)."""
     g_one, g_inf = summand_evals(
-        jnp.stack([ag, bg]), _PRODUCT2, compressed_domain(1, ag.dtype),
+        fnp.stack([ag, bg]), _PRODUCT2, compressed_domain(1, ag.dtype),
         weight=eq, msb=False)
     return r0g * g_one, g_inf
 
@@ -111,5 +111,5 @@ def round_pair_lanes(a_mlv, b_mlv, r):
     """`round_pair` on the uint64 [.., 2] lane layout — the public golden/test I/O
     contract; returns `(r[0]·G(1), G(∞))`, each uint64 [2]."""
     g1, ginf = round_pair(ghash.to_ghash(a_mlv), ghash.to_ghash(b_mlv),
-                          ghash.to_ghash(jnp.asarray(r, U64)))
+                          ghash.to_ghash(fnp.asarray(r, U64)))
     return ghash.from_ghash(g1), ghash.from_ghash(ginf)

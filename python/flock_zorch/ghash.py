@@ -6,7 +6,7 @@ two u64 limbs {lo, hi}: `lo` holds the coefficients of x^0..x^63, `hi` of
 x^64..x^127. On a little-endian host that is exactly flock's 16-byte serialization,
 and exactly the storage of zk_dtypes' `binary_field_ghash` dtype (same basis,
 verified 2*2 = 4). Device arithmetic therefore runs on the dtype (`*` / `+` /
-`jnp.sum`); this module only bridges representations at the edges (the golden-fixture
+`fnp.sum`); this module only bridges representations at the edges (the golden-fixture
 readers and the challenger's F128 byte serde).
 
 `to_ghash`/`from_ghash` are the device uint64-lane <-> `binary_field_ghash` bitcast
@@ -18,13 +18,13 @@ from __future__ import annotations
 
 import numpy as np
 import frx
-import frx.numpy as jnp
+import frx.numpy as fnp
 
-U64 = jnp.uint64
+U64 = fnp.uint64
 
 LOG_PACKING = 7  # an F128 packs 2^7 = 128 bits; witness log-size m -> 2^(m-7) packed elems
 
-_GHASH = jnp.binary_field_ghash
+_GHASH = fnp.binary_field_ghash
 
 
 def to_ghash(a):
@@ -32,7 +32,7 @@ def to_ghash(a):
 
     flock stores an F128 as its little-endian bytes and the dtype is the same
     bytes, so this is a pure bitcast."""
-    return frx.lax.bitcast_convert_type(jnp.asarray(a, U64), _GHASH)
+    return frx.lax.bitcast_convert_type(fnp.asarray(a, U64), _GHASH)
 
 
 def from_ghash(g):
@@ -42,9 +42,9 @@ def from_ghash(g):
 
 def zeros(n: int):
     """`binary_field_ghash [n]` of field zeros — a bitcast of zero bytes, NOT
-    `jnp.zeros(n, binary_field_ghash)` (an int->ghash convert is unimplemented; a
+    `fnp.zeros(n, binary_field_ghash)` (an int->ghash convert is unimplemented; a
     scalar default even emits an S64->ghash convert at compile — see CLAUDE.md)."""
-    return frx.lax.bitcast_convert_type(jnp.zeros((n, 2), U64), _GHASH)
+    return frx.lax.bitcast_convert_type(fnp.zeros((n, 2), U64), _GHASH)
 
 
 def from_ghash_host(g) -> np.ndarray:

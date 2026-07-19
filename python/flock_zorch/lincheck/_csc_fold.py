@@ -13,7 +13,7 @@ import functools
 
 import numpy as np
 import frx
-import frx.numpy as jnp
+import frx.numpy as fnp
 
 from flock_zorch import ghash
 
@@ -47,7 +47,7 @@ def _csc_segments(col, row):
     change[:-1] = col_s[1:] != col_s[:-1]            # run boundaries (last-of-run)
     seg_end = np.nonzero(change)[0].astype(np.int32)
     present = col_s[seg_end].astype(np.int32)
-    return jnp.asarray(row_s), jnp.asarray(seg_end), jnp.asarray(present)
+    return fnp.asarray(row_s), fnp.asarray(seg_end), fnp.asarray(present)
 
 
 @functools.partial(frx.jit, static_argnums=(4,))
@@ -59,6 +59,6 @@ def _seg_xor_fold(eq, row_sorted, seg_end, present, k):
     vals = eq[row_sorted]                                          # ghash [nnz]
     pref = frx.lax.associative_scan(lambda a, b: a + b, vals, axis=0)  # inclusive prefix XOR (ghash add)
     ends = pref[seg_end]                                           # cumulative through each run end
-    prev = jnp.concatenate([ghash.zeros(1), ends[:-1]], axis=0)
+    prev = fnp.concatenate([ghash.zeros(1), ends[:-1]], axis=0)
     seg = ends + prev                                            # per-column XOR-reduce (add is its own inverse)
     return ghash.zeros(k).at[present].set(seg)

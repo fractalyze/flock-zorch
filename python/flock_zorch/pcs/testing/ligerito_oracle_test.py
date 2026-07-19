@@ -9,7 +9,7 @@ retiring the in-tree frx port (flock-zorch#32 T5); the transcript-visible fields
 are also gated at the driver level by `zorch_ligerito_driver_oracle_test`.
 
 Run (regen golden: cargo run --release --example dump_ligerito -- 15 artifacts/ligerito_golden.bin):
-  JAX_PLATFORMS=cuda PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
+  FRX_PLATFORMS=cuda PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
       python/flock_zorch/pcs/testing/ligerito_oracle_test.py
 """
 import sys

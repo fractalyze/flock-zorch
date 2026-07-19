@@ -22,9 +22,9 @@ import functools
 
 import numpy as np
 import frx
-import frx.numpy as jnp
+import frx.numpy as fnp
 
-_GHASH = jnp.binary_field_ghash
+_GHASH = fnp.binary_field_ghash
 
 # --- Layout constants (keccak.rs) -----------------------------------------
 N_LANES = 25
@@ -132,22 +132,22 @@ def _transpose_map(pre_map):
         for p in pre_map[s]:
             buckets[int(p)].append(s)
     assert {len(b) for b in buckets} == {11}, "θ∘ρ∘π transpose fan-in must be 11"
-    return jnp.asarray(np.array(buckets, np.int64))
+    return fnp.asarray(np.array(buckets, np.int64))
 
 
 _FWD_T = _transpose_map(_PRE_FWD)          # φᵀ gather
 _CHI_A_T = _transpose_map(_PRE_CHI_A)      # χ a-operand gather
 _CHI_B_T = _transpose_map(_PRE_CHI_B)      # χ b-operand gather
-_PRE_FWD_DEV = jnp.asarray(_PRE_FWD)       # forward φ_bool gather
-_RC_TOGGLE_DEV = jnp.asarray(_RC_TOGGLE_IDX)
-_RC_BITS = jnp.asarray(np.stack([          # (N_T, LANE_BITS) ι round-constant toggle bits
+_PRE_FWD_DEV = fnp.asarray(_PRE_FWD)       # forward φ_bool gather
+_RC_TOGGLE_DEV = fnp.asarray(_RC_TOGGLE_IDX)
+_RC_BITS = fnp.asarray(np.stack([          # (N_T, LANE_BITS) ι round-constant toggle bits
     (np.uint64(rc) >> _Z_BITS) & np.uint64(1) for rc in ROUND_CONSTANTS]))
 
 
 def _gather_xor(vals, map_T):
     """φᵀ / χ scatter as a gather+XOR-reduce: out[t] = XOR_k vals[map_T[t,k]].
     `vals` is native ghash; XOR-reduce is the dtype's XOR-sum."""
-    return jnp.sum(vals[map_T], axis=-1)
+    return fnp.sum(vals[map_T], axis=-1)
 
 
 def _accumulate_subkeccak(eq, col_state0, col_state24, rows_t):
@@ -159,25 +159,25 @@ def _accumulate_subkeccak(eq, col_state0, col_state24, rows_t):
     e_s0 = eq[col_state0]                                          # ghash (S,)
     vec_pin = eq[col_state24]                                      # ghash (S,)
     e_t = eq[rows_t]                                               # ghash (N_T,S)
-    chi_a = jnp.sum(e_t[:, _CHI_A_T], axis=2)                      # ghash (N_T,S)
-    chi_b = jnp.sum(e_t[:, _CHI_B_T], axis=2)
+    chi_a = fnp.sum(e_t[:, _CHI_A_T], axis=2)                      # ghash (N_T,S)
+    chi_b = fnp.sum(e_t[:, _CHI_B_T], axis=2)
 
-    zc_a = jnp.sum(e_t.reshape(-1))                               # Σ eq_t (A z_const)
-    zc_b = jnp.sum(e_s0) + jnp.sum(vec_pin)                        # state_0 + state_24 pins
+    zc_a = fnp.sum(e_t.reshape(-1))                               # Σ eq_t (A z_const)
+    zc_b = fnp.sum(e_s0) + fnp.sum(vec_pin)                        # state_0 + state_24 pins
 
     # Round-constant GF(2) state machine (unrolled N_T) → RC_24. `rc` is a 0/1 bit
     # vector (not a field element), so it stays uint64 and masks chi via select.
-    rc = jnp.zeros(STATE_BITS, jnp.uint64)
-    rc_a = jnp.zeros((), _GHASH)
-    rc_b = jnp.zeros((), _GHASH)
+    rc = fnp.zeros(STATE_BITS, fnp.uint64)
+    rc_a = fnp.zeros((), _GHASH)
+    rc_b = fnp.zeros((), _GHASH)
     for r in range(N_T):
         if r > 0:  # rc_0 == 0, so round 0's masked select is identically the field zero
             m = rc.astype(bool)
-            rc_a = rc_a + jnp.sum(jnp.where(m, chi_a[r], jnp.zeros(STATE_BITS, _GHASH)))
-            rc_b = rc_b + jnp.sum(jnp.where(m, chi_b[r], jnp.zeros(STATE_BITS, _GHASH)))
-        rc = jnp.bitwise_xor.reduce(rc[_PRE_FWD_DEV], axis=1)      # forward φ_bool
+            rc_a = rc_a + fnp.sum(fnp.where(m, chi_a[r], fnp.zeros(STATE_BITS, _GHASH)))
+            rc_b = rc_b + fnp.sum(fnp.where(m, chi_b[r], fnp.zeros(STATE_BITS, _GHASH)))
+        rc = fnp.bitwise_xor.reduce(rc[_PRE_FWD_DEV], axis=1)      # forward φ_bool
         rc = rc.at[_RC_TOGGLE_DEV].set(rc[_RC_TOGGLE_DEV] ^ _RC_BITS[r])
-    rc_pin = jnp.sum(jnp.where(rc.astype(bool), vec_pin, jnp.zeros(STATE_BITS, _GHASH)))
+    rc_pin = fnp.sum(fnp.where(rc.astype(bool), vec_pin, fnp.zeros(STATE_BITS, _GHASH)))
     zc_a = zc_a + rc_a + rc_pin
     zc_b = zc_b + rc_b
 
@@ -192,14 +192,14 @@ def _accumulate_subkeccak(eq, col_state0, col_state24, rows_t):
 
     # B-side (K^B_24 = 0): rows_t[j] ← K^B_{j+1} (0 at j=N_T-1), col_state0 ← K^B_0.
     rb = [None] * N_T
-    rb[N_T - 1] = jnp.zeros(STATE_BITS, _GHASH)
+    rb[N_T - 1] = fnp.zeros(STATE_BITS, _GHASH)
     k_b = chi_b[N_T - 1]                                          # K^B_23
     for r in range(N_T - 1, 0, -1):
         rb[r - 1] = k_b
         k_b = _gather_xor(k_b, _FWD_T) + chi_b[r - 1]
     cs0_b = k_b                                                   # K^B_0
 
-    return jnp.stack(ra), jnp.stack(rb), cs0_a, cs0_b, zc_a, zc_b
+    return fnp.stack(ra), fnp.stack(rb), cs0_a, cs0_b, zc_a, zc_b
 
 
 @functools.partial(frx.jit, static_argnums=(3,))
@@ -210,10 +210,10 @@ def _fold_walker_kernel(eq, alpha, sub_cols, z_const):
     multiply. `eq` is (n_cols, 2); `sub_cols` a list of (col_state0, col_state24,
     rows_t) device index arrays; `z_const` a static int column."""
     n_cols = eq.shape[0]
-    comb_a = jnp.zeros(n_cols, _GHASH)
-    comb_b = jnp.zeros(n_cols, _GHASH)
-    zc_a = jnp.zeros((), _GHASH)
-    zc_b = jnp.zeros((), _GHASH)
+    comb_a = fnp.zeros(n_cols, _GHASH)
+    comb_b = fnp.zeros(n_cols, _GHASH)
+    zc_a = fnp.zeros((), _GHASH)
+    zc_b = fnp.zeros((), _GHASH)
     for col_state0, col_state24, rows_t in sub_cols:
         ra, rb, ca, cb, za, zb = _accumulate_subkeccak(eq, col_state0, col_state24, rows_t)
         rtf = rows_t.reshape(-1)
@@ -230,7 +230,7 @@ def _fold_walker_kernel(eq, alpha, sub_cols, z_const):
 def _device_sub_cols(sub_cols):
     """Device copies of a walker's host index arrays, built once per circuit so the
     constant column maps aren't re-transferred to the device on every fold."""
-    return [(jnp.asarray(c0), jnp.asarray(c24), jnp.asarray(rt)) for c0, c24, rt in sub_cols]
+    return [(fnp.asarray(c0), fnp.asarray(c24), fnp.asarray(rt)) for c0, c24, rt in sub_cols]
 
 
 def _fold_walker(eq_inner, alpha, sub_cols, z_const):
@@ -238,8 +238,8 @@ def _fold_walker(eq_inner, alpha, sub_cols, z_const):
     caller reuses the result on device, like `CscCircuit`). `sub_cols` is the
     circuit's device index arrays (built once via `_device_sub_cols`). `eq_inner`
     is the ghash quirky-eq table, kept in ghash for the native fold."""
-    eq = jnp.asarray(eq_inner).reshape(-1)
-    return _fold_walker_kernel(eq, jnp.asarray(alpha), sub_cols, int(z_const))
+    eq = fnp.asarray(eq_inner).reshape(-1)
+    return _fold_walker_kernel(eq, fnp.asarray(alpha), sub_cols, int(z_const))
 
 
 class KeccakLincheckCircuit:

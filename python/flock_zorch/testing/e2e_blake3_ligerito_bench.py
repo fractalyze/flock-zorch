@@ -4,7 +4,7 @@ import sys
 import numpy as np, frx
 frx.config.update("jax_enable_x64", True)
 
-import frx.numpy as jnp  # noqa: E402
+import frx.numpy as fnp  # noqa: E402
 from flock_zorch import zerocheck, lincheck, prover  # noqa: E402
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
@@ -27,8 +27,8 @@ def main():
         zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch)
         x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, ir)
         _r, _zp, lcc, _zv = lincheck.prove(g["zlc"], None, None, x_ab, m, k_log, k_skip, ch=ch, capture=True, circuit=csc)
-        ab = jnp.concatenate([lcc.r_inner_rest, x_ab.x_outer], axis=0)
-        cc = jnp.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
+        ab = fnp.concatenate([lcc.r_inner_rest, x_ab.x_outer], axis=0)
+        cc = fnp.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
         return prover.open_batch_ligerito(cfg, z, pdata, [ab, cc], ch)
 
     t = best(prove_once, n=3)

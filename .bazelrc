@@ -6,7 +6,7 @@ test --test_output=errors
 # `bazel test` is deterministic on any machine. The GPU byte-match gates run
 # outside Bazel under the zorch venv (see README) because the frx/xla CUDA
 # wheels are not hermetic.
-test --test_env=JAX_PLATFORMS=cpu
+test --test_env=FRX_PLATFORMS=cpu
 # The gates use uint64 GF(2^128) lanes; x64 must be on (matches the old venv CI env).
 test --test_env=JAX_ENABLE_X64=true
 

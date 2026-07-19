@@ -5,7 +5,7 @@ rounds + z_partial match byte-for-byte (identical under software and `clmad` mul
 
 Run:
   cargo run --release --example dump_lincheck -- 12 5 3 artifacts/lincheck_golden.bin
-  JAX_PLATFORMS=cuda PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
+  FRX_PLATFORMS=cuda PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
       python/flock_zorch/lincheck/testing/lincheck_oracle_test.py
 """
 import sys

@@ -23,7 +23,7 @@ from typing import Any, NamedTuple, Protocol, runtime_checkable
 
 import numpy as np
 import frx
-import frx.numpy as jnp
+import frx.numpy as fnp
 
 from flock_zorch import ghash
 from flock_zorch.sumcheck import build_eq, ONE
@@ -33,8 +33,8 @@ from flock_zorch.lincheck._csc_fold import _flatten_nz, _csc_segments, _seg_xor_
 from flock_zorch.sumcheck.inf_product import prove_inf_product
 from zorch.round import ProveChain, Round
 
-U64 = jnp.uint64
-_GHASH = jnp.binary_field_ghash
+U64 = fnp.uint64
+_GHASH = fnp.binary_field_ghash
 LABEL = b"flock-lincheck-v0"
 
 
@@ -57,7 +57,7 @@ def _mat_fold(mat_dense, eq):
 
     mat_dense: uint64 [k, k] (0/1, indexed [row, col]); eq: ghash [k] -> ghash [k].
     The 0/1 marginal is a dtype-native select (mask · ghash isn't a field mul)."""
-    return jnp.sum(jnp.where(mat_dense.astype(bool), eq[:, None], jnp.zeros((), _GHASH)), axis=0)
+    return fnp.sum(fnp.where(mat_dense.astype(bool), eq[:, None], fnp.zeros((), _GHASH)), axis=0)
 
 
 def fold_alpha_batched(alpha, a_dense, b_dense, eq_inner):
@@ -87,8 +87,8 @@ class CscCircuit:
         self._b_seg = _csc_segments(b_col, b_row)
 
     def fold_alpha_batched(self, alpha, eq_inner):
-        eq = jnp.asarray(eq_inner).reshape(-1)                # ghash [k]
-        zero = jnp.zeros(self.k, _GHASH)
+        eq = fnp.asarray(eq_inner).reshape(-1)                # ghash [k]
+        zero = fnp.zeros(self.k, _GHASH)
         out_a = _seg_xor_fold(eq, *self._a_seg, self.k) if self._a_seg else zero
         out_b = _seg_xor_fold(eq, *self._b_seg, self.k) if self._b_seg else zero
         return alpha * out_a + out_b
@@ -104,7 +104,7 @@ def partial_fold_packed_z(z_packed_bytes: bytes, m: int, k_log: int, x_outer):
     k = 1 << k_log
     n_outer = 1 << (m - k_log)
     n_bytes = n_outer // 8
-    zp = jnp.asarray(np.frombuffer(z_packed_bytes, np.uint8).reshape(n_bytes, k))
+    zp = fnp.asarray(np.frombuffer(z_packed_bytes, np.uint8).reshape(n_bytes, k))
     return _partial_fold(zp, x_outer, n_outer)          # device + jit (keeps the intermediate off HBM)
 
 
@@ -114,9 +114,9 @@ def _partial_fold(zp, x_outer, n_outer):
     [n_outer,k,2] intermediate stays fused on device and never lands in HBM. `build_eq`
     is in-kernel (no `build_eq_fused`), so the eq build fuses with the fold."""
     eq_outer = build_eq(x_outer)
-    bits = ((zp[:, None, :] >> jnp.arange(8, dtype=jnp.uint8)[None, :, None]) & 1)  # [nb,8,k]
+    bits = ((zp[:, None, :] >> fnp.arange(8, dtype=fnp.uint8)[None, :, None]) & 1)  # [nb,8,k]
     bits = bits.reshape(n_outer, zp.shape[1]).astype(bool)                          # i_outer=byte·8+r
-    return jnp.sum(jnp.where(bits, eq_outer[:, None], jnp.zeros((), _GHASH)), axis=0)  # dtype-native 0/1 select
+    return fnp.sum(fnp.where(bits, eq_outer[:, None], fnp.zeros((), _GHASH)), axis=0)  # dtype-native 0/1 select
 
 
 @runtime_checkable
@@ -224,8 +224,8 @@ class _CombRound(Round):
                 col = circuit.const_pin
                 comb = comb.at[col].set(comb[col] + beta)
         else:
-            comb = fold_alpha_batched(alpha, jnp.asarray(carry.a_dense),
-                                      jnp.asarray(carry.b_dense), eq_inner)
+            comb = fold_alpha_batched(alpha, fnp.asarray(carry.a_dense),
+                                      fnp.asarray(carry.b_dense), eq_inner)
         return replace(carry, comb=comb), transcript, None
 
 
@@ -245,7 +245,7 @@ class _SumcheckRound(Round):
 
         rounds, r_rounds = [], []
         if inner_rest > 0:
-            stacked = jnp.stack([comb, z_vec])
+            stacked = fnp.stack([comb, z_vec])
             stacked, transcript._t, msgs = prove_inf_product(
                 stacked, transcript._t, inner_rest)
             for e1, einf, r in msgs:
@@ -273,12 +273,12 @@ class _ClaimRound(Round):
         transcript.observe_f128(carry.z_partial_g)      # 6. observe z_partial
         r_inner_skip = transcript.sample_f128()               # 7. fresh z_skip AFTER
         lam = _lagrange_weights(k_skip, r_inner_skip, 0)       # 8. φ8 S-domain weights
-        w = jnp.sum(lam * carry.z_partial_g, axis=0)          # inner_product (ghash)
+        w = fnp.sum(lam * carry.z_partial_g, axis=0)          # inner_product (ghash)
         r_inner_rest = list(reversed(carry.r_rounds))         # 9. LSB-first (ghash scalars)
         claim = LincheckClaim(
             r_inner_skip=r_inner_skip,
-            r_inner_rest=(jnp.stack(r_inner_rest) if r_inner_rest
-                          else ghash.to_ghash(jnp.zeros((0, 2), jnp.uint64))),
+            r_inner_rest=(fnp.stack(r_inner_rest) if r_inner_rest
+                          else ghash.to_ghash(fnp.zeros((0, 2), fnp.uint64))),
             w=w)
         return replace(carry, claim=claim), transcript, claim
 

@@ -8,7 +8,7 @@
 
 Run:
   cargo run --release --example dump_sha256 -- 65536 64 artifacts/sha256_golden.bin
-  JAX_PLATFORMS=cuda PYTHONPATH=python <venv> python/flock_zorch/hash/testing/sha256_oracle_test.py
+  FRX_PLATFORMS=cuda PYTHONPATH=python <venv> python/flock_zorch/hash/testing/sha256_oracle_test.py
 """
 import subprocess
 import sys
@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 import frx
-import frx.numpy as jnp
+import frx.numpy as fnp
 
 from zorch.hash import sha256
 
@@ -39,7 +39,7 @@ def _load_golden():
 
 def test_oracle():
     n, l, inp, golden = _load_golden()
-    blocks = jnp.asarray(sha256._pad(inp))
+    blocks = fnp.asarray(sha256._pad(inp))
     got = np.asarray(sha256.sha256_chain(sha256.INITIAL_STATE, blocks))
     assert got.shape == golden.shape, (got.shape, golden.shape)
     assert np.array_equal(got, golden), "sha256.digest != flock golden"
@@ -62,7 +62,7 @@ def main() -> int:
     print(f"SHA-256 byte-identity vs flock ({n} x {l}-byte msgs): PASS\n")
 
     inp = _load_golden()[2]
-    blocks = jnp.asarray(sha256._pad(inp))
+    blocks = fnp.asarray(sha256._pad(inp))
     fn = lambda b: sha256.sha256_chain(sha256.INITIAL_STATE, b)
     r = fn(blocks); r.block_until_ready()
     best = float("inf")

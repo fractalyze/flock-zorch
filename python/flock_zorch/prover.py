@@ -15,7 +15,7 @@ from typing import Any
 
 import numpy as np
 import frx
-import frx.numpy as jnp
+import frx.numpy as fnp
 from frx import Array
 
 from flock_zorch import ghash, zerocheck, lincheck
@@ -51,10 +51,10 @@ def _unpack_bits(z_packed):
     """Packed F128 witness [2^(m-7),2] -> device bit witness [2^m] uint8 (LSB-first
     within each 128-bit element), on device so a=b=c=z stays device-resident. The
     frx analogue of flock's `pcs::pack::unpack_witness`."""
-    bitidx = jnp.arange(64, dtype=jnp.uint64)
-    lo = ((z_packed[:, 0:1] >> bitidx) & jnp.uint64(1)).astype(jnp.uint8)
-    hi = ((z_packed[:, 1:2] >> bitidx) & jnp.uint64(1)).astype(jnp.uint8)
-    return jnp.concatenate([lo, hi], axis=1).reshape(-1)
+    bitidx = fnp.arange(64, dtype=fnp.uint64)
+    lo = ((z_packed[:, 0:1] >> bitidx) & fnp.uint64(1)).astype(fnp.uint8)
+    hi = ((z_packed[:, 1:2] >> bitidx) & fnp.uint64(1)).astype(fnp.uint8)
+    return fnp.concatenate([lo, hi], axis=1).reshape(-1)
 
 
 def _as_bytes(x) -> bytes:
@@ -82,11 +82,11 @@ def _combine_claims(rs_eq_inds, gammas, sumcheck_claims, packed_direct=(), gamma
     b_combined = rs_eq_inds[0]                                     # native ghash [2^L]
     for r in rs_eq_inds[1:]:
         b_combined = b_combined + r                                # γ_rs already baked in
-    target = ghash.to_ghash(jnp.zeros(2, jnp.uint64))              # ghash scalar zero
+    target = ghash.to_ghash(fnp.zeros(2, fnp.uint64))              # ghash scalar zero
     for g, sc in zip(gammas, sumcheck_claims):                     # both native ghash
         target = target + g * sc
     for pd, g in zip(packed_direct, gammas_pd):                    # g native ghash
-        eq_pd = build_eq(ghash.to_ghash(jnp.asarray(pd.point)))   # length L = 2^(m-7)
+        eq_pd = build_eq(ghash.to_ghash(fnp.asarray(pd.point)))   # length L = 2^(m-7)
         b_combined = b_combined + g * eq_pd
         target = target + g * pd.value                             # pd.value native ghash
     return b_combined, target  # native ghash: [2^L], scalar
@@ -169,7 +169,7 @@ class _ZerocheckStage(Stage):
         self._m = m
 
     def __call__(self, carry, transcript):
-        bits = _unpack_bits(jnp.asarray(carry.z_packed))   # device-resident
+        bits = _unpack_bits(fnp.asarray(carry.z_packed))   # device-resident
         zc = zerocheck.prove_packed(bits, bits, bits, self._m, ch=transcript)
         return replace(carry, zc=zc), transcript, zc
 
@@ -211,10 +211,10 @@ class _PcsOpenStage(Stage):
         inner_rest = self._k_log - self._k_skip
         zc, lc_claim = carry.zc, carry.lc_claim
         x_outer = zc.mlv_challenges[inner_rest:]
-        ab_full = jnp.concatenate([lc_claim.r_inner_rest, x_outer], axis=0)
+        ab_full = fnp.concatenate([lc_claim.r_inner_rest, x_outer], axis=0)
         # c_full split-then-rejoined (not just zc.r_rest) to mirror Rust's
         # QuirkyPoint / quirky_x_outer_full.
-        c_full = jnp.concatenate([zc.r_rest[:inner_rest], zc.r_rest[inner_rest:]], axis=0)
+        c_full = fnp.concatenate([zc.r_rest[:inner_rest], zc.r_rest[inner_rest:]], axis=0)
         pcs_open_proof = open_batch_ligerito(
             self._cfg, carry.z_packed, carry.pdata, [ab_full, c_full], transcript)
         return carry, transcript, pcs_open_proof

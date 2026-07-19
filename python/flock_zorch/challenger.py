@@ -19,7 +19,7 @@ Requires `zorch` on PYTHONPATH (run gates with `PYTHONPATH=python:../zorch`).
 from __future__ import annotations
 
 import numpy as np
-import frx.numpy as jnp
+import frx.numpy as fnp
 
 from zorch.sha256_field_transcript import Sha256FieldTranscript
 
@@ -32,7 +32,7 @@ class Challenger:
     `binary_field_ghash` elements; host-int consumers convert at their own edge."""
 
     def __init__(self, domain: bytes):
-        self._t = Sha256FieldTranscript.new(domain, jnp.binary_field_ghash)
+        self._t = Sha256FieldTranscript.new(domain, fnp.binary_field_ghash)
 
     def observe_label(self, label: bytes) -> None:
         self._t = fs.observe_label(self._t, label)
@@ -44,7 +44,7 @@ class Challenger:
     def observe_f128(self, g) -> None:
         """Observe F128 (native `binary_field_ghash`) — a scalar or a slice,
         framed by shape (flock scalar-frames a single element, slice-frames many)."""
-        if jnp.ndim(g) == 0:
+        if fnp.ndim(g) == 0:
             self._t = fs.observe_scalar(self._t, g)
         else:
             self._t = fs.observe_slice(self._t, g)
