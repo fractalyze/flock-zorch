@@ -33,6 +33,7 @@ from dataclasses import dataclass
 
 from frx.tree_util import register_dataclass
 
+import frx
 import frx.numpy as fnp
 import numpy as np
 from frx import Array, lax
@@ -45,6 +46,13 @@ from zorch.sha256_field_transcript import Sha256FieldTranscript
 
 from flock_zorch import ghash, fs
 from flock_zorch.hash import merkle
+
+# `open_with_basis` only traces as one jitted program if every node on its in/out
+# path is a pytree. zorch registers the rest of that path itself (CommittedMatrix,
+# Opening, LigeritoProof) but not the data its prover retains — so register that
+# one here; both its fields are arrays. Belongs upstream beside its siblings, and
+# raises loudly on the pin bump that lands it there.
+register_dataclass(LigeritoProverData, data_fields=["f", "initial"], meta_fields=[])
 
 FLOCK_LIGERITO_LABEL = b"flock-ligerito-basis-v0"
 
@@ -93,6 +101,31 @@ class FlockTranscript:
 def flock_transcript(domain: bytes) -> FlockTranscript:
     """A fresh `FlockTranscript` seeded like flock's `FsChallenger`."""
     return FlockTranscript(Sha256FieldTranscript.new(domain, fnp.binary_field_ghash))
+
+
+@functools.partial(frx.jit, static_argnums=(1, 2))
+def _sample_distinct_positions(inner, block_len: int, count: int):
+    """flock's distinct-query rejection sampler; one squeeze per iteration, like
+    `fs.sample_chain`. Jitted on the static (block_len, count) for the EAGER
+    callers — the verifier's query phase and the FS oracle test — where an
+    un-jitted `while_loop` re-lowers its SHA-256 body on every call (~1100ms ->
+    ~7ms). On the prove path this inlines into the open's own jit."""
+    bl = fnp.uint64(block_len)
+    idx = fnp.arange(count, dtype=fnp.int32)
+
+    def body(carry):
+        inner, out, n = carry
+        inner, g = inner.sample_scalar()
+        lo = ghash.from_ghash(g).reshape(2)[0]  # low uint64 limb = flock's v.lo
+        pos = (lo % bl).astype(fnp.int32)
+        hit = fnp.any((idx < n) & (out == pos))  # already drawn this level?
+        out = fnp.where(hit, out, out.at[n].set(pos))
+        return inner, out, fnp.where(hit, n, n + fnp.int32(1))
+
+    inner, out, _ = lax.while_loop(
+        lambda c: c[2] < count, body,
+        (inner, fnp.zeros(count, fnp.int32), fnp.int32(0)))
+    return inner, fnp.sort(out)
 
 
 @dataclass(frozen=True)
@@ -153,29 +186,14 @@ class FlockChoreography(LigeritoChoreography):
     ) -> tuple[FlockTranscript, Array]:
         # flock's distinct-query sampler on the low UINT64 limb (`v.lo`); zorch's
         # `sample_distinct_positions` reduces uint32 and diverges when block_len
-        # isn't a power of two. Device `while_loop` keeps positions on-device (so
-        # the open jits); one squeeze/iter matches `sample_chain`.
+        # isn't a power of two.
         if count > block_len:  # mirrors flock's sample_distinct_queries assert
             raise ValueError(
                 f"sample_queries: count ({count}) > block_len ({block_len}) — "
                 "config is too thin for this query count"
             )
-        bl = fnp.uint64(block_len)
-        idx = fnp.arange(count, dtype=fnp.int32)
-
-        def body(carry):
-            inner, out, n = carry
-            inner, g = inner.sample_scalar()
-            lo = ghash.from_ghash(g).reshape(2)[0]  # low uint64 limb = flock's v.lo
-            pos = (lo % bl).astype(fnp.int32)
-            hit = fnp.any((idx < n) & (out == pos))  # already drawn this level?
-            out = fnp.where(hit, out, out.at[n].set(pos))
-            return inner, out, fnp.where(hit, n, n + fnp.int32(1))
-
-        inner, out, _ = lax.while_loop(
-            lambda c: c[2] < count, body,
-            (transcript.inner, fnp.zeros(count, fnp.int32), fnp.int32(0)))
-        return FlockTranscript(inner), fnp.sort(out)
+        inner, out = _sample_distinct_positions(transcript.inner, block_len, count)
+        return FlockTranscript(inner), out
 
     def observe_residual(
         self, transcript: FlockTranscript, residual: Array
@@ -323,6 +341,21 @@ def commit_flock_ligerito(cfg: dict, z_packed) -> tuple[np.ndarray, LigeritoProv
     return np.asarray(root), pdata
 
 
+@functools.partial(frx.jit, static_argnums=(0,))
+def _open_jitted(prover, pdata, b, value, transcript):
+    """`prover.open_with_basis` fused as one jitted device program. The open is
+    pure device work over a static fold/query schedule, so tracing it collapses
+    the eager per-op dispatch chain into one launch.
+
+    `prover` is static: `LigeritoProver` is a frozen dataclass hashing by value
+    (its tree components define value equality for exactly this — see
+    `hash/merkle.py`), so the per-prove rebuild is still a stable cache key, and
+    the WHOLE prover selects the program — `choreography` carries the grinding
+    schedule, which `config` alone does not. The basis bit-reversal rides inside
+    so it fuses into its consumer instead of dispatching its own permute."""
+    return prover.open_with_basis(pdata, _bitrev(b), value, transcript)
+
+
 def prove_flock_ligerito(cfg: dict, pdata: LigeritoProverData, b_combined, target, ch) -> dict:
     """Drive `zorch.pcs.ligerito` over flock's shared challenger and assemble a
     flock `LigeritoProof` dict — byte-identical to the retired in-tree
@@ -337,9 +370,7 @@ def prove_flock_ligerito(cfg: dict, pdata: LigeritoProverData, b_combined, targe
     log_n = pdata.f.shape[0].bit_length() - 1
     prover, config, chor = _flock_ligerito_prover(cfg, log_n)
 
-    b = _bitrev(b_combined)          # b_combined already native ghash [2^L]
-    value = target                   # native ghash scalar
-
-    proof, t_open = prover.open_with_basis(pdata, b, value, FlockTranscript(ch._t))
+    proof, t_open = _open_jitted(
+        prover, pdata, b_combined, target, FlockTranscript(ch._t))
     ch._t = t_open.inner
     return _flock_proof_dict(proof, np.asarray(pdata.initial.root), config, chor)
