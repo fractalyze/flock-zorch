@@ -31,10 +31,12 @@ py_library(
 
 py_library(
     name = "test_support",
-    srcs = [
+    # Glob, not a list: every shared testing helper must land here or the
+    # py_tests fail at import, and an explicit list makes that easy to forget.
+    srcs = glob([
         "flock_zorch/testing/__init__.py",
-        "flock_zorch/testing/_util.py",
-    ],
+        "flock_zorch/testing/_*.py",
+    ]),
     imports = ["."],
     visibility = ["//visibility:public"],
     deps = [
