@@ -53,8 +53,10 @@ def _unpack(zp, m):
     return np.concatenate([lo, hi], axis=1).reshape(-1)[: 1 << m]
 
 
-def load():
-    rd = R((ART / "blake3_ligerito_golden.bin").read_bytes())
+def load(golden: str = "blake3_ligerito_golden.bin"):
+    """Ingest a golden. `golden` names a file under `artifacts/`, so the same
+    loader serves the m-variant dumps (`..._golden_m24.bin`) a size sweep needs."""
+    rd = R((ART / golden).read_bytes())
     assert bytes(rd.take(8)) == b"FLKBL_01", "bad magic"
     meta = dict(m=rd.u(), k_log=rd.u(), k_skip=rd.u(), useful_bits=rd.u(), const_pin=rd.u(),
                 lir=rd.u(), lbs=rd.u(), n_blocks_log=rd.u(), log_n=rd.u())
