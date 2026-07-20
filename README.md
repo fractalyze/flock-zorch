@@ -128,8 +128,14 @@ export JAX_PLATFORMS=cuda XLA_PYTHON_CLIENT_PREALLOCATE=false
 export PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"
 export PATH="$HOME/.local/cuda13/bin:$PATH"
 CPU=$(target/release/examples/bench_sha2_ligerito_cpu 2048 | grep -oE '[0-9.]+ ms' | head -1)
-$VENV python/flock_zorch/testing/e2e_sha2_ligerito_bench.py "${CPU%% ms}"                 # GPU vs CPU
+$VENV python/flock_zorch/testing/prove_phase_bench.py sha2 --cpu-ms "${CPU%% ms}"         # GPU vs CPU
 ```
+
+`prove_phase_bench.py` also splits the prove into commit / zerocheck / lincheck /
+open and reports hashes/second, and refuses to print absolute numbers when
+another process is using the GPU — a neighbour saturating the SMs inflates a warm
+prove ~28× here, which is enough to invent a result. Swap `sha2` for `blake3` or
+`keccak3`; `--golden` points it at an m-variant dump.
 
 ## Benchmark
 
@@ -165,8 +171,8 @@ is too small to amortize GPU launch overhead, so the CPU wins. The bulk work
 grows with m and the GPU overtakes at m≈24, and the advantage keeps growing
 above the crossover (6.3× by m=28). Reproduce any point with the
 [SHA-256 recipe above](#one-benchmark-point-sha-256-m26) (swap `dump_sha2_ligerito` /
-`bench_sha2_ligerito_cpu` / `e2e_sha2_ligerito_bench.py` for the `blake3_ligerito`
-/ `keccak3_ligerito` variants).
+`bench_sha2_ligerito_cpu` and the `sha2` argument for the `blake3` / `keccak3`
+variants).
 
 ## Acknowledgments
 

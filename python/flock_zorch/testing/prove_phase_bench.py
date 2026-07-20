@@ -53,6 +53,7 @@ import frx.numpy as fnp  # noqa: E402
 from flock_zorch import lincheck, prover, zerocheck  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
+from flock_zorch.testing._golden import unpack_bits  # noqa: E402
 from flock_zorch.testing._util import await_all, best_of  # noqa: E402
 
 PHASES = ("commit", "zerocheck", "lincheck", "open")
@@ -160,10 +161,6 @@ class Circuit:
         return f"flock-{self.name}-lig-v0".encode()
 
     @property
-    def dump(self) -> str:
-        return f"dump_{self.name}_ligerito"
-
-    @property
     def n_sub(self) -> int:
         """Hashes packed into one 2^k_log block."""
         if self.name == "keccak3":
@@ -180,20 +177,10 @@ class Circuit:
             f"flock_zorch.testing.{self.name}_ligerito_oracle_test")
 
     def ingest(self, golden: str | None):
-        """Load a golden, or say how to make one. `artifacts/` is gitignored and
-        the goldens are dumped on demand, so a missing file is the normal state
-        on a fresh checkout, not a broken one."""
-        name = golden or self.golden
-        try:
-            return self._oracle.load(name)
-        except FileNotFoundError:
-            raise SystemExit(
-                f"missing golden artifacts/{name}\n"
-                f"  regenerate with: cargo run --release --example {self.dump} -- "
-                f"<n_hashes> \"$PWD/artifacts/{name}\"") from None
-
-    def unpack_bits(self, packed, m):
-        return self._oracle._unpack(packed, m)
+        """Load a golden through the gate's own loader, so the bench and the byte
+        gate can never disagree about the wire. A missing file is reported by
+        `_golden.open_golden`."""
+        return self._oracle.load(golden or self.golden)
 
     def hashes_per_proof(self, meta) -> int:
         """Capacity, not occupancy: one proof commits 2^m bits laid out as
@@ -221,8 +208,8 @@ def make_prove(circ: Circuit, g, unpacked: bool):
     circuit = circ.build(g)
 
     if unpacked:
-        witness = (circ.unpack_bits(g["a"], m), circ.unpack_bits(g["b"], m),
-                   circ.unpack_bits(g["z"], m))
+        witness = (unpack_bits(g["a"], m), unpack_bits(g["b"], m),
+                   unpack_bits(g["z"], m))
     else:
         # Packed F128 — witness_to_rows unpacks on device (8x less host transfer).
         witness = (g["a"], g["b"], g["z"])
@@ -288,6 +275,8 @@ def bench(circ: Circuit, args) -> None:
           " ".join(f"{parts[p]:>9.2f}ms" for p in PHASES) +
           f" {total:>7.1f}ms {wall:>7.1f}ms {n_hash * 1e3 / wall:>10.0f}")
     print("  " + "  ".join(f"{p} {100 * parts[p] / total:.0f}%" for p in PHASES))
+    if args.cpu_ms:
+        print(f"  {args.cpu_ms / wall:.2f}x vs same-instance flock CPU {args.cpu_ms:.0f}ms")
     if abs(total - wall) / wall > 0.10:
         print(f"  NOTE {wall - total:+.1f}ms ({100 * (wall - total) / wall:+.0f}%) of the "
               "prove is outside every phase — the split under-counts; instrumentation bug.")
@@ -300,14 +289,19 @@ def main() -> int:
     ap.add_argument("--golden", help="golden filename under artifacts/, for m-variant "
                                      "dumps (single circuit only)")
     ap.add_argument("--runs", type=int, default=3, help="timed iterations, best-of")
+    ap.add_argument("--cpu-ms", type=float, help="flock CPU ms for the same instance "
+                                                 "(from bench_<circuit>_cpu), to print a "
+                                                 "speedup; single circuit only")
     ap.add_argument("--unpacked", action="store_true",
                     help="send witness as uint8 bits (8x host transfer) not packed F128")
     ap.add_argument("--allow-contended", action="store_true",
                     help="measure even if the GPU is busy; output is labelled untrustworthy")
     args = ap.parse_args()
 
-    if args.golden and len(args.circuits) > 1:
-        ap.error("--golden names one circuit's file; pass a single circuit with it")
+    if len(args.circuits) > 1:
+        for flag, val in (("--golden", args.golden), ("--cpu-ms", args.cpu_ms)):
+            if val is not None:
+                ap.error(f"{flag} describes one instance; pass a single circuit with it")
 
     before = gpu_state()
     if before.busy and not args.allow_contended:

@@ -42,3 +42,13 @@ def best_of(fn, n=3):
 def best(fn, n=3):
     """Best-of-`n` wall-clock ms for `fn()` — `best_of` with no per-run detail."""
     return best_of(lambda: (fn(), None), n)[0]
+
+
+def report(results, summary: str) -> int:
+    """Print one PASS/FAIL line per `(name, ok)` plus a summary, and return the
+    process exit code. Every byte gate ends this way."""
+    allok = all(ok for _, ok in results)
+    for name, ok in results:
+        print(f"  {'PASS' if ok else 'FAIL'}  {name}")
+    print(f"{summary}: {'PASS' if allok else 'FAIL'}")
+    return 0 if allok else 1

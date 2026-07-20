@@ -185,6 +185,9 @@ def main() -> int:
     div = _first_divergence(t_verify.inner.buffer, t_open.inner.buffer)
     check("verifier FS stream", div == -1, f"first divergence at byte {div}")
 
+    # Not `_util.report`: `check` already streams each line as it runs (with a
+    # detail on failure), which matters on a gate this long. Only the summary is
+    # shared shape, and duplicating three lines beats printing everything twice.
     allok = all(ok for _, ok in results)
     print(f"zorch-driver ligerito vs flock golden: {'PASS' if allok else 'FAIL'}")
     return 0 if allok else 1

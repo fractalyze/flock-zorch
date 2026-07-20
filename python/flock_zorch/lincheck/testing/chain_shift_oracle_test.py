@@ -11,7 +11,6 @@ Run (regen: cargo run --release --example dump_chain_shift -- artifacts/chain_sh
       python/flock_zorch/lincheck/testing/chain_shift_oracle_test.py
 """
 import sys
-from pathlib import Path
 
 import numpy as np
 import frx
@@ -21,21 +20,14 @@ frx.config.update("jax_enable_x64", True)
 from flock_zorch import ghash  # noqa: E402
 from flock_zorch.lincheck import chain  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
+from flock_zorch.testing._golden import open_golden  # noqa: E402
+from flock_zorch.testing._util import report  # noqa: E402
 
-ART = Path(__file__).resolve().parents[4] / "artifacts"
 
-
-class R:
-    def __init__(self, buf): self.b = buf; self.o = 0
-    def take(self, n): v = self.b[self.o:self.o + n]; self.o += n; return v
-    def u(self): return int.from_bytes(self.take(8), "little")
-    def f(self): return np.frombuffer(self.take(16), np.uint64).copy()
-    def fv(self): n = self.u(); return np.frombuffer(self.take(16 * n), np.uint64).reshape(n, 2).copy()
-    def pair(self): n = self.u(); return [(self.f(), self.f()) for _ in range(n)]
 
 
 def load():
-    rd = R((ART / "chain_shift_golden.bin").read_bytes())
+    rd = open_golden("chain_shift_golden.bin")
     assert bytes(rd.take(8)) == b"FLKCHN01", "bad magic"
     a = dict(n=rd.u(), in_vals=rd.fv(), out_vals=rd.fv(),
              rounds=rd.pair(), g_at_point=rd.f(),
@@ -72,12 +64,7 @@ def run():
 def main() -> int:
     print(f"device {frx.devices()[0]}")
     n, results = run()
-    allok = True
-    for nm, ok in results:
-        print(f"  {'PASS' if ok else 'FAIL'}  {nm}"); allok = allok and ok
-    print(f"chain shift core (prove_chain_shift + fold_in_out) vs flock (n={n}): "
-          f"{'PASS' if allok else 'FAIL'}")
-    return 0 if allok else 1
+    return report(results, f"chain shift core (prove_chain_shift + fold_in_out) vs flock (n={n})")
 
 
 if __name__ == "__main__":
