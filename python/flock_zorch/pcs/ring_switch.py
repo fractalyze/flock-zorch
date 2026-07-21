@@ -37,7 +37,7 @@ def _zorch_ring_switch():
 def _bits(x):
     limbs = lax.bitcast_convert_type(x, fnp.uint32)
     shifts = fnp.arange(32, dtype=fnp.uint32)
-    return ((limbs[..., :, None] >> shifts) & fnp.uint32(1)).reshape(*x.shape, -1)
+    return ((limbs[..., None] >> shifts) & fnp.uint32(1)).reshape(*x.shape, -1)
 
 
 def _from_bits(bits, dtype):
@@ -53,23 +53,23 @@ def _from_bits(bits, dtype):
 def _bit_slice_evals(packed, tensor):
     if frx.default_backend() == "gpu":
         return _zorch_ring_switch().bit_slice_evals(packed, tensor)
-    selected = lax.bitcast_convert_type(tensor, fnp.uint32)[:, None, :] * _bits(
+    selected = lax.bitcast_convert_type(tensor, fnp.uint32)[..., None, :] * _bits(
         packed
-    )[:, :, None]
-    return fnp.sum(lax.bitcast_convert_type(selected, tensor.dtype), axis=0)
+    )[..., None]
+    return fnp.sum(lax.bitcast_convert_type(selected, tensor.dtype), axis=-2)
 
 
 def _rs_eq_ind(tensor, eq_r_dprime):
     if frx.default_backend() == "gpu":
         return _zorch_ring_switch().rs_eq_ind(tensor, eq_r_dprime)
-    selected = _bits(tensor)[:, :, None] * lax.bitcast_convert_type(
+    selected = _bits(tensor)[..., None] * lax.bitcast_convert_type(
         eq_r_dprime, fnp.uint32
-    )[None, :, :]
-    return fnp.sum(lax.bitcast_convert_type(selected, eq_r_dprime.dtype), axis=1)
+    )[None, ...]
+    return fnp.sum(lax.bitcast_convert_type(selected, eq_r_dprime.dtype), axis=-1)
 
 
 def _tensor_algebra_transpose(v):
-    return _from_bits(_bits(v).T, v.dtype)
+    return _from_bits(_bits(v).swapaxes(-1, -2), v.dtype)
 
 
 def _inner_product(a, b):
