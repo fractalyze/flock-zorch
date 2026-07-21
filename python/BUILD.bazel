@@ -109,3 +109,27 @@ py_test(
         ":test_support",
     ],
 )
+
+# No golden: prove_packed → verify round-trip for the zerocheck verifier (accept +
+# claim reconstruction + tamper rejection). Software-mul, so it runs on CPU.
+py_test(
+    name = "zerocheck_verify_test",
+    size = "small",
+    srcs = ["flock_zorch/zerocheck/testing/zerocheck_verify_test.py"],
+    deps = [
+        ":flock_zorch",
+        ":test_support",
+    ],
+)
+
+# No golden: prove zerocheck+lincheck → verify both, claim reconstruction + tamper
+# rejection for the lincheck verifier. Software-mul, so it runs on CPU.
+py_test(
+    name = "lincheck_verify_test",
+    size = "medium",
+    srcs = ["flock_zorch/lincheck/testing/lincheck_verify_test.py"],
+    deps = [
+        ":flock_zorch",
+        ":test_support",
+    ],
+)

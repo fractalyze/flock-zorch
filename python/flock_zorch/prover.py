@@ -32,6 +32,7 @@ class BatchOpenProof:
 
     ring_switches: Any
     ligerito: Any = None
+    ligerito_obj: Any = None  # the zorch LigeritoProof (verify consumes this, not the wire dict)
 
 
 @dataclass(frozen=True)
@@ -126,8 +127,9 @@ def open_batch_mixed_ligerito(config, z_packed, pdata, x_outers, packed_direct,
     # The Ligerito recursion runs in zorch (`zorch.pcs.ligerito`) via the flock
     # FS seam, reusing the commit-phase `pdata` directly. The ghash algebra rides
     # the dtype, so `mul` is not threaded.
-    lig = zorch_ligerito.prove_flock_ligerito(config, pdata, b_combined, target, ch)
-    return BatchOpenProof(ring_switches=s_hat_vs, ligerito=lig)
+    lig, lig_obj = zorch_ligerito.prove_flock_ligerito(
+        config, pdata, b_combined, target, ch, return_proof=True)
+    return BatchOpenProof(ring_switches=s_hat_vs, ligerito=lig, ligerito_obj=lig_obj)
 
 
 @dataclass(frozen=True)
