@@ -148,32 +148,44 @@ timing is warm best-of-3 (JIT compile excluded), GPU verified idle. Every
 instance is a real flock hash-circuit R1CS at flock's shipped size, swept over
 the witness size m to locate the GPU/CPU crossover. The CPU baseline is x86
 **scalar** (flock's NEON paths are aarch64-gated), so Apple silicon would shift
-the crossover right. Measured on `main` (zorch `9cb08349`, FRX
-`dev20260715063133`), 2026-07-16.
+the crossover right. Measured on this branch (zorch `650b1cf`, FRX
+`dev20260720085939`), 2026-07-21.
 
 ### Keccak3 (Ligerito) — crossover ≈ m=24
 
-| m   | n_keccaks | flock CPU (ms) | GPU (ms) | speedup   |
-| --- | --------- | -------------- | -------- | --------- |
-| 22  | 49        | 27.0           | 47.2     | 0.57×     |
-| 24  | 384       | 71.3           | 66.4     | **1.07×** |
-| 26  | 1536      | 277.1          | 94.1     | **2.9×**  |
-| 28  | 6144      | 1,167.1        | 185.7    | **6.3×**  |
-| 30† | 24576     | 4,496.6        | 796.7    | **5.64×** |
+| m   | n_keccaks | flock CPU (ms) | GPU (ms) | speedup    |
+| --- | --------- | -------------- | -------- | ---------- |
+| 22  | 49        | 25.8           | 48.0     | 0.54×      |
+| 24  | 384       | 70.9           | 56.7     | **1.25×**  |
+| 26  | 1536      | 266.4          | 76.1     | **3.50×**  |
+| 28  | 6144      | 1,123.7        | 123.7    | **9.08×**  |
+| 30† | 24576     | 4,706.1        | 316.7    | **14.86×** |
+| 31† | 49152     | 9,724.2        | 586.4    | **16.58×** |
 
-† m=30 needs `XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async` — the ~16 GB opening row is a
-single contiguous alloc the default BFC allocator fragments out of (#131).
+† m≥30 uses `XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async`; the default BFC arena
+fragments on the large proof phases (#131).
 
 The Ligerito open runs device-resident — zorch's recursive open compiles to one
-device program (#479) and query positions are sampled on-device (#104) — so the
-GPU is a slow-growing floor (47 → 186 ms) while the CPU is O(n): GPU wins from
-m=24 and reaches 6.3× by m=28.
+device program (#479) and query positions are sampled on-device (#104) — while
+the packed-byte zerocheck fold avoids expanding the retained witness. GPU wins
+from m=24 and reaches 16.58× at m=31.
+
+### BLAKE3 (Ligerito)
+
+| m   | n_comp | flock CPU (ms) | GPU (ms) | speedup    |
+| --- | ------ | -------------- | -------- | ---------- |
+| 26  | 4096   | 316.5          | 66.8     | **4.73×**  |
+| 31† | 131072 | 10,724.9       | 621.1    | **17.27×** |
+
+BLAKE3 uses the generic sparse CSC lincheck rather than Keccak3's procedural
+walker. The same packed zerocheck path keeps its high-end curve nearly identical:
+the GPU proof grows 9.3× while the batch grows 32× from m=26 to m=31.
 
 **Reading the numbers.** flock's prover is a sequential SHA-256 Fiat-Shamir
 chain; at small m the per-round data-parallel work (NTT / URM / recursive fold)
 is too small to amortize GPU launch overhead, so the CPU wins. The bulk work
 grows with m and the GPU overtakes at m≈24, and the advantage keeps growing
-above the crossover (6.3× by m=28). Reproduce any point with the
+above the crossover (16–17× by m=31). Reproduce any point with the
 [SHA-256 recipe above](#one-benchmark-point-sha-256-m26) (swap `dump_sha2_ligerito` /
 `bench_sha2_ligerito_cpu` and the `sha2` argument for the `blake3` / `keccak3`
 variants).

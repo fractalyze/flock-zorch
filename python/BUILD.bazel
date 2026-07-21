@@ -23,6 +23,7 @@ py_library(
         "@zorch//zorch/pcs:fold",
         "@zorch//zorch/pcs:ring_switch",
         "@zorch//zorch/pcs/ligerito",
+        "@zorch//zorch/utils:binary_field",
         requirement("frx"),
         requirement("numpy"),
         requirement("zk_dtypes"),

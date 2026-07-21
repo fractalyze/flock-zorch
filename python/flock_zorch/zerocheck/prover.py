@@ -153,8 +153,9 @@ class _UrmRound(Round):
 
     def __call__(self, carry, transcript):
         m, k_skip = self._m, self._k_skip
-        # Transfer the witness to device ONCE (round1 reads a/b/c; the multilinear
-        # fold_at_z reuses a/b without re-sending) — the device-resident pattern.
+        # Round 1 needs unpacked bit rows.  The multilinear fold retains the
+        # compact a/b inputs when they are packed, instead of keeping the 8x
+        # larger rows alive across the round boundary.
         a_rows = _urm.witness_to_rows(carry.a_bits, m, k_skip)
         b_rows = _urm.witness_to_rows(carry.b_bits, m, k_skip)
         c_rows = _urm.witness_to_rows(carry.c_bits, m, k_skip)
@@ -164,7 +165,11 @@ class _UrmRound(Round):
         z = transcript.sample_f128()
         # c-claim: interpolate round1_c at z.
         final_c_eval = _interpolate_at_z_on_lambda(round1_c, k_skip, z)
-        carry = replace(carry, a_rows=a_rows, b_rows=b_rows, round1_ab=round1_ab,
+        packed = lambda x: (getattr(x, "ndim", 0) == 2 and x.shape[-1] == 2
+                            and np.dtype(x.dtype) == np.uint64)
+        a_fold = carry.a_bits if packed(carry.a_bits) else a_rows
+        b_fold = carry.b_bits if packed(carry.b_bits) else b_rows
+        carry = replace(carry, a_rows=a_fold, b_rows=b_fold, round1_ab=round1_ab,
                         round1_c=round1_c, z=z, final_c_eval=final_c_eval)
         return carry, transcript, (round1_ab, round1_c)
 
