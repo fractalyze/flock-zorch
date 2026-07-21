@@ -29,7 +29,7 @@ zorch's folds, commits, and induces reproduce flock's bytes exactly (gate:
 from __future__ import annotations
 
 import functools
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from frx.tree_util import register_dataclass
 
@@ -55,6 +55,14 @@ from flock_zorch.hash import merkle
 register_dataclass(LigeritoProverData, data_fields=["f", "initial"], meta_fields=[])
 
 FLOCK_LIGERITO_LABEL = b"flock-ligerito-basis-v0"
+
+# Opening rows are proof outputs, not inputs to a later device computation.  At
+# m=30 the initial opening is ~16 GiB; returning it as one array makes BFC find
+# one contiguous block after the rest of the prove has fragmented the arena.
+# Keep each output comfortably within BFC's commonly available bins instead.
+# The chunks stay row-aligned so flock's row-oriented wire can be assembled
+# without joining them back into the allocation this split exists to avoid.
+_OPENING_CHUNK_BYTES = 512 << 20
 
 
 @functools.partial(register_dataclass, data_fields=["inner"], meta_fields=[])
@@ -251,6 +259,27 @@ def _lohi(x) -> np.ndarray:
     return np.frombuffer(b.tobytes(), np.uint64).reshape(-1, 2)
 
 
+def _chunk_opening_rows(proof):
+    """Split each proof-only opening output into bounded, row-aligned arrays.
+
+    This runs while tracing ``_open_jitted``.  Consequently the tuple lengths
+    and slices are static XLA outputs, and no full opening-row result buffer has
+    to cross the jit boundary.  A single row may exceed the target (the flock
+    wire is row-oriented), but m=30's rows are ~64 MiB each.
+    """
+    openings = []
+    for opening in proof.component_openings:
+        row = opening.row
+        row_bytes = row.shape[1] * np.dtype(row.dtype).itemsize
+        rows_per_chunk = max(1, _OPENING_CHUNK_BYTES // row_bytes)
+        chunks = tuple(
+            row[start:start + rows_per_chunk]
+            for start in range(0, row.shape[0], rows_per_chunk)
+        )
+        openings.append(replace(opening, row=chunks))
+    return replace(proof, component_openings=openings)
+
+
 def _bitrev(x: Array) -> Array:
     return lax.bit_reverse(x, dimensions=(0,))
 
@@ -275,7 +304,11 @@ def _flock_proof_dict(
 
     def level(j) -> dict:
         opening = p.component_openings[j]
-        rows = list(_lohi(opening.row).reshape(opening.row.shape[0], -1, 2))
+        rows = [
+            row
+            for chunk in opening.row
+            for row in _lohi(chunk).reshape(chunk.shape[0], -1, 2)
+        ]
         paths = np.stack(opening.path, axis=1)  # [Q, depth, 32], query-major
         return {
             "opened_rows": rows,
@@ -353,7 +386,9 @@ def _open_jitted(prover, pdata, b, value, transcript):
     the WHOLE prover selects the program — `choreography` carries the grinding
     schedule, which `config` alone does not. The basis bit-reversal rides inside
     so it fuses into its consumer instead of dispatching its own permute."""
-    return prover.open_with_basis(pdata, _bitrev(b), value, transcript)
+    proof, transcript = prover.open_with_basis(
+        pdata, _bitrev(b), value, transcript)
+    return _chunk_opening_rows(proof), transcript
 
 
 def prove_flock_ligerito(cfg: dict, pdata: LigeritoProverData, b_combined, target, ch) -> dict:
