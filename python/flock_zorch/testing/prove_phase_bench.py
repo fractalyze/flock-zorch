@@ -7,15 +7,22 @@ commit / zerocheck / lincheck / open owns the time, and it never converts to the
 metric a throughput goal is stated in. This does both, for every Ligerito hash
 circuit, off the goldens the byte gates already use.
 
-Two things it deliberately does that the per-circuit benches do not:
+It **reports hashes/second**: each circuit packs `n_sub * 2^(m - k_log)` hashes
+into a proof, so cost per hash — the quantity a throughput target is about —
+differs from cost per proof by a circuit-dependent constant.
 
-1. **Refuses to report absolute numbers on a contended GPU.** A neighbour
-   saturating the SMs inflates a warm prove by ~28x on this box. That is not the
-   ~6% drift a concurrent *CPU* build causes, and it silently turns any absolute
-   claim into fiction.
-2. **Reports hashes/second.** Each circuit packs `n_sub * 2^(m - k_log)` hashes
-   into a proof, so cost per hash — the quantity a throughput target is about —
-   differs from cost per proof by a circuit-dependent constant.
+It also refuses to run while another compute process holds the GPU, since a
+neighbour saturating the SMs inflates a warm prove by ~28x on this box. That is
+a precondition check, not a certificate: see the GPU-provenance section below
+for what it cannot see.
+
+**One run of this is not a baseline.** The best-of-N below is within a single
+process. Measured on an idle card, blake3 landed 13-19% apart *across*
+processes at m <= 26, almost all of it inside `open`, which falls into distinct
+clusters run to run while `zerocheck` reproduces to 2.5%. It is not thermal —
+a back-to-back batch held 41-47C at pegged clocks with no throttle reason, and
+wall time did not track temperature. So take several runs, report the spread,
+and treat a single number at m <= 26 as having a wide error bar.
 
 **Every phase is awaited before the next starts**, so the split accounts for the
 whole prove and each phase is billed the work it actually causes. The cost is
@@ -59,30 +66,23 @@ from flock_zorch.testing._util import await_all, best_of  # noqa: E402
 PHASES = ("commit", "zerocheck", "lincheck", "open")
 
 
-# ---------------------------------------------------------------- GPU contention
-
-@dataclass(frozen=True)
-class GpuState:
-    util: int | None           # None when the probe failed
-    detail: str
-    pids: frozenset[int]       # foreign compute PIDs (this process excluded)
-
-    @property
-    def busy(self) -> bool:
-        # Importing frx initializes this process on the selected GPU before the
-        # guard runs, so its own warm-up can account for nonzero utilization.
-        # Contention requires activity plus another compute process.
-        return self.util is not None and self.util > 0 and bool(self.pids)
-
-    @property
-    def unknown(self) -> bool:
-        return self.util is None
-
-    @property
-    def label(self) -> str:
-        if self.unknown:
-            return "unknown GPU state"
-        return "CONTENDED — ABSOLUTE NUMBERS INVALID" if self.busy else "clean"
+# ---------------------------------------------------------------- GPU provenance
+#
+# What this records, and what it deliberately does not claim.
+#
+# It writes down what the card looked like, and refuses on one unambiguous
+# fact: another compute process is on it. It does **not** certify that a
+# measurement is trustworthy, and no output here should be read as doing so.
+# It cannot see a host-side stall (which inflates every phase at once — the
+# signature is all four moving together), non-compute graphics load, a
+# neighbour that starts and exits between two samples, or the clock and
+# thermal state.
+#
+# It also cannot see the largest source of error. On this box the same binary
+# measured 13-19% apart across processes on an idle card at m <= 26, almost
+# entirely inside `open` — coarser than most regressions worth benchmarking.
+# A free card is a precondition for measuring, not evidence that a number is
+# good; that comes from repeating the run and reporting the spread.
 
 
 def _visible_gpu() -> str | None:
@@ -101,43 +101,43 @@ def _smi(query: str, gpu: str | None = None) -> str:
                           check=True).stdout.strip()
 
 
-def gpu_state() -> GpuState:
-    """Sample the card's contention state.
+def gpu_provenance() -> tuple[str, int]:
+    """`(card state for the record, count of other compute processes)`.
 
-    `utilization.gpu` is the field that matters and the one easy to miss: memory
-    held by an *idle* neighbour costs headroom but not speed, while a neighbour
-    at 100% costs an order of magnitude. Reading only `memory.used` cannot tell
-    the two apart, which is why the PID list alone is not a verdict — an idle
-    neighbour is a risk (it may wake mid-run, and it does eat VRAM), not a
-    disqualification. Callers sample before and after and compare.
+    The count is `-1` when the probe fails — no nvidia-smi, a CPU run, output
+    drift — which never blocks a measurement.
+
+    `memory.used` and `utilization.gpu` are card-wide and include this process
+    (nvidia-smi attributes neither per process, and importing frx has already
+    taken a context by the time anything here runs), so they are recorded and
+    never compared against a threshold. Only the compute-app list names *other*
+    processes, so it is the one thing worth acting on.
     """
+    gpu = _visible_gpu()
     try:
-        # CUDA_VISIBLE_DEVICES renumbers frx's devices.  When it names one
-        # physical numeric GPU, query that card; otherwise conservatively
-        # aggregate all cards because frx device 0 need not be nvidia-smi's 0.
-        gpu = _visible_gpu()
+        # One row per GPU. Aggregate rather than taking row 0: frx's device 0
+        # need not be nvidia-smi's, and watching the wrong card silently is
+        # worse than being occasionally too conservative.
         rows = [r.split(",") for r in
                 _smi("gpu=memory.used,memory.total,utilization.gpu", gpu).splitlines()
                 if r.strip()]
         used = sum(int(r[0]) for r in rows)
         total = sum(int(r[1]) for r in rows)
         util = max(int(r[2]) for r in rows)
-    except Exception as e:  # no nvidia-smi, CPU run, parse drift — don't block
-        return GpuState(None, f"GPU state unknown ({type(e).__name__}); not gating",
-                        frozenset())
+    except Exception as e:
+        return f"state unknown ({type(e).__name__})", -1
 
     try:
         own = os.getpid()
-        pids = frozenset(
-            p for p in (int(ln.split(",")[0])
-                        for ln in _smi("compute-apps=pid,used_memory", gpu).splitlines()
-                        if ln.strip())
-            if p != own)
+        others = [p for p in (int(ln.split(",")[0])
+                              for ln in _smi("compute-apps=pid,used_memory",
+                                             gpu).splitlines() if ln.strip())
+                  if p != own]
     except Exception:
-        pids = frozenset()
+        return f"{used}/{total} MiB, util {util}% (compute-app list unavailable)", -1
 
-    who = f", {len(pids)} foreign proc" if pids else ""
-    return GpuState(util, f"{used}/{total} MiB, util {util}%{who}", pids)
+    who = f", {len(others)} other compute proc" if others else ", no other compute proc"
+    return f"{used}/{total} MiB, util {util}%{who}", len(others)
 
 
 # ------------------------------------------------------------------- circuits
@@ -308,7 +308,7 @@ def main() -> int:
     ap.add_argument("--unpacked", action="store_true",
                     help="send witness as uint8 bits (8x host transfer) not packed F128")
     ap.add_argument("--allow-contended", action="store_true",
-                    help="measure even if the GPU is busy; output is labelled untrustworthy")
+                    help="measure even with another compute process on the card")
     args = ap.parse_args()
 
     if len(args.circuits) > 1:
@@ -316,22 +316,17 @@ def main() -> int:
             if val is not None:
                 ap.error(f"{flag} describes one instance; pass a single circuit with it")
 
-    before = gpu_state()
-    if before.busy and not args.allow_contended:
-        print(f"REFUSING to measure: {before.detail}\n"
-              "A neighbour saturating the SMs inflates a warm prove by ~28x on this box, "
-              "so absolute numbers would be fiction. Wait for the card, or pass "
-              "--allow-contended for ratio-only work.", file=sys.stderr)
+    card, others = gpu_provenance()
+    if others > 0 and not args.allow_contended:
+        print(f"REFUSING to measure: {others} other compute process(es) on the card "
+              f"({card}).\nA neighbour saturating the SMs inflates a warm prove by "
+              "~28x on this box. Wait for the card, or pass --allow-contended for "
+              "ratio-only work.", file=sys.stderr)
         return 2
 
-    print(f"device {frx.devices()[0]} | gpu: {before.detail} | {before.label}")
-    if before.pids and not before.busy:
-        # Idle now is not idle later: a neighbour mid-compile shows 0% and then
-        # takes the SMs. The per-circuit check below is what actually catches it.
-        print(f"  note: {len(before.pids)} foreign process(es) idle on the card — "
-              "they may wake mid-run; each row is re-checked after it is measured.")
+    print(f"device {frx.devices()[0]} | gpu: {card}")
     print(f"witness form: {'uint8 bits' if args.unpacked else 'packed F128'} "
-          f"| best-of-{args.runs}\n")
+          f"| best-of-{args.runs} within this process\n")
 
     hdr = (f"{'circuit':>8} {'m':>3} {'hashes':>8} " +
            " ".join(f"{p:>10}" for p in PHASES) +
@@ -339,17 +334,9 @@ def main() -> int:
     print(hdr)
     print("-" * len(hdr))
 
-    dirty = False
     for name in args.circuits:
         bench(Circuit(name), args)
-        # Re-check per row, not once at the end: on a multi-circuit run a mid-run
-        # takeover would otherwise invalidate every row without saying which.
-        after = gpu_state()
-        if not before.unknown and (after.busy or after.pids - before.pids):
-            print(f"  WARNING contended while measuring (now: {after.detail}) — "
-                  "treat this row as invalid and re-measure.", file=sys.stderr)
-            dirty = True
-    return 1 if dirty else 0
+    return 0
 
 
 if __name__ == "__main__":
