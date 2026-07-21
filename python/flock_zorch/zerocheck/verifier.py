@@ -1,14 +1,8 @@
 # Copyright 2026 The Zorch Authors. SPDX-License-Identifier: Apache-2.0
-"""Zerocheck verifier — the dual of `zerocheck_chain`.
+"""Zerocheck verifier.
 
-Mirrors the prover's `ProveChain([_SetupRound, _UrmRound, _MultilinearRound])`
-with a `VerifyChain` of the same shape: each round consumes the prover's message,
-threads the `transcript` in lockstep, and returns an `ok` flag `VerifyChain` ANDs.
-`_SetupVerifyRound` re-derives r; `_UrmVerifyRound` reconstructs ĉ(z) and the AB
-running claim (via the zerocheck assumption `P^{AB}(λ)+P^C(λ)=0` on S) and checks
-the sent ĉ; `_MultilinearVerifyRound` runs the sumcheck consistency chain and
-checks the final identity `c_running == â·b̂`. Soundness failures set `ok=False`
-(never raise); only shape mismatches raise. All arithmetic is native
+Soundness is the AND of the rounds' `ok` flags (`VerifyChain`): a failed check
+yields `ok=False`; only a malformed proof shape raises. Arithmetic is native
 `binary_field_ghash`; the per-variable loop is host Python (n_mlv ≤ ~20).
 """
 from __future__ import annotations
@@ -75,8 +69,8 @@ class _VerifyCarry:
 
 
 class _SetupVerifyRound(Round):
-    """Dual of `_SetupRound`: observe the label, re-derive r (skip challenges + the
-    fixed inner-7 constants + outer challenges). No message; always `ok`."""
+    """Re-derive r = skip challenges ++ the fixed inner-7 constants ++ outer
+    challenges. No message; always `ok`."""
 
     def __init__(self, m: int, k_skip: int):
         self._m, self._k_skip = m, k_skip
@@ -90,9 +84,9 @@ class _SetupVerifyRound(Round):
 
 
 class _UrmVerifyRound(Round):
-    """Dual of `_UrmRound`: observe round-1, sample z, reconstruct ĉ(z) and the AB
-    running claim. Message = (round1_ab, round1_c, final_c_eval); `ok` iff the sent
-    ĉ matches the re-derivation."""
+    """Reconstruct ĉ(z) and the AB running claim from round-1. Message =
+    (round1_ab, round1_c, final_c_eval); `ok` iff the sent ĉ equals the
+    re-derivation."""
 
     def __init__(self, m: int, k_skip: int):
         self._m, self._k_skip = m, k_skip
@@ -116,10 +110,9 @@ class _UrmVerifyRound(Round):
 
 
 class _MultilinearVerifyRound(Round):
-    """Dual of `_MultilinearRound`: the sumcheck consistency chain. Each round
-    reconstructs G(0) from the running claim, folds at ρ via the char-2 quadratic
-    G(X)=G0·(1+X)+G1·X+G∞·X·(1+X), then binds â/b̂. Message = (rounds, final_a, final_b);
-    `ok` iff the final running claim equals â·b̂."""
+    """Sumcheck consistency chain: reconstruct G(0) from the running claim, fold at
+    ρ via the char-2 quadratic G(X)=G0·(1+X)+G1·X+G∞·X·(1+X), bind â/b̂. Message =
+    (rounds, final_a, final_b); `ok` iff the final running claim equals â·b̂."""
 
     def __init__(self, m: int, k_skip: int):
         self._m, self._k_skip = m, k_skip
@@ -148,7 +141,7 @@ class _MultilinearVerifyRound(Round):
 
 
 def zerocheck_verify_chain(m: int, k_skip: int) -> VerifyChain:
-    """The zerocheck verify sub-chain — dual of `zerocheck_chain`."""
+    """setup → round-1 URM → multilinear sumcheck, the verify side of `zerocheck_chain`."""
     return VerifyChain([_SetupVerifyRound(m, k_skip), _UrmVerifyRound(m, k_skip),
                         _MultilinearVerifyRound(m, k_skip)])
 
