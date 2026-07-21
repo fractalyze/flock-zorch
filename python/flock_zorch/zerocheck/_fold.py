@@ -123,6 +123,6 @@ def _fold_packed_at_z(packed, w_g):
 def _fold_at_z(rows, w_g):
     """Dispatch to the packed-byte fold when the original witness is available."""
     if (getattr(rows, "ndim", 0) == 2 and rows.shape[-1] == 2
-            and np.dtype(rows.dtype) == np.uint64):
+            and rows.dtype == np.uint64):
         return _fold_packed_at_z(rows, w_g)
     return _fold_unpacked_at_z(rows, w_g)

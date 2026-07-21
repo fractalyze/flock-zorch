@@ -165,10 +165,10 @@ class _UrmRound(Round):
         z = transcript.sample_f128()
         # c-claim: interpolate round1_c at z.
         final_c_eval = _interpolate_at_z_on_lambda(round1_c, k_skip, z)
-        packed = lambda x: (getattr(x, "ndim", 0) == 2 and x.shape[-1] == 2
-                            and np.dtype(x.dtype) == np.uint64)
-        a_fold = carry.a_bits if packed(carry.a_bits) else a_rows
-        b_fold = carry.b_bits if packed(carry.b_bits) else b_rows
+        is_packed = lambda x: (getattr(x, "ndim", 0) == 2 and x.shape[-1] == 2
+                               and x.dtype == np.uint64)
+        a_fold = carry.a_bits if is_packed(carry.a_bits) else a_rows
+        b_fold = carry.b_bits if is_packed(carry.b_bits) else b_rows
         carry = replace(carry, a_rows=a_fold, b_rows=b_fold, round1_ab=round1_ab,
                         round1_c=round1_c, z=z, final_c_eval=final_c_eval)
         return carry, transcript, (round1_ab, round1_c)
