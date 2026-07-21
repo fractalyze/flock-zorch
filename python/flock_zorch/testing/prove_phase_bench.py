@@ -40,6 +40,7 @@ import importlib
 import os
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from typing import Callable
@@ -126,18 +127,87 @@ def gpu_state() -> GpuState:
         return GpuState(None, f"GPU state unknown ({type(e).__name__}); not gating",
                         frozenset())
 
+    pids = foreign_pids(gpu)
+    who = f", {len(pids)} foreign proc" if pids else ""
+    return GpuState(util, f"{used}/{total} MiB, util {util}%{who}", pids)
+
+
+def foreign_pids(gpu: str | None = None) -> frozenset[int]:
+    """Compute PIDs on the card other than our own. Empty when the probe fails."""
     try:
         own = os.getpid()
-        pids = frozenset(
+        return frozenset(
             p for p in (int(ln.split(",")[0])
                         for ln in _smi("compute-apps=pid,used_memory", gpu).splitlines()
                         if ln.strip())
             if p != own)
     except Exception:
-        pids = frozenset()
+        return frozenset()
 
-    who = f", {len(pids)} foreign proc" if pids else ""
-    return GpuState(util, f"{used}/{total} MiB, util {util}%{who}", pids)
+
+class NeighbourWatch:
+    """Poll for foreign compute PIDs *while* a row is measured.
+
+    The sample taken before a row and the one taken after it are a whole
+    measurement apart, and a neighbour that starts and exits inside that window
+    leaves no trace in either — the row comes back inflated and is reported
+    clean. Not hypothetical: an m=28 blake3 row measured 179.4 ms against a
+    106.0 ms best, 67% slow, with both endpoint samples showing an empty card.
+
+    Utilization cannot be the signal here — during a measurement the card reads
+    busy because of *us* — but `compute-apps` lists only other processes, so
+    presence is. Each tick is a subprocess, so the interval trades detection
+    against the host noise it adds to the very thing being timed; a neighbour
+    living entirely inside one tick is still missed. The watch spans the whole
+    row — golden ingest and warmup included, not just the timed runs — which is
+    the conservative direction: it can ask for a re-measure on a neighbour that
+    never overlapped a timed prove.
+    """
+
+    def __init__(self, interval: float = 0.25) -> None:
+        self._interval = interval
+        self._gpu = _visible_gpu()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self.seen: frozenset[int] = frozenset()
+
+    def _poll(self) -> None:
+        # Sample first, then wait: a row shorter than one interval must still
+        # get a look, and the gap between the pre-row sample and the start of
+        # the measurement (the golden ingest, seconds for the larger dumps) is
+        # otherwise unwatched.
+        while True:
+            self.seen |= foreign_pids(self._gpu)
+            if self._stop.wait(self._interval):
+                return
+
+    def __enter__(self) -> NeighbourWatch:
+        self._thread = threading.Thread(target=self._poll, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+
+
+def contended_after(before: GpuState, after: GpuState,
+                    seen: frozenset[int] = frozenset()) -> bool:
+    """Did a neighbour take the card while we were measuring?
+
+    `seen` is every foreign PID NeighbourWatch caught mid-row. A PID in there
+    but in neither endpoint sample is the come-and-go case the endpoints cannot
+    see, and it is the whole reason the watch exists.
+
+    `after.busy` covers the other direction — a neighbour that was already
+    there when we started and is on the SMs now. It needs no separate PID check
+    because `busy` already requires one.
+    """
+    if before.unknown:
+        return False
+    arrived = (after.pids | seen) - before.pids
+    return bool(arrived) or after.busy
 
 
 # ------------------------------------------------------------------- circuits
@@ -341,11 +411,15 @@ def main() -> int:
 
     dirty = False
     for name in args.circuits:
-        bench(Circuit(name), args)
+        # The watch lives here rather than inside bench() so that sampling the
+        # card, measuring, and judging the row are all owned by one scope — the
+        # verdict needs `before`, `after` and `seen` together.
+        with NeighbourWatch() as watch:
+            bench(Circuit(name), args)
         # Re-check per row, not once at the end: on a multi-circuit run a mid-run
         # takeover would otherwise invalidate every row without saying which.
         after = gpu_state()
-        if not before.unknown and (after.busy or after.pids - before.pids):
+        if contended_after(before, after, watch.seen):
             print(f"  WARNING contended while measuring (now: {after.detail}) — "
                   "treat this row as invalid and re-measure.", file=sys.stderr)
             dirty = True
