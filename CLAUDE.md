@@ -23,7 +23,37 @@ The rules every change must respect:
   wheels to the SAME version as zorch's own `requirements.in`: the binary-field
   GPU kernels must match, and CPU-only CI can't catch a desync.
 
-## Native `binary_field_ghash` dtype gotchas
+## Measuring on this box
+
+- **Check `utilization.gpu`, not `memory.used`, before quoting any absolute
+  number.** Memory held by an *idle* neighbour costs headroom; a neighbour on
+  the SMs costs an order of magnitude — keccak3-ligerito m=22 measures 42 ms on
+  a quiet card and **1171 ms** against one at 100%. That is a different regime
+  from the few percent a concurrent *CPU* build costs, and reading only
+  `memory.used` cannot tell the two apart. `prove_phase_bench.py` gates on this
+  and re-checks after each row; prefer it over a bare bench when the number
+  matters.
+- **When a measurement disagrees with a remembered baseline by an order of
+  magnitude, re-measure the baseline in the current machine state before
+  theorising about the new thing.** The remembered number carries its own
+  machine state invisibly. Skipping this produced a confident, wrong conclusion
+  about a circuit's fold being 30× slower, which died the moment the baseline
+  was re-run in the same window.
+
+## Changing the byte gates
+
+Six Ligerito gates are in `python/BUILD.bazel`'s `_HEAVY` list, so **no CI runs
+them**, and `sha2_ligerito` / `keccak_ligerito` / `keccak_chain` additionally
+have no golden on most machines (`artifacts/` is gitignored, dumps are
+on-demand) — they cannot be executed at all without a `cargo run --example
+dump_*` first. A refactor that touches shared gate code is therefore unverified
+by default.
+
+For a change to the golden readers or the proof comparison, drive HEAD's `load()`
+and the new one from the *same* deterministic fake reader and diff the recorded
+call sequences: both see identical values, so they take identical branches, and
+an identical sequence proves the parse is unchanged. That covers the gates whose
+goldens are missing, and it catches wiring errors before any GPU run.
 
 Compute on the dtype (`*`→clmul, `+`→XOR, `jnp.sum`→XOR-sum). The uint64[lo,hi]
 lanes are the SAME 16 LE bytes, so `to_ghash`/`from_ghash` are pure bitcasts and
