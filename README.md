@@ -148,8 +148,8 @@ timing is warm best-of-3 (JIT compile excluded), GPU verified idle. Every
 instance is a real flock hash-circuit R1CS at flock's shipped size, swept over
 the witness size m to locate the GPU/CPU crossover. The CPU baseline is x86
 **scalar** (flock's NEON paths are aarch64-gated), so Apple silicon would shift
-the crossover right. Measured on this branch (zorch `650b1cf`, FRX
-`dev20260720085939`), 2026-07-21.
+the crossover right. Measured with zorch `650b1cf` and FRX
+`dev20260720085939` on 2026-07-21.
 
 ### Keccak3 (Ligerito) — crossover ≈ m=24
 
