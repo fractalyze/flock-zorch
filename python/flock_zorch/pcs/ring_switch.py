@@ -16,13 +16,64 @@ Requires `jax_enable_x64`.
 from __future__ import annotations
 
 import frx
+import frx.numpy as fnp
+from frx import lax
 
 from flock_zorch import fs, ghash, sumcheck
 from flock_zorch.challenger import Challenger
-from zorch.pcs import ring_switch as zrs
 
 LOG_PACKING = ghash.LOG_PACKING
 LABEL = b"flock-ring-switch-v0"
+
+
+def _zorch_ring_switch():
+    # zorch's bounded kernels import Pallas. Keep that import on the GPU path so
+    # hermetic CPU tests do not need to initialize a Mosaic runtime.
+    from zorch.pcs import ring_switch
+
+    return ring_switch
+
+
+def _bits(x):
+    limbs = lax.bitcast_convert_type(x, fnp.uint32)
+    shifts = fnp.arange(32, dtype=fnp.uint32)
+    return ((limbs[..., :, None] >> shifts) & fnp.uint32(1)).reshape(*x.shape, -1)
+
+
+def _from_bits(bits, dtype):
+    weights = fnp.uint32(1) << fnp.arange(32, dtype=fnp.uint32)
+    limbs = fnp.sum(
+        bits.reshape(*bits.shape[:-1], -1, 32) * weights,
+        axis=-1,
+        dtype=fnp.uint32,
+    )
+    return lax.bitcast_convert_type(limbs, dtype)
+
+
+def _bit_slice_evals(packed, tensor):
+    if frx.default_backend() == "gpu":
+        return _zorch_ring_switch().bit_slice_evals(packed, tensor)
+    selected = lax.bitcast_convert_type(tensor, fnp.uint32)[:, None, :] * _bits(
+        packed
+    )[:, :, None]
+    return fnp.sum(lax.bitcast_convert_type(selected, tensor.dtype), axis=0)
+
+
+def _rs_eq_ind(tensor, eq_r_dprime):
+    if frx.default_backend() == "gpu":
+        return _zorch_ring_switch().rs_eq_ind(tensor, eq_r_dprime)
+    selected = _bits(tensor)[:, :, None] * lax.bitcast_convert_type(
+        eq_r_dprime, fnp.uint32
+    )[None, :, :]
+    return fnp.sum(lax.bitcast_convert_type(selected, eq_r_dprime.dtype), axis=1)
+
+
+def _tensor_algebra_transpose(v):
+    return _from_bits(_bits(v).T, v.dtype)
+
+
+def _inner_product(a, b):
+    return fnp.sum(a * b, axis=0)
 
 
 @frx.jit
@@ -40,11 +91,11 @@ def _reduce_one(t, packed, x_outer):
     t = fs.observe_label(t, LABEL)
     suffix = x_outer[1:]                                       # ghash coords, length L
     suffix_tensor = sumcheck.build_eq(suffix)
-    s_hat_v = zrs.bit_slice_evals(packed, suffix_tensor)     # (128,) ghash
+    s_hat_v = _bit_slice_evals(packed, suffix_tensor)     # (128,) ghash
     t = fs.observe_slice(t, s_hat_v)                  # observe device ghash directly
     t, r_dprime = fs.sample_slice(t, LOG_PACKING)     # [7] ghash, kept native
     eq_r_dprime = sumcheck.build_eq(r_dprime)          # [128] ghash, for the gamma combine
-    claim = zrs.inner_product(zrs.tensor_algebra_transpose(s_hat_v), eq_r_dprime)
+    claim = _inner_product(_tensor_algebra_transpose(s_hat_v), eq_r_dprime)
     return t, s_hat_v, suffix_tensor, eq_r_dprime, claim       # claim native ghash
 
 
@@ -54,7 +105,7 @@ def prove(packed_witness, x_outer, ch: Challenger):
     packed = ghash.to_ghash(packed_witness)
     # Thread the mutable Challenger's functional transcript through the jitted region.
     ch._t, s_hat_v, suffix_tensor, eq_r_dprime, claim = _reduce_one(ch._t, packed, x_outer)
-    rs_eq_ind = zrs.rs_eq_ind(suffix_tensor, eq_r_dprime)
+    rs_eq_ind = _rs_eq_ind(suffix_tensor, eq_r_dprime)
     return s_hat_v, rs_eq_ind, claim                          # rs_eq_ind native ghash (the open's b)
 
 
@@ -77,15 +128,13 @@ def prove_batched(packed_witness, x_outers, ch: Challenger):
     s_hat_vs, rs_eq_inds, sumcheck_claims = [], [], []
     for (s_hat_v, suffix_tensor, eq_r_dprime, claim), g in zip(works, gammas):
         scaled = g * eq_r_dprime  # gamma baked into eq
-        rs_eq_inds.append(zrs.rs_eq_ind(suffix_tensor, scaled))  # ghash [2^L], device-resident
+        rs_eq_inds.append(_rs_eq_ind(suffix_tensor, scaled))  # ghash [2^L], device-resident
         s_hat_vs.append(s_hat_v)
         sumcheck_claims.append(claim)
     return s_hat_vs, rs_eq_inds, sumcheck_claims, gammas
 
 
 # ---- verifier side ---------------------------------------------------------
-
-import frx.numpy as fnp  # noqa: E402
 
 from flock_zorch.zerocheck import _lagrange_weights  # noqa: E402
 
@@ -107,8 +156,8 @@ def verify(claim, z_skip, x_outer, s_hat_v, ch: Challenger):
     s_hat_v = ghash.to_ghash(fnp.asarray(ghash.to_lanes(s_hat_v)))  # native or lanes → native
     ch._t = fs.observe_label(ch._t, LABEL)
     ch._t = fs.observe_slice(ch._t, s_hat_v)
-    ok = zrs.inner_product(_build_claim_weights(z_skip, x_outer[0]), s_hat_v) == claim
+    ok = _inner_product(_build_claim_weights(z_skip, x_outer[0]), s_hat_v) == claim
     ch._t, r_dprime = fs.sample_slice(ch._t, LOG_PACKING)
     eq_r_dprime = sumcheck.build_eq(r_dprime)
-    sumcheck_claim = zrs.inner_product(zrs.tensor_algebra_transpose(s_hat_v), eq_r_dprime)
+    sumcheck_claim = _inner_product(_tensor_algebra_transpose(s_hat_v), eq_r_dprime)
     return sumcheck_claim, eq_r_dprime, ok

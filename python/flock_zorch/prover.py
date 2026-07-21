@@ -171,8 +171,9 @@ class _ZerocheckStage(Stage):
         self._m = m
 
     def __call__(self, carry, transcript):
-        bits = _unpack_bits(fnp.asarray(carry.z_packed))   # device-resident
-        zc = zerocheck.prove_packed(bits, bits, bits, self._m, ch=transcript)
+        zc = zerocheck.prove_packed(
+            carry.z_packed, carry.z_packed, carry.z_packed,
+            self._m, ch=transcript)
         return replace(carry, zc=zc), transcript, zc
 
 

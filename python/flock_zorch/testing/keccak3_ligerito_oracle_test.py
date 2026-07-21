@@ -29,7 +29,7 @@ from flock_zorch.challenger import Challenger  # noqa: E402
 from flock_zorch.testing._util import report  # noqa: E402
 from flock_zorch.testing._golden import (  # noqa: E402
     ligerito_proof_results, open_golden, read_ligerito_config,
-    read_ligerito_proof, unpack_bits)
+    read_ligerito_proof)
 from flock_zorch.lincheck.keccak3 import Keccak3LincheckCircuit  # noqa: E402
 
 
@@ -67,7 +67,7 @@ def run():
 
     ch = Challenger(b"flock-keccak3-lig-v0")
     prover.bind_statement(ch, g["stmt"], root)
-    a_bits, b_bits, c_bits = unpack_bits(g["a"], m), unpack_bits(g["b"], m), unpack_bits(g["z"], m)
+    a_bits, b_bits, c_bits = g["a"], g["b"], g["z"]
     zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch)
     results.append(("zerocheck round1_ab", np.array_equal(zc.round1_ab, g["zc"]["r1ab"])))
     results.append(("zerocheck final_c", np.array_equal(zc.final_c_eval, g["zc"]["fc"])))

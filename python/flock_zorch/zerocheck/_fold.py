@@ -86,15 +86,43 @@ def _interpolate_at_z_on_lambda(values, k_skip: int, zg) -> np.ndarray:
 
 
 @frx.jit
-def _fold_at_z(rows, w_g):
+def _fold_unpacked_at_z(rows, w_g):
     """a_mlv[x_rest] = Σ_s witness[x_rest·ell + s]·L_s(z) (flock `fold_at_z_naive`),
     on device, reading the witness rows already resident from round1. rows: uint8
     [2^(m-k_skip), ell]; w_g: `binary_field_ghash [ell]` -> ghash [n_chunks].
 
-    Select-and-XOR-reduce: the large `[n_chunks, ell]` intermediate is fused on the
-    GPU instead of materialized in host numpy. The select drops to the lo/hi lanes —
-    it zeroes a weight by integer-multiplying it against the 0/1 witness bit, which
-    the field multiply can't express."""
-    w = ghash.from_ghash(w_g)                                     # [ell, 2]
-    masked = rows[:, :, None].astype(fnp.uint64) * w[None, :, :]  # 0 or w[s], uint64 [n,ell,2]
-    return fnp.sum(ghash.to_ghash(masked), axis=1)                # ghash [n]
+    The zorch reduction streams fixed row blocks through Pallas, bounding the
+    selector temporary independently of the witness size."""
+    if frx.default_backend() == "cpu":
+        w = ghash.from_ghash(w_g)
+        masked = rows[:, :, None].astype(fnp.uint64) * w[None, :, :]
+        return fnp.sum(ghash.to_ghash(masked), axis=1)
+    # Keep Pallas out of CPU-only Bazel runfiles.  The GPU venv carries Mosaic;
+    # importing it under the hermetic CPU wheel needlessly initializes that
+    # optional backend before this fallback can run.
+    from zorch.utils import binary_field as bf
+    return bf.bit_select_xor_reduce(rows, w_g)
+
+
+@frx.jit
+def _fold_packed_at_z(packed, w_g):
+    """Fold a packed F128 witness without materializing its uint8 bit rows.
+
+    Each packed uint64 lane becomes eight selector bytes.  zorch builds one
+    256-entry XOR table per byte position, then gathers eight entries per output
+    row — flock-core's ``UniSkipFoldTable`` strategy on the GPU."""
+    rows = frx.lax.bitcast_convert_type(packed, fnp.uint8).reshape(-1, 8)
+    if frx.default_backend() == "cpu":
+        bit = fnp.arange(8, dtype=fnp.uint8)
+        selectors = ((rows[:, :, None] >> bit) & fnp.uint8(1)).reshape(-1, 64)
+        return _fold_unpacked_at_z(selectors, w_g)
+    from zorch.utils import binary_field as bf
+    return bf.byte_select_xor_reduce(rows, w_g)
+
+
+def _fold_at_z(rows, w_g):
+    """Dispatch to the packed-byte fold when the original witness is available."""
+    if (getattr(rows, "ndim", 0) == 2 and rows.shape[-1] == 2
+            and np.dtype(rows.dtype) == np.uint64):
+        return _fold_packed_at_z(rows, w_g)
+    return _fold_unpacked_at_z(rows, w_g)

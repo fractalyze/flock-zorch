@@ -69,7 +69,10 @@ class GpuState:
 
     @property
     def busy(self) -> bool:
-        return self.util is not None and self.util > 0
+        # Importing frx initializes this process on the selected GPU before the
+        # guard runs, so its own warm-up can account for nonzero utilization.
+        # Contention requires activity plus another compute process.
+        return self.util is not None and self.util > 0 and bool(self.pids)
 
     @property
     def unknown(self) -> bool:
@@ -82,9 +85,18 @@ class GpuState:
         return "CONTENDED — ABSOLUTE NUMBERS INVALID" if self.busy else "clean"
 
 
-def _smi(query: str) -> str:
-    return subprocess.run(["nvidia-smi", f"--query-{query}",
-                           "--format=csv,noheader,nounits"],
+def _visible_gpu() -> str | None:
+    """Physical GPU selected by a single numeric CUDA_VISIBLE_DEVICES entry."""
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+    return visible if visible.isdigit() else None
+
+
+def _smi(query: str, gpu: str | None = None) -> str:
+    cmd = ["nvidia-smi"]
+    if gpu is not None:
+        cmd += ["-i", gpu]
+    cmd += [f"--query-{query}", "--format=csv,noheader,nounits"]
+    return subprocess.run(cmd,
                           capture_output=True, text=True, timeout=15,
                           check=True).stdout.strip()
 
@@ -100,11 +112,12 @@ def gpu_state() -> GpuState:
     disqualification. Callers sample before and after and compare.
     """
     try:
-        # One row per GPU. Aggregate instead of taking row 0: frx's device 0 need
-        # not be nvidia-smi's, and a guard that silently watches the wrong card
-        # is worse than one that is occasionally too conservative.
+        # CUDA_VISIBLE_DEVICES renumbers frx's devices.  When it names one
+        # physical numeric GPU, query that card; otherwise conservatively
+        # aggregate all cards because frx device 0 need not be nvidia-smi's 0.
+        gpu = _visible_gpu()
         rows = [r.split(",") for r in
-                _smi("gpu=memory.used,memory.total,utilization.gpu").splitlines()
+                _smi("gpu=memory.used,memory.total,utilization.gpu", gpu).splitlines()
                 if r.strip()]
         used = sum(int(r[0]) for r in rows)
         total = sum(int(r[1]) for r in rows)
@@ -117,7 +130,7 @@ def gpu_state() -> GpuState:
         own = os.getpid()
         pids = frozenset(
             p for p in (int(ln.split(",")[0])
-                        for ln in _smi("compute-apps=pid,used_memory").splitlines()
+                        for ln in _smi("compute-apps=pid,used_memory", gpu).splitlines()
                         if ln.strip())
             if p != own)
     except Exception:
