@@ -22,6 +22,18 @@ The rules every change must respect:
   `git_override`) means bumping `requirements.in`'s frx / frxlib / frx-cuda12
   wheels to the SAME version as zorch's own `requirements.in`: the binary-field
   GPU kernels must match, and CPU-only CI can't catch a desync.
+- **Benchmark against the declared pin, never a local override.** A
+  `--override_module=zorch=...` in `.bazelrc.user` shadows the `git_override`
+  for both bazel and the venv gates, since `scripts/zorch_pythonpath.sh`
+  resolves `@zorch` through bazel. The run then measures whatever that checkout
+  is parked on while the provenance you record names the pin, and the file is
+  gitignored so review cannot catch it. Check `scripts/zorch_pythonpath.sh`
+  before recording a number.
+- **State a benchmark's spread, not just its best.** Repeat across processes:
+  within one process the same blake3 instance is stable, but across processes it
+  has measured 13-19% apart on an idle card. A GPU-contention check cannot see
+  that, nor a host-side stall (whose signature is every phase inflating at
+  once), so a quiet card is a precondition, not evidence.
 
 ## Native `binary_field_ghash` dtype gotchas
 
