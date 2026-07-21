@@ -159,6 +159,10 @@ the crossover right. Measured on `main` (zorch `9cb08349`, FRX
 | 24  | 384       | 71.3           | 66.4     | **1.07×** |
 | 26  | 1536      | 277.1          | 94.1     | **2.9×**  |
 | 28  | 6144      | 1,167.1        | 185.7    | **6.3×**  |
+| 30† | 24576     | 4,496.6        | 796.7    | **5.64×** |
+
+† m=30 needs `XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async` — the ~16 GB opening row is a
+single contiguous alloc the default BFC allocator fragments out of (#131).
 
 The Ligerito open runs device-resident — zorch's recursive open compiles to one
 device program (#479) and query positions are sampled on-device (#104) — so the
