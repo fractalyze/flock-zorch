@@ -97,3 +97,15 @@ py_test(
         ":test_support",
     ],
 )
+
+# Pure-host unit test (no golden): the witness packers round-trip against the
+# layouts their frx consumers document (_unpack_bits, partial_fold_packed_z).
+py_test(
+    name = "pack_test",
+    size = "small",
+    srcs = ["flock_zorch/pcs/testing/pack_test.py"],
+    deps = [
+        ":flock_zorch",
+        ":test_support",
+    ],
+)
