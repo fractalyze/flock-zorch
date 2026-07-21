@@ -47,9 +47,14 @@ def pack_z_lincheck_from_packed(z_packed, m: int, k_log: int) -> bytes:
             f"z_packed must be [2^(m-7), 2] = [{n_total // PACKING_WIDTH}, 2], got {zp.shape}"
         )
     k = 1 << k_log
+    # n_total and k are powers of two, so n_total ≥ 8·k gives a power-of-two
+    # n_outer ≥ 8 (byte-aligned). The bound also rejects k_log > m up front, where
+    # n_outer would be 0 and slip past a bare `% 8` into a cryptic reshape error.
+    if n_total < 8 * k:
+        raise ValueError(
+            f"witness size 2^m ({n_total}) must be ≥ 8·k ({8 * k}) for byte stripes"
+        )
     n_outer = n_total // k
-    if n_outer % 8:
-        raise ValueError(f"need n_outer ({n_outer}) divisible by 8 for byte stripes")
     # grid[i_outer, i_inner] = z[i_inner + i_outer·k]; each output byte packs 8
     # consecutive i_outer (one stripe) at a fixed i_inner, bit r = i_outer & 7.
     grid = _unpack_flat(zp).reshape(n_outer, k)

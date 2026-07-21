@@ -68,11 +68,12 @@ def _check_lincheck_layout(m: int, k_log: int) -> bool:
 def _check_lincheck_guards() -> bool:
     zp = pack_witness(_rand_bits(1, 1 << 13), 13)
     ok = len(pack_z_lincheck_from_packed(zp, 13, 6)) == (1 << 13) // 8
-    try:
-        pack_z_lincheck_from_packed(zp, 13, 11)  # n_outer = 4, not byte-aligned
-        ok = False
-    except ValueError:
-        pass
+    for bad_k_log in (11, 14):  # n_outer = 4 (< 8), then 0 (k_log > m)
+        try:
+            pack_z_lincheck_from_packed(zp, 13, bad_k_log)
+            ok = False
+        except ValueError:
+            pass
     return _report("lincheck length + byte-alignment guards", ok)
 
 
