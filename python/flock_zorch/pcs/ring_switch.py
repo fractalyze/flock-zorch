@@ -81,3 +81,34 @@ def prove_batched(packed_witness, x_outers, ch: Challenger):
         s_hat_vs.append(s_hat_v)
         sumcheck_claims.append(claim)
     return s_hat_vs, rs_eq_inds, sumcheck_claims, gammas
+
+
+# ---- verifier side ---------------------------------------------------------
+
+import frx.numpy as fnp  # noqa: E402
+
+from flock_zorch.zerocheck import _lagrange_weights  # noqa: E402
+
+_ONE_G = ghash.to_ghash(fnp.array([1, 0], fnp.uint64))
+_CLAIM_K = LOG_PACKING - 1  # 6: the φ8 skip dim; bit-6 carries the x_outer[0] eq split
+
+
+def _build_claim_weights(z_skip, x_outer_0):
+    """flock `ring_switch::build_claim_weights`: lam(z_skip) ⊗ eq(x_outer[0]).
+    i∈[0,64) take eq(x0,0)=1+x0; i∈[64,128) take eq(x0,1)=x0."""
+    lam = _lagrange_weights(_CLAIM_K, z_skip, 0)  # [64] ghash, φ8 S-domain
+    return fnp.concatenate([lam * (_ONE_G + x_outer_0), lam * x_outer_0])  # [128]
+
+
+def verify(claim, z_skip, x_outer, s_hat_v, ch: Challenger):
+    """Observe LABEL + s_hat_v, check s_hat_v encodes `claim` at (z_skip, x_outer[0]),
+    sample r'', reduce to the BaseFold sumcheck claim. Returns
+    (sumcheck_claim, eq_r_dprime, ok)."""
+    s_hat_v = ghash.to_ghash(fnp.asarray(ghash.to_lanes(s_hat_v)))  # native or lanes → native
+    ch._t = fs.observe_label(ch._t, LABEL)
+    ch._t = fs.observe_slice(ch._t, s_hat_v)
+    ok = zrs.inner_product(_build_claim_weights(z_skip, x_outer[0]), s_hat_v) == claim
+    ch._t, r_dprime = fs.sample_slice(ch._t, LOG_PACKING)
+    eq_r_dprime = sumcheck.build_eq(r_dprime)
+    sumcheck_claim = zrs.inner_product(zrs.tensor_algebra_transpose(s_hat_v), eq_r_dprime)
+    return sumcheck_claim, eq_r_dprime, ok

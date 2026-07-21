@@ -42,6 +42,7 @@ from zorch.coding.reed_solomon import ReedSolomon
 from zorch.pcs.ligerito.choreography import LigeritoChoreography
 from zorch.pcs.ligerito.config import LigeritoConfig
 from zorch.pcs.ligerito.prover import LigeritoProver, LigeritoProverData
+from zorch.pcs.ligerito.verifier import LigeritoVerifier
 from zorch.sha256_field_transcript import Sha256FieldTranscript
 
 from flock_zorch import ghash, fs
@@ -356,7 +357,22 @@ def _open_jitted(prover, pdata, b, value, transcript):
     return prover.open_with_basis(pdata, _bitrev(b), value, transcript)
 
 
-def prove_flock_ligerito(cfg: dict, pdata: LigeritoProverData, b_combined, target, ch) -> dict:
+def verify_flock_ligerito(cfg: dict, root, b_combined, target, proof, ch) -> Array:
+    """Verifier dual of `prove_flock_ligerito`: zorch's `LigeritoVerifier` over the
+    same flock config/transcript seam. `proof` is the zorch `LigeritoProof` object
+    (from `prove_flock_ligerito(..., return_proof=True)`), not the wire dict.
+    Returns the scalar `ok`; threads `ch`."""
+    log_n = b_combined.shape[0].bit_length() - 1
+    config, chor = flock_ligerito_config(cfg, log_n)
+    verifier = LigeritoVerifier(_make_ghash_code, merkle.GHASH_TREE, config, chor)
+    ok, t = verifier.verify_with_basis(root, _bitrev(b_combined), target, proof,
+                                       FlockTranscript(ch._t))
+    ch._t = t.inner
+    return ok
+
+
+def prove_flock_ligerito(cfg: dict, pdata: LigeritoProverData, b_combined, target, ch,
+                         return_proof: bool = False):
     """Drive `zorch.pcs.ligerito` over flock's shared challenger and assemble a
     flock `LigeritoProof` dict — byte-identical to the retired in-tree
     `ligerito.recursive_prover_with_basis`.
@@ -373,4 +389,5 @@ def prove_flock_ligerito(cfg: dict, pdata: LigeritoProverData, b_combined, targe
     proof, t_open = _open_jitted(
         prover, pdata, b_combined, target, FlockTranscript(ch._t))
     ch._t = t_open.inner
-    return _flock_proof_dict(proof, np.asarray(pdata.initial.root), config, chor)
+    wire = _flock_proof_dict(proof, np.asarray(pdata.initial.root), config, chor)
+    return (wire, proof) if return_proof else wire
