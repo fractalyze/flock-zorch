@@ -24,7 +24,7 @@ the raw lanes — the bit-reversed coefficient basis) plus the raw-basis entries
 (`open_with_basis` / `verify_with_basis`): the driver's witness and initial
 basis are the full-index bit-reversals of flock's `w` / `b`, under which
 zorch's folds, commits, and induces reproduce flock's bytes exactly (gate:
-`testing/zorch_ligerito_driver_oracle_test.py`).
+`testing/ligerito_oracle_test.py`).
 """
 from __future__ import annotations
 

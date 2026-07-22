@@ -2,10 +2,10 @@
 rebuilds flock's deduped octopus multi-proof from a zorch `Opening`'s per-query
 authentication paths (what `pcs/ligerito.py` serializes into `merkle_proof`).
 
-Pure host (hashlib reference tree + flock's own `merkle_multi_proof`), no GPU:
-this is proof-format encoding, not field math. Builds each query's ground-truth
-sibling path straight from the tree, checks it rebuilds the root, then asserts
-paths→octopus reproduces flock's reference `merkle_multi_proof` byte-for-byte.
+Pure host (hashlib reference tree + an independent in-test octopus assembler),
+no GPU: this is proof-format encoding, not field math. Builds each query's
+ground-truth sibling path straight from the tree, checks it rebuilds the root,
+then asserts paths→octopus reproduces the reference octopus byte-for-byte.
 """
 from __future__ import annotations
 
@@ -34,6 +34,28 @@ def _ref_tree(leaves: np.ndarray) -> np.ndarray:
     return np.stack([np.frombuffer(h, np.uint8) for h in tree])
 
 
+def _ref_octopus(tree: np.ndarray, num_leaves: int, positions) -> np.ndarray:
+    """Independent octopus reference (flock `merkle::merkle_multi_proof`): per
+    level (leaves→root), walk the sorted active nodes left to right and emit the
+    tree sibling of every active node whose sibling is NOT itself active (an
+    active sibling is recomputed from below, no proof element); the active set
+    then halves. Deliberately re-derived here — set-based, sourced from the flat
+    tree — rather than shared with `merkle._octopus_levels`, so the production
+    dedup schedule is checked against a second opinion."""
+    if len(positions) == 0 or num_leaves == 1:
+        return np.zeros((0, 32), np.uint8)
+    proof, level_start, level_len = [], 0, num_leaves
+    active = sorted({int(p) for p in positions})
+    for _ in range(num_leaves.bit_length() - 1):
+        for p in active:
+            if (p ^ 1) not in active:
+                proof.append(tree[level_start + (p ^ 1)])
+        level_start += level_len
+        level_len >>= 1
+        active = sorted({p >> 1 for p in active})
+    return np.stack(proof) if proof else np.zeros((0, 32), np.uint8)
+
+
 def _level_starts(num_leaves: int) -> list[int]:
     starts, s, ln = [], 0, num_leaves
     while ln >= 1:
@@ -53,7 +75,7 @@ def _check(num_leaves: int, leaf_bytes_len: int, positions: list[int], name: str
     starts = _level_starts(num_leaves)
     depth = num_leaves.bit_length() - 1
 
-    proof = merkle.merkle_multi_proof(tree, num_leaves, positions)
+    proof = _ref_octopus(tree, num_leaves, positions)
     # Ground-truth per-query paths straight from the tree: path[k] = sibling of (p>>k).
     paths = np.stack([
         np.stack([tree[starts[k] + ((p >> k) ^ 1)] for k in range(depth)])
@@ -77,12 +99,11 @@ def _check(num_leaves: int, leaf_bytes_len: int, positions: list[int], name: str
         if not np.array_equal(np.frombuffer(node_hash, np.uint8), root):
             ok = False
 
-    # paths→octopus must reproduce flock's reference multi-proof byte-for-byte.
     octopus = merkle.paths_to_multi_proof(paths, num_leaves, positions)
     if octopus.shape != proof.shape or not np.array_equal(octopus, proof):
         ok = False
 
-    print(f"paths→octopus vs flock merkle_multi_proof ({name}, n={num_leaves} q={len(positions)}): "
+    print(f"paths→octopus vs reference multi-proof ({name}, n={num_leaves} q={len(positions)}): "
           f"{'PASS' if ok else 'FAIL'}")
     return ok
 

@@ -1,10 +1,11 @@
 """FS-wire gate for the zorch-driver Ligerito instantiation (flock-zorch#32 T4).
 
-Two layers, both CPU:
+Two layers, both CPU, no golden:
   1. Framing lockstep: `FlockTranscript` / `FlockChoreography` byte streams equal
-     the `Challenger` surface's (which `challenger_oracle_test` pins to
-     flock-core), op by op — observes, scalar/slice sample split, PoW, and the
-     rejection-sampled distinct query draw vs an independent Challenger reference.
+     the `Challenger` surface's (whose flock byte framing the proof-level oracle
+     gates pin transitively), op by op — observes, scalar/slice sample split, PoW,
+     and the rejection-sampled distinct query draw vs an independent Challenger
+     reference.
   2. Round trip: `zorch.pcs.ligerito` prover+verifier over the GHASH
      `ReedSolomon` + the flock SHA-256 Merkle, driven end-to-end through the
      flock seams — verify ok, post-open == post-verify squeeze (FS lockstep),
@@ -225,4 +226,4 @@ if __name__ == "__main__":
     test_distinct_queries_lockstep()
     test_config_mapping()
     test_round_trip_ghash()
-    print("OK zorch_ligerito_fs_oracle_test")
+    print("OK zorch_ligerito_fs_test")
