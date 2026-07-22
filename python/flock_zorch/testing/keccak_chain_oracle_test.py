@@ -74,7 +74,7 @@ def run():
 
     circ = KeccakLincheckCircuit()
     x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, ir)
-    _lr, lc_zp, lc_claim, _zv = lincheck.prove(g["zlc"], None, None, x_ab, m, k_log, k_skip, ch=ch, capture=True, circuit=circ)
+    _lr, lc_zp, lc_claim = lincheck.prove(g["zlc"], None, None, x_ab, m, k_log, k_skip, ch=ch, capture=True, circuit=circ)
     results.append(("lincheck z_partial", np.array_equal(ghash.to_lanes(lc_zp), g["lc"]["zp"])))
 
     # ---- chain: τ_pos → region fold → shift sumcheck → assemble packed-direct claim
