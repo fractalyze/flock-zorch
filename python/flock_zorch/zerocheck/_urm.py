@@ -9,9 +9,10 @@ field-generic LCH14 additive NTT through `lax.ntt`, so this module carries no
 field code — only φ₈ (a field homomorphism into an F128 subfield, the only
 link between the AES basis and the GHASH basis) and the round-1 plumbing.
 
-The S→Λ extension uses base-subspace transforms only: inverse NTT size ℓ →
-zero-pad coefficients to 2ℓ → forward NTT size 2ℓ → second half = the β=ℓ
-coset. No coset-offset kernel support needed.
+The S→Λ extension is `INTT ℓ → coset-NTT ℓ` at β=ℓ: the inverse NTT recovers the
+degree-<ℓ coefficients, and the forward coset NTT evaluates them directly on the
+Λ = β+S coset (β = ℓ) via lax.ntt's `coset=` (fractalyze/xla #307) — replacing the
+old zero-pad-to-2ℓ + size-2ℓ NTT + discard-half trick.
 
 Requires jax_enable_x64.
 """
@@ -73,9 +74,7 @@ def _extend_rows(rows, k_skip: int):
     ell = 1 << k_skip
     v = lax.bitcast_convert_type(rows, _AES)
     coeffs = lax.ntt(v, ntt_type="INTT", ntt_length=ell)
-    padded = fnp.concatenate([coeffs, fnp.zeros_like(coeffs)], axis=-1)
-    evals = lax.ntt(padded, ntt_type="NTT", ntt_length=2 * ell)
-    return evals[..., ell:]
+    return lax.ntt(coeffs, ntt_type="NTT", ntt_length=ell, coset=ell)
 
 
 def _to_u8(x):
