@@ -190,6 +190,43 @@ above the crossover (16–17× by m=31). Reproduce any point with the
 `bench_sha2_ligerito_cpu` and the `sha2` argument for the `blake3` / `keccak3`
 variants).
 
+### Sustained throughput (multi-process, MPS)
+
+The tables above time one prove stream, which leaves the GPU idle roughly half
+its wall: the prover is a serial host-dispatch chain of thousands of small
+launches, and the card waits out every inter-launch gap. One process cannot
+fill those gaps from inside (the dispatch chain is serial Python; threads
+serialize on the GIL — +20% at 4 threads), but N processes proving independent
+instances can — **if and only if they share one CUDA context via CUDA MPS**.
+Without MPS the driver time-slices the contexts at a granularity far coarser
+than the µs-scale gaps, and concurrency is a net *loss* (~0.9× aggregate at 3
+plain processes).
+
+BLAKE3 m=28, aggregate hashes/second over barrier-aligned concurrent windows,
+same pin and card as above:
+
+| prover processes | aggregate hash/s | scaling   |
+| ---------------- | ---------------- | --------- |
+| 1                | 160K             | 1.00×     |
+| 2 (MPS)          | 240K             | **1.50×** |
+| 3 (MPS)          | 285K             | **1.78×** |
+| 4 (MPS)          | 311K             | **1.94×** |
+
+VRAM bounds the worker count (~7 GB per m=28 worker under
+`XLA_PYTHON_CLIENT_PREALLOCATE=false`); scaling is sublinear as the workers
+approach the card's shared busy-time floor. Reproduce with
+
+```bash
+PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" .venv/bin/python \
+    python/flock_zorch/testing/prove_throughput_bench.py blake3 \
+    --golden blake3_ligerito_golden_m28.bin --procs 3
+```
+
+which orchestrates the workers and refuses to run without an MPS daemon (its
+module docstring has the scoped-daemon recipe). Byte-identity is untouched:
+co-scheduling changes when kernels run, not what they compute — two blake3
+byte gates run two-abreast under MPS both stay green.
+
 ## Acknowledgments
 
 The proving scheme and the reference implementation are
