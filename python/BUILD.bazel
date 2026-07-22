@@ -120,6 +120,7 @@ py_test(
     deps = [
         ":flock_zorch",
         ":test_support",
+        requirement("absl-py"),
     ],
 )
 
@@ -132,5 +133,6 @@ py_test(
     deps = [
         ":flock_zorch",
         ":test_support",
+        requirement("absl-py"),
     ],
 )
