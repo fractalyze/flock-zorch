@@ -3,7 +3,7 @@ serializable proof — authored as a host round loop, byte-identical to flock-co
 `zerocheck::prove_packed_padded_inner`.
 
 Proves `a(y)·b(y) ⊕ c(y) = 0 ∀ y ∈ {0,1}^m`. Structure: one univariate-skip
-round-1 (URM, `_urm.round1_naive`) over K_SKIP=6 skip variables, then a multilinear
+round-1 (URM, `_urm.round1_rows`) over K_SKIP=6 skip variables, then a multilinear
 sumcheck over the remaining `m − K_SKIP` variables (the iter-10 `sumcheck`
 primitives). Fiat-Shamir is the host SHA-256 `Challenger`; the bulk field arith
 (`round_pair_eq`, the multilinear fold) runs on the native `binary_field_ghash` multiply (→ clmad on GPU).

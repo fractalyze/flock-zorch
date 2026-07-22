@@ -64,7 +64,3 @@ class Challenger:
     def grind_pow(self, bits: int) -> int:
         self._t, witness = fs.grind(self._t, bits)
         return int(witness)
-
-    def verify_pow(self, nonce: int, bits: int) -> bool:
-        self._t, ok = fs.check_witness(self._t, nonce, bits)
-        return bool(np.asarray(ok))

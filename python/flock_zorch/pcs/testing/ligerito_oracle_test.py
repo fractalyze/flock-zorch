@@ -1,14 +1,16 @@
-"""GPU Ligerito recursive PCS byte gate vs flock (driver-isolated).
+"""Ligerito recursive PCS byte gate vs flock — the CPU-CI byte anchor.
 
 Ingests the dump_ligerito golden (config + synthetic f/b/target + L0 commit + full
 LigeritoProof) and byte-compares the whole flock `LigeritoProof` — every field,
 including the octopus `merkle_proof` — produced by `zorch_ligerito.prove_flock_ligerito`
 (the flock-zorch prove path: `zorch.pcs.ligerito` driven through the flock FS seam,
-octopus reassembled from the zorch openings). This is the golden that survived
-retiring the in-tree frx port (flock-zorch#32 T5); the transcript-visible fields
-are also gated at the driver level by `zorch_ligerito_driver_oracle_test`.
+octopus reassembled from the zorch openings). The only per-layer golden gate kept
+after the proof-level cutover: the fused e2e/hash-circuit gates need a GPU, and
+flock's fused prove has no registered Ligerito config below m=22, so this is the
+one byte-match `bazel test` can run on CPU CI.
 
-Run (regen golden: cargo run --release --example dump_ligerito -- 15 artifacts/ligerito_golden.bin):
+Run under bazel (bazel test //python:ligerito_oracle_test) or on the venv
+(regen golden: cargo run --release --example dump_ligerito -- 15 artifacts/ligerito_golden.bin):
   FRX_PLATFORMS=cuda PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
       python/flock_zorch/pcs/testing/ligerito_oracle_test.py
 """
