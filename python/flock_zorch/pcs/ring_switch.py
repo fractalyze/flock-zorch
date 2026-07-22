@@ -6,7 +6,7 @@ transparent `rs_eq_ind`, the tensor-algebra transpose, the claim inner product)
 live in zorch, dtype-native over `binary_field_ghash`. This module keeps only
 what is flock-specific: the GHASH uint64-lane <-> `binary_field_ghash` boundary,
 the Fiat-Shamir order (observe `flock-ring-switch-v0` + s_hat_v, sample r''), the
-batched gamma combination, and the uint64-lane serialization the byte-gate reads.
+batched gamma combination, and the uint64-lane serialization the proof gates read.
 
 flock's F128 is `uint64 [.., 2] = [lo, hi]` with bit i = coefficient of x^i — the
 little-endian storage of `binary_field_ghash` (same GHASH basis, verified
@@ -78,7 +78,7 @@ def _inner_product(a, b):
 
 @frx.jit
 def _reduce_one(t, packed, x_outer):
-    """One claim's observe-and-reduce (the block prove and prove_batched share):
+    """One claim's observe-and-reduce (prove_batched runs it per opening point):
     observe LABEL + s_hat_v, sample r'', compute the sumcheck claim. A pure jitted
     region that THREADS the functional transcript `t` in and out — so the whole
     observe/build/sample/reduce fuses as one program. `build_eq` is called directly
@@ -97,16 +97,6 @@ def _reduce_one(t, packed, x_outer):
     eq_r_dprime = sumcheck.build_eq(r_dprime)          # [128] ghash, for the gamma combine
     claim = _inner_product(_tensor_algebra_transpose(s_hat_v), eq_r_dprime)
     return t, s_hat_v, suffix_tensor, eq_r_dprime, claim       # claim native ghash
-
-
-def prove(packed_witness, x_outer, ch: Challenger):
-    """Returns (s_hat_v [128,2], rs_eq_ind [2^L] ghash, sumcheck_claim [ghash]).
-    Byte-identical to flock `ring_switch::prove`."""
-    packed = ghash.to_ghash(packed_witness)
-    # Thread the mutable Challenger's functional transcript through the jitted region.
-    ch._t, s_hat_v, suffix_tensor, eq_r_dprime, claim = _reduce_one(ch._t, packed, x_outer)
-    rs_eq_ind = _rs_eq_ind(suffix_tensor, eq_r_dprime)
-    return s_hat_v, rs_eq_ind, claim                          # rs_eq_ind native ghash (the open's b)
 
 
 def prove_batched(packed_witness, x_outers, ch: Challenger):

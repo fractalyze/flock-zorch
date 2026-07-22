@@ -111,7 +111,7 @@ def test_sample_framing():
 
 
 def test_grind_lockstep():
-    """FlockChoreography grind/check == Challenger grind_pow/verify_pow."""
+    """FlockChoreography grind/check == Challenger grind_pow / a fresh replay."""
     chor = FlockChoreography()
     t = flock_transcript(DOMAIN)
     t, w = chor.grind(t, 6)
