@@ -111,6 +111,19 @@ py_test(
     ],
 )
 
+# No golden: `CscCircuit.fold_alpha_batched` (device seg-scan) vs a naive host
+# XOR-scatter reference — the non-identity A₀/B₀ structure coverage.
+py_test(
+    name = "csc_fold_test",
+    size = "small",
+    srcs = ["flock_zorch/lincheck/testing/csc_fold_test.py"],
+    deps = [
+        ":flock_zorch",
+        ":test_support",
+        requirement("absl-py"),
+    ],
+)
+
 # No golden: prove_packed → verify round-trip for the zerocheck verifier (accept +
 # claim reconstruction + tamper rejection). Software-mul, so it runs on CPU.
 py_test(
