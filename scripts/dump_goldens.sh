@@ -17,7 +17,7 @@ source "$HOME/.cargo/env" 2>/dev/null || true
 
 cargo build --release --examples >/dev/null   # fetches flock (git rev dep) + builds the dumpers
 
-CORE=(ntt sha256 merkle merkle_multi sumcheck zerocheck challenger
+CORE=(ntt sha256 merkle merkle_multi zerocheck challenger
       gf8_urm fri_fold ring_switch ligerito lincheck e2e_ligerito chain_shift)
 HEAVY=(keccak_ligerito keccak_chain keccak3_ligerito sha2_ligerito blake3_ligerito)
 

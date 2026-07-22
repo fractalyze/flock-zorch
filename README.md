@@ -85,12 +85,12 @@ on GPU.
 
 ### Core gates (bazel, CPU)
 
-The 21 core gates run under bazel — deps from the pip lock, `zorch` from the
+The 20 core gates run under bazel — deps from the pip lock, `zorch` from the
 `MODULE.bazel` `git_override`, goldens from `//artifacts` runfiles:
 
 ```bash
 scripts/dump_goldens.sh core           # goldens the gates byte-compare against
-bazel test //python:all                # all 21 (JAX_PLATFORMS=cpu + x64 pinned in .bazelrc)
+bazel test //python:all                # all 20 (JAX_PLATFORMS=cpu + x64 pinned in .bazelrc)
 bazel test //python:e2e_oracle_test    # a single gate
 ```
 

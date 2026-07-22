@@ -1,5 +1,5 @@
 """Consolidated per-layer benchmark for flock-zorch — run each iteration to track
-improvement. Reports the additive-NTT, the sumcheck core (build_eq / round_pair /
+improvement. Reports the additive-NTT, the sumcheck core (build_eq / round_pair_eq /
 fold), and the XOR-add bandwidth ceiling on the active backend. Field multiplies
 now run on the native `binary_field_ghash` dtype (no software field to bench).
 """
@@ -13,6 +13,7 @@ frx.config.update("jax_enable_x64", True)
 import frx.numpy as fnp  # noqa: E402
 
 from zorch.coding.additive_reed_solomon import AdditiveReedSolomon  # noqa: E402
+from zorch.sumcheck.domain import fold  # noqa: E402
 
 from flock_zorch import sumcheck, ghash  # noqa: E402
 
@@ -55,17 +56,18 @@ def main():
     print("\n[sumcheck core]")
     for log in (16, 18, 20):
         n = 1 << log
-        r = _rand(log, 5)
-        a, b = _rand(n, 6), _rand(n, 7)
-        eq_fn = frx.jit(lambda rr, ln=log: sumcheck.build_eq_lanes(rr))
-        rp_fn = frx.jit(lambda aa, bb, rr: sumcheck.round_pair_lanes(aa, bb, rr))
-        fs_fn = frx.jit(lambda aa: sumcheck.fold_single(aa, r[0]))
-        eq_ms = _bench(eq_fn, (r,), 30) * 1e3
-        rp_ms = _bench(rp_fn, (a, b, r), 30) * 1e3
-        fs_ms = _bench(fs_fn, (a,), 30) * 1e3
+        r_g = ghash.to_ghash(_rand(log, 5))
+        a_g, b_g = ghash.to_ghash(_rand(n, 6)), ghash.to_ghash(_rand(n, 7))
+        eq_g = sumcheck.build_eq(r_g[1:])
+        eq_fn = frx.jit(lambda rr: sumcheck.build_eq(rr))
+        rp_fn = frx.jit(lambda aa, bb, ee, r0: sumcheck.round_pair_eq(aa, bb, ee, r0))
+        fold_fn = frx.jit(lambda aa, r0: fold(aa, r0, msb=False))
+        eq_ms = _bench(eq_fn, (r_g,), 30) * 1e3
+        rp_ms = _bench(rp_fn, (a_g, b_g, eq_g, r_g[0]), 30) * 1e3
+        fs_ms = _bench(fold_fn, (a_g, r_g[0]), 30) * 1e3
         print(f"  log={log:<2} build_eq {eq_ms:7.3f} ms ({n/(eq_ms/1e3)/1e9:5.2f} G elem/s)"
               f"  round_pair {rp_ms:7.3f} ms  fold {fs_ms:7.3f} ms")
-        del a, b
+        del a_g, b_g, eq_g
         gc.collect()
 
     print("\n[XOR add]  bandwidth ceiling")
