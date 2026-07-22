@@ -48,17 +48,16 @@ def _lag_w(num, inv_den):
 
 @frx.jit
 def _batch_inv(ag):
-    """Batched GF(2^128) inverse a^(2^128-2) = Π_{k=1}^{127} a^(2^k), via 127
-    square-and-multiply steps. Rolled into a `fori_loop`: the native ghash multiply
-    unrolled 127x compiles pathologically slowly on the CPU backend (minutes),
-    whereas one rolled body is O(1) to compile."""
-    def body(_, carry):
-        sq, result = carry
-        sq = sq * sq
-        return sq, result * sq
+    """Batched GF(2^128) inverse via the dtype's native divide — one elementwise
+    op in every enclosing jit.
 
-    _, result = frx.lax.fori_loop(0, 127, body, (ag, fnp.broadcast_to(_ONE_G, ag.shape)))
-    return result
+    This replaced a 127-step square-and-multiply `fori_loop` (Fermat), whose
+    `while` thunk dispatched ~2 host launches per iteration — ~254 per call,
+    measured ~2/3 of lincheck's whole launch count across this function's ~6
+    call sites per prove. The inverse is unique in a field, and the native
+    lowering matches the Fermat chain bit-for-bit on every input including
+    zero (both map 0 -> 0), so the wire is unchanged."""
+    return fnp.broadcast_to(_ONE_G, ag.shape) / ag
 
 
 def _lagrange_weights(k_skip: int, zg, offset: int):
