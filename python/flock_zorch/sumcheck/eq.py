@@ -8,17 +8,17 @@ per-round prover message. The GF(2^128) arithmetic runs on the native
 is fully data-parallel and uses the dtype's hardware-CLMUL multiply on GPU — the
 multilinear sumcheck is the prover's biggest GPU win.
 
-The public functions keep flock's `uint64 [..., 2] = [lo, hi]` I/O contract (the
-golden gates and callers pass/read that layout); the dtype is used only for the
-internal compute, bridged at the boundary.
+Everything runs on the native dtype end to end; the proof messages leave it
+only where they are serialized.
 
 Conventions match flock exactly:
   * Field add is XOR; `1 + r` is `r + ONE`.
   * The LOW bit of a multilinear index is bound first: the pair
     (f[2x], f[2x+1]) is (X=0, X=1). `build_eq(r)` places r_i at bit i.
-  * `round_pair` sends `(r[0]·G(1), G(∞))` — flock's Karatsuba ∞-trick message,
-    where G(X) = Σ_x' eq(r[1:], x')·a(X,x')·b(X,x') and the wire polynomial is
-    Π(X) = eq(r[0], X)·G(X) (so Π(1) = r[0]·G(1), leading coeff G(∞)).
+  * `round_pair_eq` sends `(r[0]·G(1), G(∞))` — flock's Karatsuba ∞-trick
+    message, where G(X) = Σ_x' eq(r[1:], x')·a(X,x')·b(X,x') and the wire
+    polynomial is Π(X) = eq(r[0], X)·G(X) (so Π(1) = r[0]·G(1), leading
+    coeff G(∞)).
 
 Requires `jax_enable_x64`.
 """
@@ -27,7 +27,7 @@ from __future__ import annotations
 import frx.numpy as fnp
 
 from zorch.poly.eq import expand_eq_to_hypercube
-from zorch.sumcheck.domain import compressed_domain, fold, summand_evals
+from zorch.sumcheck.domain import compressed_domain, summand_evals
 from zorch.sumcheck.prover import ProductSummand
 
 from flock_zorch import ghash
@@ -47,23 +47,6 @@ def build_eq(rg):
     doubling (`univariate_skip::build_eq`): after absorbing r_i, bit i becomes the
     new high bit — one elementwise multiply per layer, n sequential layers."""
     return expand_eq_to_hypercube(rg, _ONE_G, msb=True)
-
-
-def build_eq_lanes(r):
-    """`build_eq` on the uint64 [n, 2] lane layout -> uint64 [2^n, 2] — the public
-    golden/test I/O contract; the compute is ghash, bridged at the boundary."""
-    return ghash.from_ghash(build_eq(ghash.to_ghash(r)))
-
-
-def fold_single(a, challenge):
-    """Bind the low variable of one multilinear at `challenge` (flock
-    `fold_in_place_single`): `out[x] = a[2x] + challenge·(a[2x+1] + a[2x])` — zorch's
-    LSB `fold` (`split_pairs`; over char 2 `(p0+p1) == (p1−p0)`).
-
-    a: uint64 [2^k, 2] (k ≥ 1); returns uint64 [2^(k-1), 2].
-    """
-    return ghash.from_ghash(
-        fold(ghash.to_ghash(a), ghash.to_ghash(challenge), msb=False))
 
 
 def build_eq_suffix_tables(cs_g):
@@ -87,8 +70,8 @@ def build_eq_suffix_tables(cs_g):
 
 
 def round_pair_eq(ag, bg, eq, r0g):
-    """`round_pair` with the eq table already built — the per-round core for
-    callers that precompute every suffix table once (`build_eq_suffix_tables`).
+    """The per-round message core, taking an eq table the caller precomputed
+    (one `build_eq_suffix_tables` chain serves every round).
 
     The message `[G(1), G(∞)]` is zorch's compressed product round on the low bind:
     `summand_evals` over `compressed_domain(1)` with the eq suffix as the per-point
@@ -97,19 +80,3 @@ def round_pair_eq(ag, bg, eq, r0g):
         fnp.stack([ag, bg]), _PRODUCT2, compressed_domain(1, ag.dtype),
         weight=eq, msb=False)
     return r0g * g_one, g_inf
-
-
-def round_pair(ag, bg, rg):
-    """Multilinear-sumcheck round message for the AB pair, native ghash (flock
-    `round_pair_naive`): `[2^log_n]` factor pair + `[log_n]` challenges -> the
-    scalar message pair `(r[0]·G(1), G(∞))`. rg[0] is this round's bound-variable
-    challenge, rg[1:] the eq over the remaining variables."""
-    return round_pair_eq(ag, bg, build_eq(rg[1:]), rg[0])
-
-
-def round_pair_lanes(a_mlv, b_mlv, r):
-    """`round_pair` on the uint64 [.., 2] lane layout — the public golden/test I/O
-    contract; returns `(r[0]·G(1), G(∞))`, each uint64 [2]."""
-    g1, ginf = round_pair(ghash.to_ghash(a_mlv), ghash.to_ghash(b_mlv),
-                          ghash.to_ghash(fnp.asarray(r, U64)))
-    return ghash.from_ghash(g1), ghash.from_ghash(ginf)
