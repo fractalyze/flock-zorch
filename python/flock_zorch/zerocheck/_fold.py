@@ -101,7 +101,7 @@ def _fold_unpacked_at_z(rows, w_g):
     # importing it under the hermetic CPU wheel needlessly initializes that
     # optional backend before this fallback can run.
     from zorch.utils import binary_field as bf
-    return bf.bit_select_xor_reduce(rows, w_g)
+    return bf.bit_select_xor_reduce(rows, w_g, reduce="bits")
 
 
 @frx.jit
