@@ -169,16 +169,14 @@ class LincheckClaim:
 
 class LincheckProof(NamedTuple):
     """flock's lincheck proof: the product-sumcheck `rounds` and the `z_partial`
-    message. `claim` (a `LincheckClaim`) and `z_vec_pre` are populated only on the
-    captured (e2e) path — the post-sumcheck claim and the pre-sumcheck z_vec the
-    PCS open reuses — and are None otherwise. A NamedTuple (not a dataclass) so the
-    historical `rounds, z_partial, claim, z_vec_pre = prove(...)` unpacking keeps
-    working alongside attribute access."""
+    message. `claim` (a `LincheckClaim`) is populated only on the captured (e2e)
+    path — the post-sumcheck claim — and is None otherwise. A NamedTuple (not a
+    dataclass) so the historical `rounds, z_partial, claim = prove(...)` unpacking
+    keeps working alongside attribute access."""
 
     rounds: Any
     z_partial: Any
     claim: "LincheckClaim | None" = None
-    z_vec_pre: Any = None
 
 
 @dataclass(frozen=True)
@@ -199,7 +197,6 @@ class _LincheckCarry:
     r_rounds: Any = None             # ← _SumcheckRound (read by _ClaimRound)
     z_partial: Any = None            # ← _SumcheckRound (lanes, for the wire)
     z_partial_g: Any = None          # ← _SumcheckRound (for observe + w, no host lift)
-    z_vec_pre: Any = None            # ← _SumcheckRound (capture)
     claim: Any = None                # ← _ClaimRound
 
 
@@ -233,15 +230,14 @@ class _SumcheckRound(Round):
     """Partial-fold z at x_outer, then the (k_log − k_skip)-round product sumcheck
     binding the TOP bit. Message = (rounds, z_partial)."""
 
-    def __init__(self, m: int, k_log: int, k_skip: int, capture: bool):
-        self._m, self._k_log, self._k_skip, self._capture = m, k_log, k_skip, capture
+    def __init__(self, m: int, k_log: int, k_skip: int):
+        self._m, self._k_log, self._k_skip = m, k_log, k_skip
 
     def __call__(self, carry, transcript):
         m, k_log, k_skip = self._m, self._k_log, self._k_skip
         inner_rest = k_log - k_skip
         comb = carry.comb
         z_vec = partial_fold_packed_z(carry.z_packed_bytes, m, k_log, carry.x_ab.x_outer)
-        z_vec_pre = ghash.from_ghash_host(z_vec) if self._capture else None  # pre-sumcheck (PCS open reuse)
 
         rounds, r_rounds = [], []
         if inner_rest > 0:
@@ -256,7 +252,7 @@ class _SumcheckRound(Round):
             z_partial_g = z_vec
         z_partial = z_partial_g
         carry = replace(carry, rounds=rounds, r_rounds=r_rounds, z_partial=z_partial,
-                        z_partial_g=z_partial_g, z_vec_pre=z_vec_pre)
+                        z_partial_g=z_partial_g)
         return carry, transcript, (rounds, z_partial)
 
 
@@ -288,7 +284,7 @@ def lincheck_chain(m: int, k_log: int, k_skip: int, capture: bool) -> ProveChain
     One definition for the stage wiring (cf. zerocheck.zerocheck_chain). The
     claim derivation is FS-bearing, so it joins the chain only when captured —
     that is the exact transcript difference between the two return shapes."""
-    rounds = [_CombRound(k_skip), _SumcheckRound(m, k_log, k_skip, capture)]
+    rounds = [_CombRound(k_skip), _SumcheckRound(m, k_log, k_skip)]
     if capture:
         rounds.append(_ClaimRound(k_skip))
     return ProveChain(rounds)
@@ -304,11 +300,11 @@ def prove(z_packed_bytes, a_dense, b_dense, x_ab: AbClaimPoint, m: int, k_log: i
     `Challenger`. `circuit`: a `CscCircuit` for real hash R1CS (sparse A₀/B₀ at
     large k, with an optional const_pin +β column); when None, the dense
     `a_dense`/`b_dense` path is used (small test R1CS). Returns a `LincheckProof`;
-    its `claim`/`z_vec_pre` are populated only with `capture=True` (the e2e fused
-    prover). Pass a shared `ch` to thread Fiat-Shamir; else a fresh Challenger(domain)."""
+    its `claim` is populated only with `capture=True` (the e2e fused prover).
+    Pass a shared `ch` to thread Fiat-Shamir; else a fresh Challenger(domain)."""
     if ch is None:
         ch = Challenger(domain)
     carry, _ch, _msgs = lincheck_chain(m, k_log, k_skip, capture)(
         _LincheckCarry(z_packed_bytes, a_dense, b_dense, x_ab, circuit), ch)
     return LincheckProof(rounds=carry.rounds, z_partial=carry.z_partial,
-                         claim=carry.claim, z_vec_pre=carry.z_vec_pre)
+                         claim=carry.claim)
