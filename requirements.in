@@ -14,10 +14,10 @@ numpy
 # carries the interior-padding lowering lincheck's `_seg_xor_fold`
 # (frx.lax.associative_scan) needs — older wheels raise NotImplementedError on
 # the sha2/blake3 GPU gates. Bump these together with the zorch git_override pin.
-frx==0.10.0.dev20260722083811
-frxlib==0.10.0.dev20260722083811
-frx-cuda12-plugin==0.10.0.dev20260722083811
-frx-cuda12-pjrt==0.10.0.dev20260722083811
+frx==0.10.0.dev20260723035840
+frxlib==0.10.0.dev20260723035840
+frx-cuda12-plugin==0.10.0.dev20260723035840
+frx-cuda12-pjrt==0.10.0.dev20260723035840
 # zk_dtypes ships the native field dtypes frx lowers; arrives transitively via
 # frx but the resolver lags, so pin it so the lock tracks the frx wheel.
 # 0.0.10 adds the flat AES-basis binary_field_gf8_aes dtype (zk_dtypes#157).
