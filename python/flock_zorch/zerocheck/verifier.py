@@ -14,16 +14,17 @@ import frx.numpy as fnp
 
 from flock_zorch import ghash
 from flock_zorch.zerocheck import _urm
-from flock_zorch.zerocheck._fold import _batch_inv, _lag_numden, _lag_w
 from flock_zorch.zerocheck.prover import K_SKIP, LABEL, N_INNER, _MEDIUM_G, _SMALL_G
+from zorch.poly.univariate import compute_lagrange_basis
 from zorch.round import Round, VerifyChain
 
 _ONE_G = ghash.to_ghash(fnp.array([1, 0], fnp.uint64))
 
 
 def _inv(x):
-    """GF(2^128) inverse of a native-ghash scalar (`_batch_inv` wants a 1-D array)."""
-    return _batch_inv(fnp.reshape(x, (1,)))[0]
+    """GF(2^128) inverse of a native-ghash scalar, via the dtype's native divide
+    (unique in a field; the lowering maps 0 -> 0, matching the Fermat chain)."""
+    return _ONE_G / x
 
 
 def _g(x):
@@ -37,8 +38,7 @@ def _lagrange_at_z(nodes_g, values_g, zg):
     """Σ_i L_i(z)·values[i] over `nodes_g` (native ghash) → native ghash scalar.
     `values_g` aligns with the LAST len(values_g) nodes: the Λ half of the combined
     Λ∪S set, or all of the plain Λ set."""
-    num, den = _lag_numden(nodes_g, zg)
-    w = _lag_w(num, _batch_inv(den))
+    w = compute_lagrange_basis(zg, nodes_g)
     return fnp.sum(w[nodes_g.shape[0] - values_g.shape[0]:] * values_g)
 
 
