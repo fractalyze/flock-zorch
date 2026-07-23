@@ -29,8 +29,9 @@ Run (start the producer first, or in parallel):
 from __future__ import annotations
 
 import argparse
-import os
+import queue as queue_mod
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -99,6 +100,25 @@ def make_prove(g):
     return prove
 
 
+def ingest(queue: Path, m_expect: int):
+    """Pull + parse + device_put the oldest blob -> (depth, z, a, b, zlc)."""
+    depth = len(list(queue.glob("wit_*.bin")))
+    blob = next_blob(queue)
+    m_blob, z, a, b, zlc = read_blob(blob)
+    assert m_blob == m_expect, f"blob m={m_blob} != template m={m_expect}"
+    blob.unlink()  # consumed — frees the producer's bounded slot
+    z, a, b = (frx.device_put(x) for x in (z, a, b))
+    return depth, z, a, b, zlc
+
+
+def prefetcher(queue: Path, m_expect: int, n: int, out: queue_mod.Queue):
+    """Ingest `n` blobs on a side thread so the ~100 MB read + lane-copy + H2D of
+    blob i+1 overlaps proof i's GPU time. `out` is depth-bounded, mirroring the
+    producer's own bound; device_put off-thread is safe (dispatch only)."""
+    for _ in range(n):
+        out.put(ingest(queue, m_expect))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -110,6 +130,8 @@ def main() -> int:
                     help="proofs excluded from the steady-state window (compile + warm)")
     ap.add_argument("--gpu-only", action="store_true",
                     help="no queue: loop the template witness (overlap-cost baseline)")
+    ap.add_argument("--no-prefetch", action="store_true",
+                    help="ingest blobs serially in the prove loop (transport-cost probe)")
     args = ap.parse_args()
 
     print(f"device {frx.devices()[0]}")
@@ -119,19 +141,22 @@ def main() -> int:
     prove = make_prove(g)
     queue = Path(args.queue)
 
+    fetched: queue_mod.Queue = queue_mod.Queue(maxsize=2)
+    if not args.gpu_only and not args.no_prefetch:
+        threading.Thread(target=prefetcher, daemon=True,
+                         args=(queue, meta["m"], args.proofs, fetched)).start()
+
     depths, walls = [], []
     t_win = None
     for i in range(args.proofs):
         if args.gpu_only:
             depth = -1
             zi, ai, bi, zlci = g["z"], g["a"], g["b"], g["zlc"]
+            zi, ai, bi = (frx.device_put(x) for x in (zi, ai, bi))
+        elif args.no_prefetch:
+            depth, zi, ai, bi, zlci = ingest(queue, meta["m"])
         else:
-            depth = len(list(queue.glob("wit_*.bin")))
-            blob = next_blob(queue)
-            m_blob, zi, ai, bi, zlci = read_blob(blob)
-            assert m_blob == meta["m"], f"blob m={m_blob} != template m={meta['m']}"
-            blob.unlink()  # consumed — frees the producer's bounded slot
-        zi, ai, bi = (frx.device_put(x) for x in (zi, ai, bi))
+            depth, zi, ai, bi, zlci = fetched.get()
 
         t0 = time.perf_counter()
         await_all(prove(zi, ai, bi, zlci))
@@ -146,7 +171,9 @@ def main() -> int:
     n_win = args.proofs - args.warmup
     win_s = time.perf_counter() - t_win
     rate = n_win * n_hash / win_s
-    tag = "GPU-only (no host)" if args.gpu_only else "pipelined (witness INCLUDED)"
+    tag = ("GPU-only (no host)" if args.gpu_only else
+           "pipelined, serial ingest (witness INCLUDED)" if args.no_prefetch else
+           "pipelined, prefetch (witness INCLUDED)")
     print(f"\n{tag}: {n_win} proofs x {n_hash} hashes in {win_s:.1f} s "
           f"= {rate / 1e3:.1f}K blake3/s sustained")
     print(f"  per-proof wall: median {np.median(walls[args.warmup:]) * 1e3:.1f} ms, "
