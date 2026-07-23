@@ -89,7 +89,7 @@ def run():
 
     # Stage W: the keccak3 walker port — Keccak3LincheckCircuit.fold_alpha_batched (standalone)
     for i, pb in enumerate(g["probes"]):
-        comb = ghash.from_ghash_host(circ.fold_alpha_batched(ghash.to_ghash(pb["alpha"]), ghash.to_ghash(pb["eq"])))
+        comb = ghash.to_lanes(circ.fold_alpha_batched(ghash.to_ghash(pb["alpha"]), ghash.to_ghash(pb["eq"])))
         results.append((f"walker probe {i} (fold_alpha_batched)", np.array_equal(comb, pb["comb"])))
     return m, results
 
