@@ -23,11 +23,6 @@ from flock_zorch.zerocheck import verifier as zerocheck_verifier
 from zorch.pcs import ring_switch as zrs
 
 
-def _g(x):
-    """Any F128 (native ghash or uint64 lanes) → native ghash."""
-    return ghash.to_ghash(fnp.asarray(ghash.to_lanes(x)))
-
-
 @dataclass(frozen=True)
 class _ZClaim:
     """A ẑ-evaluation claim: the point (z_skip skip-scalar ++ x_full outer coords)
@@ -63,7 +58,7 @@ def verify_claims_ligerito(cfg, root, claims, pcs_open, ch):
     ok = True
     for claim, s_hat_v in zip(claims, pcs_open.ring_switches):
         sc, eq_r_dprime, ok_i = ring_switch.verify(
-            _g(claim.value), claim.z_skip, claim.x_full, s_hat_v, ch)
+            claim.value, claim.z_skip, claim.x_full, s_hat_v, ch)
         reduced.append((sc, eq_r_dprime, claim.x_full))
         ok = ok & ok_i
     gammas = [ch.sample_f128() for _ in claims]

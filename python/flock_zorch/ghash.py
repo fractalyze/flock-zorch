@@ -51,13 +51,11 @@ def zeros(n: int):
 
 
 def to_lanes(x) -> np.ndarray:
-    """Any F128 — native `binary_field_ghash` OR uint64 `[..., 2]` lanes — to host
-    uint64 `[..., 2]`. The proof holds ghash; byte-gate readers pass `got` through
-    this so a ghash array and its lane serialization compare equal."""
+    """Native `binary_field_ghash [...]` -> host uint64 `[..., 2]` lanes (the wire
+    form). The byte-gate readers' compare-edge lift; the proof holds ghash
+    everywhere, so lanes exist only at this serde edge."""
     a = np.asarray(x)
-    if a.dtype == _GHASH_HOST:
-        return a.reshape(-1).view(np.uint64).reshape(*a.shape, 2)
-    return a.astype(np.uint64)
+    return a.reshape(-1).view(np.uint64).reshape(*a.shape, 2)
 
 
 # ---- host uint64-lane <-> binary_field_ghash (for small sequential host

@@ -33,7 +33,7 @@ _CFG = dict(initial_k=2, recursive_ks=[2], log_inv_rates=[1, 2], queries=[4, 3],
 def _flip(x):
     lanes = np.asarray(ghash.to_lanes(x)).copy().reshape(2)
     lanes[0] ^= np.uint64(1)
-    return lanes
+    return ghash.to_ghash(frx.numpy.asarray(lanes))
 
 
 def _verify(res, root, eye, stmt):

@@ -27,13 +27,6 @@ def _inv(x):
     return _ONE_G / x
 
 
-def _g(x):
-    """Any F128 — native `binary_field_ghash` or uint64 `[..., 2]` lanes — to native
-    ghash. Proof fields arrive in lane form; transcript challenges are native, so
-    normalize before mixing them."""
-    return ghash.to_ghash(fnp.asarray(ghash.to_lanes(x)))
-
-
 def _lagrange_at_z(nodes_g, values_g, zg):
     """Σ_i L_i(z)·values[i] over `nodes_g` (native ghash) → native ghash scalar.
     `values_g` aligns with the LAST len(values_g) nodes: the Λ half of the combined
@@ -93,7 +86,7 @@ class _UrmVerifyRound(Round):
 
     def __call__(self, carry, msg, transcript):
         ell = 1 << self._k_skip
-        ab, c, final_c = _g(msg[0]), _g(msg[1]), _g(msg[2])
+        ab, c, final_c = msg[0], msg[1], msg[2]
         transcript.observe_f128(ab)
         transcript.observe_f128(c)
         z = transcript.sample_f128()
@@ -119,11 +112,9 @@ class _MultilinearVerifyRound(Round):
 
     def __call__(self, carry, msg, transcript):
         rounds, final_a, final_b = msg
-        final_a, final_b = _g(final_a), _g(final_b)
         c_running = carry.c_running
         rhos = []
-        for i, (msg_1, msg_inf) in enumerate(rounds):
-            g1, g_inf = _g(msg_1), _g(msg_inf)
+        for i, (g1, g_inf) in enumerate(rounds):
             r_eq = carry.r_rest[i]
             g0 = (c_running + r_eq * g1) * _inv(_ONE_G + r_eq)
             transcript.observe_f128(g1)

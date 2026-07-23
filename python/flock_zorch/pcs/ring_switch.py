@@ -97,7 +97,6 @@ def verify(claim, z_skip, x_outer, s_hat_v, ch: Challenger):
     """Observe LABEL + s_hat_v, check s_hat_v encodes `claim` at (z_skip, x_outer[0]),
     sample r'', reduce to the BaseFold sumcheck claim. Returns
     (sumcheck_claim, eq_r_dprime, ok)."""
-    s_hat_v = ghash.to_ghash(fnp.asarray(ghash.to_lanes(s_hat_v)))  # native or lanes → native
     ch._t = fs.observe_label(ch._t, LABEL)
     ch._t = fs.observe_slice(ch._t, s_hat_v)
     ok = _inner_product(_build_claim_weights(z_skip, x_outer[0]), s_hat_v) == claim
