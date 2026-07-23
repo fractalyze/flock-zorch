@@ -126,7 +126,9 @@ py_test(
 # claim reconstruction + tamper rejection). Software-mul, so it runs on CPU.
 py_test(
     name = "zerocheck_verify_test",
-    size = "small",
+    # medium like lincheck_verify_test: ~35s locally but a loaded CI runner has
+    # hit small's 60s cap (61.3s timeout on an otherwise-green branch).
+    size = "medium",
     srcs = ["flock_zorch/zerocheck/testing/zerocheck_verify_test.py"],
     deps = [
         ":flock_zorch",
