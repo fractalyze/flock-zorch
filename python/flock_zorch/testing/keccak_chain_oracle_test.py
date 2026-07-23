@@ -78,7 +78,7 @@ def run():
     results.append(("lincheck z_partial", np.array_equal(ghash.to_lanes(lc_zp), g["lc"]["zp"])))
 
     # ---- chain: τ_pos → region fold → shift sumcheck → assemble packed-direct claim
-    tau_pos = ghash.from_ghash_host(ch.sample_f128(region_log - chain.LOG_PACKING))
+    tau_pos = ch.sample_f128(region_log - chain.LOG_PACKING)
     in_vals, out_vals = chain.fold_in_out(g["z"], k_log, tau_pos,
                                           meta["input_byte_off"], meta["output_byte_off"])
     sh_rounds, _g_at, sh_claims = chain.prove_chain_shift(in_vals, out_vals, ch)
