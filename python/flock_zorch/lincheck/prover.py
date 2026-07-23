@@ -194,8 +194,7 @@ class _LincheckCarry:
     comb: Any = None                 # ← _CombRound
     rounds: Any = None               # ← _SumcheckRound
     r_rounds: Any = None             # ← _SumcheckRound (read by _ClaimRound)
-    z_partial: Any = None            # ← _SumcheckRound (lanes, for the wire)
-    z_partial_g: Any = None          # ← _SumcheckRound (for observe + w, no host lift)
+    z_partial: Any = None            # ← _SumcheckRound (native ghash; observe + w + wire)
     claim: Any = None                # ← _ClaimRound
 
 
@@ -246,12 +245,10 @@ class _SumcheckRound(Round):
             for e1, einf, r in msgs:
                 rounds.append((e1, einf))
                 r_rounds.append(r)                            # native ghash fold challenge
-            z_partial_g = stacked[1]
+            z_partial = stacked[1]
         else:
-            z_partial_g = z_vec
-        z_partial = z_partial_g
-        carry = replace(carry, rounds=rounds, r_rounds=r_rounds, z_partial=z_partial,
-                        z_partial_g=z_partial_g)
+            z_partial = z_vec
+        carry = replace(carry, rounds=rounds, r_rounds=r_rounds, z_partial=z_partial)
         return carry, transcript, (rounds, z_partial)
 
 
@@ -266,10 +263,10 @@ class _ClaimRound(Round):
 
     def __call__(self, carry, transcript):
         k_skip = self._k_skip
-        transcript.observe_f128(carry.z_partial_g)      # 6. observe z_partial
+        transcript.observe_f128(carry.z_partial)        # 6. observe z_partial
         r_inner_skip = transcript.sample_f128()               # 7. fresh z_skip AFTER
         lam = _lagrange_weights(k_skip, r_inner_skip, 0)       # 8. φ8 S-domain weights
-        w = fnp.sum(lam * carry.z_partial_g, axis=0)          # inner_product (ghash)
+        w = fnp.sum(lam * carry.z_partial, axis=0)            # inner_product (ghash)
         r_inner_rest = list(reversed(carry.r_rounds))         # 9. LSB-first (ghash scalars)
         claim = LincheckClaim(
             r_inner_skip=r_inner_skip,
