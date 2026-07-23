@@ -75,13 +75,13 @@ def _lagrange_weights(k_skip: int, zg, offset: int):
     return _lag_w(num, _batch_inv(den))
 
 
-def _interpolate_at_z_on_lambda(values, k_skip: int, zg) -> np.ndarray:
+def _interpolate_at_z_on_lambda(values, k_skip: int, zg):
     """Σ_i L_i^Λ(z)·values[i] (flock `interpolate_at_z_on_lambda`).
 
-    values: uint64 [2^k_skip, 2]; zg: ghash scalar; returns uint64 [2] (a proof field)."""
+    values: `binary_field_ghash [2^k_skip]`; zg: ghash scalar; returns a ghash
+    scalar (stays device-resident — byte-gate readers lift via `ghash.to_lanes`)."""
     w = _lagrange_weights(k_skip, zg, 1 << k_skip)
-    prod = w * ghash.to_ghash(fnp.asarray(values))
-    return ghash.from_ghash_host(fnp.sum(prod))  # XOR-sum inner product
+    return fnp.sum(w * values)  # XOR-sum inner product
 
 
 @frx.jit

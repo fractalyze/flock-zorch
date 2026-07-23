@@ -250,7 +250,7 @@ def make_prove(circ: Circuit, g, unpacked: bool):
         def _lincheck(zc):
             x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, ir)
             lc = lincheck.prove(zlc, None, None, x_ab, m, k_log, k_skip,
-                                ch=ch, capture=True, circuit=circuit)
+                                ch=ch, circuit=circuit)
             return x_ab, lc
 
         def _open(zc, x_ab, lc):

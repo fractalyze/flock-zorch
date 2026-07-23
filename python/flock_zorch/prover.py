@@ -87,7 +87,7 @@ def _combine_claims(rs_eq_inds, gammas, sumcheck_claims, packed_direct=(), gamma
     for g, sc in zip(gammas, sumcheck_claims):                     # both native ghash
         target = target + g * sc
     for pd, g in zip(packed_direct, gammas_pd):                    # g native ghash
-        eq_pd = build_eq(ghash.to_ghash(fnp.asarray(pd.point)))   # length L = 2^(m-7)
+        eq_pd = build_eq(pd.point)                                 # length L = 2^(m-7)
         b_combined = b_combined + g * eq_pd
         target = target + g * pd.value                             # pd.value native ghash
     return b_combined, target  # native ghash: [2^L], scalar
@@ -194,7 +194,7 @@ class _LincheckStage(Stage):
         x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, inner_rest)
         lp = lincheck.prove(
             carry.z_lincheck, carry.a0, carry.b0, x_ab, self._m,
-            self._k_log, self._k_skip, ch=transcript, capture=True, circuit=self._circuit)
+            self._k_log, self._k_skip, ch=transcript, circuit=self._circuit)
         return replace(carry, lc_claim=lp.claim), transcript, (lp.rounds, lp.z_partial)
 
 

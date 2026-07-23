@@ -169,10 +169,10 @@ class LincheckClaim:
 
 class LincheckProof(NamedTuple):
     """flock's lincheck proof: the product-sumcheck `rounds` and the `z_partial`
-    message. `claim` (a `LincheckClaim`) is populated only on the captured (e2e)
-    path — the post-sumcheck claim — and is None otherwise. A NamedTuple (not a
-    dataclass) so the historical `rounds, z_partial, claim = prove(...)` unpacking
-    keeps working alongside attribute access."""
+    message, plus the post-sumcheck `claim` (a `LincheckClaim`) the PCS open
+    consumes. A NamedTuple (not a dataclass) so the historical
+    `rounds, z_partial, claim = prove(...)` unpacking keeps working alongside
+    attribute access."""
 
     rounds: Any
     z_partial: Any
@@ -182,10 +182,9 @@ class LincheckProof(NamedTuple):
 @dataclass(frozen=True)
 class _LincheckCarry:
     """State threaded between lincheck's stage Rounds — inputs plus only what a
-    later stage reads from an earlier one. Static config (m, k_log, k_skip,
-    capture) lives on the Round instances (cf. zerocheck._ZerocheckCarry). None
-    fields are per-stage outputs set via replace; not pytree-registered (no @jit
-    boundary)."""
+    later stage reads from an earlier one. Static config (m, k_log, k_skip) lives
+    on the Round instances (cf. zerocheck._ZerocheckCarry). None fields are
+    per-stage outputs set via replace; not pytree-registered (no @jit boundary)."""
 
     z_packed_bytes: Any
     a_dense: Any
@@ -259,7 +258,8 @@ class _SumcheckRound(Round):
 class _ClaimRound(Round):
     """Claim derivation (flock prove_padded_inner steps 6-9): observe z_partial,
     sample a fresh z_skip, then w = ⟨φ8-weights(r_inner_skip), z_partial⟩ and the
-    LSB-first r_inner_rest. Only in the capture chain. Message = the claim."""
+    LSB-first r_inner_rest. FS-bearing (one observe + one draw). Message = the
+    claim."""
 
     def __init__(self, k_skip: int):
         self._k_skip = k_skip
@@ -279,32 +279,28 @@ class _ClaimRound(Round):
         return replace(carry, claim=claim), transcript, claim
 
 
-def lincheck_chain(m: int, k_log: int, k_skip: int, capture: bool) -> ProveChain:
-    """The lincheck sub-chain: comb → product sumcheck (→ claim, capture only).
-    One definition for the stage wiring (cf. zerocheck.zerocheck_chain). The
-    claim derivation is FS-bearing, so it joins the chain only when captured —
-    that is the exact transcript difference between the two return shapes."""
-    rounds = [_CombRound(k_skip), _SumcheckRound(m, k_log, k_skip)]
-    if capture:
-        rounds.append(_ClaimRound(k_skip))
-    return ProveChain(rounds)
+def lincheck_chain(m: int, k_log: int, k_skip: int) -> ProveChain:
+    """The lincheck sub-chain: comb → product sumcheck → claim. One definition
+    for the stage wiring (cf. zerocheck.zerocheck_chain)."""
+    return ProveChain([_CombRound(k_skip), _SumcheckRound(m, k_log, k_skip),
+                       _ClaimRound(k_skip)])
 
 
 def prove(z_packed_bytes, a_dense, b_dense, x_ab: AbClaimPoint, m: int, k_log: int,
           k_skip: int, domain: bytes = b"flock-test-v0", ch: Challenger | None = None,
-          capture: bool = False, circuit: LincheckCircuit | None = None) -> LincheckProof:
+          circuit: LincheckCircuit | None = None) -> LincheckProof:
     """Run lincheck. `x_ab` is an `AbClaimPoint` (z_skip:[2], x_inner_rest:[*,2],
-    x_outer:[*,2]). Byte-identical to flock `lincheck::prove`/`prove_padded_capture_z_vec`.
+    x_outer:[*,2]). Byte-identical to flock `prove_padded_capture_z_vec` — the
+    claim-bearing entry point, the only one anything downstream consumes.
 
     A `lincheck_chain` of stage `Round`s (comb → sumcheck → claim) threading one
     `Challenger`. `circuit`: a `CscCircuit` for real hash R1CS (sparse A₀/B₀ at
     large k, with an optional const_pin +β column); when None, the dense
-    `a_dense`/`b_dense` path is used (small test R1CS). Returns a `LincheckProof`;
-    its `claim` is populated only with `capture=True` (the e2e fused prover).
+    `a_dense`/`b_dense` path is used (small test R1CS). Returns a `LincheckProof`.
     Pass a shared `ch` to thread Fiat-Shamir; else a fresh Challenger(domain)."""
     if ch is None:
         ch = Challenger(domain)
-    carry, _ch, _msgs = lincheck_chain(m, k_log, k_skip, capture)(
+    carry, _ch, _msgs = lincheck_chain(m, k_log, k_skip)(
         _LincheckCarry(z_packed_bytes, a_dense, b_dense, x_ab, circuit), ch)
     return LincheckProof(rounds=carry.rounds, z_partial=carry.z_partial,
                          claim=carry.claim)

@@ -160,8 +160,8 @@ class _UrmRound(Round):
         b_rows = _urm.witness_to_rows(carry.b_bits, m, k_skip)
         c_rows = _urm.witness_to_rows(carry.c_bits, m, k_skip)
         round1_ab, round1_c = _urm.round1_rows(a_rows, b_rows, c_rows, m, k_skip, carry.r)
-        transcript.observe_f128(ghash.to_ghash(fnp.asarray(round1_ab)))
-        transcript.observe_f128(ghash.to_ghash(fnp.asarray(round1_c)))
+        transcript.observe_f128(round1_ab)     # native ghash, no host round trip
+        transcript.observe_f128(round1_c)
         z = transcript.sample_f128()
         # c-claim: interpolate round1_c at z.
         final_c_eval = _interpolate_at_z_on_lambda(round1_c, k_skip, z)

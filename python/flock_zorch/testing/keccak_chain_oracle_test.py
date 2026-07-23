@@ -74,11 +74,11 @@ def run():
 
     circ = KeccakLincheckCircuit()
     x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, ir)
-    _lr, lc_zp, lc_claim = lincheck.prove(g["zlc"], None, None, x_ab, m, k_log, k_skip, ch=ch, capture=True, circuit=circ)
+    _lr, lc_zp, lc_claim = lincheck.prove(g["zlc"], None, None, x_ab, m, k_log, k_skip, ch=ch, circuit=circ)
     results.append(("lincheck z_partial", np.array_equal(ghash.to_lanes(lc_zp), g["lc"]["zp"])))
 
     # ---- chain: τ_pos → region fold → shift sumcheck → assemble packed-direct claim
-    tau_pos = ghash.from_ghash_host(ch.sample_f128(region_log - chain.LOG_PACKING))
+    tau_pos = ch.sample_f128(region_log - chain.LOG_PACKING)
     in_vals, out_vals = chain.fold_in_out(g["z"], k_log, tau_pos,
                                           meta["input_byte_off"], meta["output_byte_off"])
     sh_rounds, _g_at, sh_claims = chain.prove_chain_shift(in_vals, out_vals, ch)

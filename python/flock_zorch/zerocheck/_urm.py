@@ -95,8 +95,7 @@ def _round1_core(a, b, c, k_skip, r):
     ab = _to_u8(a_l * b_l).astype(fnp.int32)
     phi_ab = _PHI_DEV_G[ab]
     phi_c = _PHI_DEV_G[c_l.astype(fnp.int32)]
-    return (ghash.from_ghash(fnp.sum(eqx * phi_ab, axis=0)),
-            ghash.from_ghash(fnp.sum(eqx * phi_c, axis=0)))
+    return fnp.sum(eqx * phi_ab, axis=0), fnp.sum(eqx * phi_c, axis=0)
 
 
 @functools.partial(frx.jit, static_argnums=(1, 2))
@@ -141,6 +140,7 @@ def round1_rows(a, b, c, m: int, k_skip: int, r):
     `zerocheck._fold_at_z`. Per row of 2^k_skip bits -> F8 col, inv-NTT on S then
     fwd-NTT on Λ, then accumulate eq(r[k_skip:], x) · φ₈(a·b) and · φ₈(c).
     Byte-identical to flock's `round1_naive` (== the wire `round1_ab`/`round1_c`).
-    Returns (P^AB, P^C) as numpy."""
-    p_ab, p_c = _round1_core(a, b, c, k_skip, r)  # eqx build + extend+phi+accum, fused
-    return np.asarray(p_ab), np.asarray(p_c)
+    Returns (P^AB, P^C) as device-resident `binary_field_ghash [2^k_skip]` — no
+    host lift; consumers observe/interpolate natively and byte-gate readers
+    normalize via `ghash.to_lanes`."""
+    return _round1_core(a, b, c, k_skip, r)  # eqx build + extend+phi+accum, fused

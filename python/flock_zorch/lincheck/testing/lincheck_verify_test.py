@@ -37,7 +37,7 @@ def _prove(m: int, k_log: int, k_skip: int):
     chp = Challenger(DOMAIN)
     zc = zerocheck.prove_packed(z_bits, z_bits, z_bits, m, ch=chp)
     x_ab = AbClaimPoint.from_zerocheck(zc, k_log - k_skip)
-    lp = lincheck.prove(z_lincheck, eye, eye, x_ab, m, k_log, k_skip, ch=chp, capture=True)
+    lp = lincheck.prove(z_lincheck, eye, eye, x_ab, m, k_log, k_skip, ch=chp)
     return zc, x_ab, lp, eye
 
 
