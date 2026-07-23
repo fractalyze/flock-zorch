@@ -49,7 +49,7 @@ def load():
 
 
 def _lanes(x):
-    """ghash-or-lanes F128(s) -> host uint64 [-1, 2]."""
+    """Native ghash F128(s) -> host uint64 [-1, 2]."""
     a = ghash.to_lanes(x)
     return np.asarray(a).reshape(-1, 2)
 

@@ -62,9 +62,11 @@ class ZerocheckVerifyTest(parameterized.TestCase):
     @parameterized.parameters(13, 14, 16)
     def test_tamper_rejected(self, m: int):
         proof = _proof(m)
-        # Corrupt the final â eval — the sumcheck identity must now fail.
-        bad_a = _lanes(proof.final_a_eval).copy().reshape(2)
-        bad_a[0] ^= np.uint64(1)
+        # Corrupt the final â eval — the sumcheck identity must now fail. Tamper in
+        # lane form, then hand the verifier its native-ghash contract shape.
+        lanes = _lanes(proof.final_a_eval).copy().reshape(2)
+        lanes[0] ^= np.uint64(1)
+        bad_a = ghash.to_ghash(frx.numpy.asarray(lanes))
         _, _, ok_bad = verifier.verify(m, dataclasses.replace(proof, final_a_eval=bad_a),
                                        Challenger(DOMAIN))
         self.assertFalse(bool(ok_bad))

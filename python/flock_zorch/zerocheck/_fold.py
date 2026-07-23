@@ -16,6 +16,7 @@ import frx.numpy as fnp
 from flock_zorch import ghash
 from flock_zorch.zerocheck import _urm
 from zorch.poly.univariate import compute_lagrange_basis
+from zorch.utils import binary_field as bf
 
 
 def _lagrange_weights(k_skip: int, zg, offset: int):
@@ -46,16 +47,9 @@ def _fold_unpacked_at_z(rows, w_g):
     on device, reading the witness rows already resident from round1. rows: uint8
     [2^(m-k_skip), ell]; w_g: `binary_field_ghash [ell]` -> ghash [n_chunks].
 
-    The zorch reduction streams fixed row blocks through Pallas, bounding the
-    selector temporary independently of the witness size."""
-    if frx.default_backend() == "cpu":
-        w = ghash.from_ghash(w_g)
-        masked = rows[:, :, None].astype(fnp.uint64) * w[None, :, :]
-        return fnp.sum(ghash.to_ghash(masked), axis=1)
-    # Keep Pallas out of CPU-only Bazel runfiles.  The GPU venv carries Mosaic;
-    # importing it under the hermetic CPU wheel needlessly initializes that
-    # optional backend before this fallback can run.
-    from zorch.utils import binary_field as bf
+    zorch dispatches internally: on GPU the reduction streams fixed row blocks
+    through Pallas, bounding the selector temporary independently of the
+    witness size; on CPU it uses its portable XLA expression."""
     return bf.bit_select_xor_reduce(rows, w_g, reduce="bits")
 
 
@@ -63,15 +57,11 @@ def _fold_unpacked_at_z(rows, w_g):
 def _fold_packed_at_z(packed, w_g):
     """Fold a packed F128 witness without materializing its uint8 bit rows.
 
-    Each packed uint64 lane becomes eight selector bytes.  zorch builds one
-    256-entry XOR table per byte position, then gathers eight entries per output
-    row — flock-core's ``UniSkipFoldTable`` strategy on the GPU."""
+    Each packed uint64 lane becomes eight selector bytes.  On GPU zorch builds
+    one 256-entry XOR table per byte position, then gathers eight entries per
+    output row — flock-core's ``UniSkipFoldTable`` strategy; on CPU it unpacks
+    the bytes into its portable XLA expression."""
     rows = frx.lax.bitcast_convert_type(packed, fnp.uint8).reshape(-1, 8)
-    if frx.default_backend() == "cpu":
-        bit = fnp.arange(8, dtype=fnp.uint8)
-        selectors = ((rows[:, :, None] >> bit) & fnp.uint8(1)).reshape(-1, 64)
-        return _fold_unpacked_at_z(selectors, w_g)
-    from zorch.utils import binary_field as bf
     return bf.byte_select_xor_reduce(rows, w_g)
 
 
