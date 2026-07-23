@@ -66,8 +66,8 @@ def run():
     prover.bind_statement(ch, g["stmt"], root)
     a_bits, b_bits, c_bits = unpack_bits(g["a"], m), unpack_bits(g["b"], m), unpack_bits(g["z"], m)
     zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch)
-    results.append(("zerocheck round1_ab", np.array_equal(zc.round1_ab, g["zc"]["r1ab"])))
-    results.append(("zerocheck final_c", np.array_equal(zc.final_c_eval, g["zc"]["fc"])))
+    results.append(("zerocheck round1_ab", np.array_equal(ghash.to_lanes(zc.round1_ab), g["zc"]["r1ab"])))
+    results.append(("zerocheck final_c", np.array_equal(ghash.to_lanes(zc.final_c_eval).reshape(2), g["zc"]["fc"])))
 
     circ = KeccakLincheckCircuit()
     x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, ir)
