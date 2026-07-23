@@ -1,5 +1,5 @@
 """φ₈ embedding of F8 = GF(2⁸) (AES field) into F128 + the zerocheck round-1
-univariate-skip URM (`round1_naive`) — host orchestration and the fused device
+univariate-skip URM (`round1_rows`) — host orchestration and the fused device
 core. Byte-identical to flock-core's `field/phi8.rs` and
 `zerocheck/univariate_skip.rs::round1_naive`.
 
@@ -30,8 +30,8 @@ from flock_zorch import ghash, sumcheck
 
 # ---------------------------------------------------------------------------
 # phi8: F8 -> F128 embedding (256-entry table). F2-linear, so the full table is
-# built by XOR over set bits from the 8 basis images phi8(2^t). Cross-checked
-# against flock's PHI_8_TABLE in the URM oracle gate.
+# built by XOR over set bits from the 8 basis images phi8(2^t). Pinned to
+# flock's PHI_8_TABLE transitively by the proof-level byte gates.
 # ---------------------------------------------------------------------------
 
 _PHI8_BASIS = np.array([
@@ -94,8 +94,7 @@ def _round1_core(a, b, c, k_skip, r):
     ab = _to_u8(a_l * b_l).astype(fnp.int32)
     phi_ab = _PHI_DEV_G[ab]
     phi_c = _PHI_DEV_G[c_l.astype(fnp.int32)]
-    return (ghash.from_ghash(fnp.sum(eqx * phi_ab, axis=0)),
-            ghash.from_ghash(fnp.sum(eqx * phi_c, axis=0)))
+    return fnp.sum(eqx * phi_ab, axis=0), fnp.sum(eqx * phi_c, axis=0)
 
 
 @functools.partial(frx.jit, static_argnums=(1, 2))
@@ -115,7 +114,7 @@ def _packed_to_rows(packed, m: int, k_skip: int):
 
 
 # ---------------------------------------------------------------------------
-# round1_naive — the zerocheck round-1 URM reference (== the wire round1_ab/c).
+# The zerocheck round-1 URM message (== the wire round1_ab/c).
 # ---------------------------------------------------------------------------
 
 
@@ -134,24 +133,13 @@ def witness_to_rows(bits, m: int, k_skip: int):
 
 
 def round1_rows(a, b, c, m: int, k_skip: int, r):
-    """Round-1 URM from device witness rows (uint8 [2^(m-k_skip), 2^k_skip]). The
-    compute half of `round1_naive`, so the witness can be transferred once and
-    reused by `zerocheck._fold_at_z`. Returns (P^AB, P^C) as numpy."""
-    p_ab, p_c = _round1_core(a, b, c, k_skip, r)  # eqx build + extend+phi+accum, fused
-    return np.asarray(p_ab), np.asarray(p_c)
-
-
-def round1_naive(a_bits, b_bits, c_bits, m: int, k_skip: int, r):
-    """Round-1 univariate-skip message (P^AB, P^C), each F128 [2^k_skip] on Λ.
-
-    a/b/c_bits: uint8 [2^m] (0/1). r: uint64 [m, 2] (F128). Per row of 2^k_skip
-    bits -> F8 col, inv-NTT on S then fwd-NTT on Λ, then accumulate
-    eq(r[k_skip:], x) · φ₈(a·b) and · φ₈(c). Byte-identical to flock's
-    `round1_naive`; equals the wire `round1_ab`/`round1_c`. (The "naive" name is
-    flock's oracle reference; the compute routes through the device-fused
-    `round1_rows` / `_round1_core`.)
-    """
-    a = witness_to_rows(a_bits, m, k_skip)
-    b = witness_to_rows(b_bits, m, k_skip)
-    c = witness_to_rows(c_bits, m, k_skip)
-    return round1_rows(a, b, c, m, k_skip, r)
+    """Round-1 univariate-skip message (P^AB, P^C), each F128 [2^k_skip] on Λ,
+    from device witness rows (uint8 [2^(m-k_skip), 2^k_skip]) — split from
+    `witness_to_rows` so the witness is transferred once and reused by
+    `zerocheck._fold_at_z`. Per row of 2^k_skip bits -> F8 col, inv-NTT on S then
+    fwd-NTT on Λ, then accumulate eq(r[k_skip:], x) · φ₈(a·b) and · φ₈(c).
+    Byte-identical to flock's `round1_naive` (== the wire `round1_ab`/`round1_c`).
+    Returns (P^AB, P^C) as device-resident `binary_field_ghash [2^k_skip]` — no
+    host lift; consumers observe/interpolate natively and byte-gate readers
+    normalize via `ghash.to_lanes`."""
+    return _round1_core(a, b, c, k_skip, r)  # eqx build + extend+phi+accum, fused

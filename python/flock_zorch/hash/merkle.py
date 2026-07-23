@@ -1,14 +1,12 @@
-"""Binary SHA-256 Merkle tree — byte-identical to flock's `merkle::merkle_root` /
-`merkle_tree`, built on `zorch.commit.merkle.MerkleTree` (the scheme-agnostic
-commit/fold machinery) with flock's byte-SHA-256 as leaf hasher and compressor.
+"""Binary SHA-256 Merkle tree — byte-identical to flock's `merkle` module, built
+on `zorch.commit.merkle.MerkleTree` (the scheme-agnostic commit/fold machinery)
+with flock's byte-SHA-256 as leaf hasher and compressor.
 
 flock's construction (no domain separation): each leaf hash = `SHA256(leaf_bytes)`,
 each internal node = `SHA256(left ‖ right)` (64-byte preimage). zorch's binary
 `_fold_scan` produces the same per-level digests with an O(1)-in-height traced
 body (it compresses a full-width buffer each level and slices the live prefix —
-extra hashes, cheaper trace; Merkle is <1% of PCS commit). The flat tree layout
-(`tree[0..n]` leaf hashes, then each level up, root at `tree[2n-2]`) is the
-concatenation of zorch's `digest_layers`.
+extra hashes, cheaper trace; Merkle is <1% of PCS commit).
 
 The octopus multi-proof stays flock-side: the proof layout is flock's assembly.
 """
@@ -110,46 +108,19 @@ class _Sha256MerkleTree(MerkleTree):
         return _digest(groups.reshape(groups.shape[0], 64), 64)
 
 
-_TREE = _Sha256MerkleTree(_Sha256LeafHasher(), _Sha256Compressor())
 GHASH_TREE = _Sha256MerkleTree(_GhashSha256LeafHasher(), _Sha256Compressor())
 
 
-@frx.jit
-def _root(leaves):
-    return _TREE.commit(leaves)[0]
-
-
-@frx.jit
-def _tree(leaves):
-    _, layers = _TREE.commit(leaves)
-    return fnp.concatenate(layers, axis=0)  # [2*n_leaves - 1, 32], flock's layout
-
-
-def merkle_root(leaves) -> np.ndarray:
-    """32-byte Merkle root of `n_leaves` equal-sized leaves. uint8 [n_leaves, leaf_size]
-    -> uint8 [32], byte-identical to flock. One jit (commit fold is a single scan)."""
-    return np.asarray(_root(fnp.asarray(leaves, dtype=fnp.uint8)))
-
-
-def merkle_tree(leaves) -> np.ndarray:
-    """Full flat Merkle tree, byte-identical to flock's `merkle_tree` layout:
-    `tree[0..n]` = leaf hashes (level k), then level k-1, …, root at `tree[2n-2]`.
-
-    leaves: uint8 [n, leaf_size] (n a power of two). Returns uint8 [2n-1, 32].
-    One jit (zorch digest_layers, concatenated)."""
-    return np.asarray(_tree(fnp.asarray(leaves, dtype=fnp.uint8)))
-
-
 def _octopus_levels(positions, num_leaves: int):
-    """flock's octopus dedup schedule — the shared walk behind both octopus
-    assemblers (`merkle_multi_proof` from a tree, `paths_to_multi_proof` from paths).
+    """flock's octopus dedup schedule — the walk behind the octopus assembler
+    (`paths_to_multi_proof` from a zorch `Opening`'s paths).
 
     Yields, per tree level (leaves→root), the sorted-left-to-right list of active
     groups `(p, paired)`: `p` is the group's lower active node index and `paired`
     is True when its sibling `p ^ 1` is also active (recomputed from below, no proof
     element) or False when the sibling is a distinct emitted digest. The active set
-    halves each level (`p >> 1`, deduped); callers attach the digest source (a `tree`
-    slice or a path entry) and emit only on `not paired`."""
+    halves each level (`p >> 1`, deduped); the caller attaches the digest source (a
+    path entry) and emits only on `not paired`."""
     active = sorted({int(p) for p in positions})
     for _level in range(num_leaves.bit_length() - 1):
         groups, i, n = [], 0, len(active)
@@ -162,30 +133,12 @@ def _octopus_levels(positions, num_leaves: int):
         active = sorted({p >> 1 for p in active})
 
 
-def merkle_multi_proof(tree: np.ndarray, num_leaves: int, positions) -> np.ndarray:
-    """Octopus multi-proof, byte-identical to flock `merkle::merkle_multi_proof`.
-
-    Emits, per level (leaves→root), the sibling `tree[level_start + (p^1)]` of each
-    active node whose sibling is NOT itself active — the shared `_octopus_levels`
-    dedup schedule sourced from the flat tree. Returns uint8 [num_siblings, 32]."""
-    if len(positions) == 0 or num_leaves == 1:
-        return np.zeros((0, 32), dtype=np.uint8)
-    proof, level_start, level_len = [], 0, num_leaves
-    for groups in _octopus_levels(positions, num_leaves):
-        for p, paired in groups:
-            if not paired:
-                proof.append(tree[level_start + (p ^ 1)])
-        level_start += level_len
-        level_len >>= 1
-    return np.stack(proof) if proof else np.zeros((0, 32), dtype=np.uint8)
-
-
 def paths_to_multi_proof(paths: np.ndarray, num_leaves: int, positions) -> np.ndarray:
     """Assemble flock's octopus multi-proof from a zorch `Opening`'s per-query
-    authentication paths + the sampled query positions, byte-identical to
-    `merkle_multi_proof` (gated by the ligerito oracle tests' `merkle_proof` fields).
-    This is the prover-side bridge from zorch's per-query openings to flock's
-    deduped octopus wire.
+    authentication paths + the sampled query positions, byte-identical to flock
+    `merkle::merkle_multi_proof` (gated by the Ligerito proof gates' `merkle_proof`
+    fields). This is the prover-side bridge from zorch's per-query openings to
+    flock's deduped octopus wire.
 
     The deduplicated octopus layout is positional (which siblings are emitted depends
     on which nodes are co-active), so it is not recoverable from the paths' shape

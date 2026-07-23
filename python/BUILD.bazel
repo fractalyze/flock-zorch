@@ -15,7 +15,6 @@ py_library(
         "@zorch//zorch:round",
         "@zorch//zorch:sha256_field_transcript",
         "@zorch//zorch/sumcheck",
-        "@zorch//zorch/coding:additive_reed_solomon",
         "@zorch//zorch/coding:reed_solomon",
         "@zorch//zorch/commit:merkle",
         "@zorch//zorch/hash:byte_hash",
@@ -23,6 +22,7 @@ py_library(
         "@zorch//zorch/pcs:fold",
         "@zorch//zorch/pcs:ring_switch",
         "@zorch//zorch/pcs/ligerito",
+        "@zorch//zorch/poly",
         "@zorch//zorch/utils:binary_field",
         requirement("frx"),
         requirement("numpy"),
@@ -47,33 +47,32 @@ py_library(
     ],
 )
 
-# Non-bazel gates (heavy hash circuits + GPU); everything else defaults in.
-_HEAVY = [
-    "zorch_ligerito_driver",
-    "keccak_ligerito",
-    "keccak_chain",
-    "keccak3_ligerito",
-    "sha2_ligerito",
-    "blake3_ligerito",
-    "e2e_ligerito",
-]
+# The one flock byte-match gate CPU CI can run. The proof-level gates (identity
+# e2e + hash circuits under flock_zorch/testing/) need a GPU and run on the venv;
+# flock's fused prove has no registered Ligerito config below m=22, so a small-m
+# e2e CPU gate is not dumpable — this full-LigeritoProof gate anchors CI instead.
+py_test(
+    name = "ligerito_oracle_test",
+    size = "medium",  # ~64s on CPU
+    srcs = ["flock_zorch/pcs/testing/ligerito_oracle_test.py"],
+    data = ["//artifacts:goldens"],
+    deps = [
+        ":flock_zorch",
+        ":test_support",
+    ],
+)
 
-[
-    py_test(
-        name = _f.rpartition("/")[2][:-len(".py")],
-        size = "medium",  # slowest gate ~64s (ligerito)
-        srcs = [_f],
-        data = ["//artifacts:goldens"],
-        deps = [
-            ":flock_zorch",
-            ":test_support",
-        ],
-    )
-    for _f in glob(
-        ["flock_zorch/**/testing/*_oracle_test.py"],
-        exclude = ["flock_zorch/**/testing/%s_oracle_test.py" % _h for _h in _HEAVY],
-    )
-]
+# No golden: FlockTranscript/FlockChoreography framing lockstep vs the Challenger
+# surface + a zorch-driver Ligerito round trip over the GHASH code, all-CPU.
+py_test(
+    name = "zorch_ligerito_fs_test",
+    size = "medium",
+    srcs = ["flock_zorch/pcs/testing/zorch_ligerito_fs_test.py"],
+    deps = [
+        ":flock_zorch",
+        ":test_support",
+    ],
+)
 
 # Pure-host unit test (no golden): the octopus->per-query-path expander that
 # feeds the BaseFold verifier's zorch verify_openings reuse.
@@ -111,15 +110,31 @@ py_test(
     ],
 )
 
+# No golden: `CscCircuit.fold_alpha_batched` (device seg-scan) vs a naive host
+# XOR-scatter reference — the non-identity A₀/B₀ structure coverage.
+py_test(
+    name = "csc_fold_test",
+    size = "small",
+    srcs = ["flock_zorch/lincheck/testing/csc_fold_test.py"],
+    deps = [
+        ":flock_zorch",
+        ":test_support",
+        requirement("absl-py"),
+    ],
+)
+
 # No golden: prove_packed → verify round-trip for the zerocheck verifier (accept +
 # claim reconstruction + tamper rejection). Software-mul, so it runs on CPU.
 py_test(
     name = "zerocheck_verify_test",
-    size = "small",
+    # medium like lincheck_verify_test: ~35s locally but a loaded CI runner has
+    # hit small's 60s cap (61.3s timeout on an otherwise-green branch).
+    size = "medium",
     srcs = ["flock_zorch/zerocheck/testing/zerocheck_verify_test.py"],
     deps = [
         ":flock_zorch",
         ":test_support",
+        requirement("absl-py"),
     ],
 )
 
@@ -132,5 +147,6 @@ py_test(
     deps = [
         ":flock_zorch",
         ":test_support",
+        requirement("absl-py"),
     ],
 )

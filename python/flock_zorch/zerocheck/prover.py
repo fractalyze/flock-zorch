@@ -3,10 +3,10 @@ serializable proof — authored as a host round loop, byte-identical to flock-co
 `zerocheck::prove_packed_padded_inner`.
 
 Proves `a(y)·b(y) ⊕ c(y) = 0 ∀ y ∈ {0,1}^m`. Structure: one univariate-skip
-round-1 (URM, `_urm.round1_naive`) over K_SKIP=6 skip variables, then a multilinear
+round-1 (URM, `_urm.round1_rows`) over K_SKIP=6 skip variables, then a multilinear
 sumcheck over the remaining `m − K_SKIP` variables (the iter-10 `sumcheck`
 primitives). Fiat-Shamir is the host SHA-256 `Challenger`; the bulk field arith
-(`round_pair`, the multilinear fold) runs on the native `binary_field_ghash` multiply (→ clmad on GPU).
+(`round_pair_eq`, the multilinear fold) runs on the native `binary_field_ghash` multiply (→ clmad on GPU).
 
 The protocol fixes the inner 7 of the `r` challenge coordinates to constants
 (`small`/`medium`), and the C track is pinned at round 1 (extract_c), so only AB
@@ -160,15 +160,15 @@ class _UrmRound(Round):
         b_rows = _urm.witness_to_rows(carry.b_bits, m, k_skip)
         c_rows = _urm.witness_to_rows(carry.c_bits, m, k_skip)
         round1_ab, round1_c = _urm.round1_rows(a_rows, b_rows, c_rows, m, k_skip, carry.r)
-        transcript.observe_f128(ghash.to_ghash(fnp.asarray(round1_ab)))
-        transcript.observe_f128(ghash.to_ghash(fnp.asarray(round1_c)))
+        transcript.observe_f128(round1_ab)     # native ghash, no host round trip
+        transcript.observe_f128(round1_c)
         z = transcript.sample_f128()
         # c-claim: interpolate round1_c at z.
         final_c_eval = _interpolate_at_z_on_lambda(round1_c, k_skip, z)
-        packed = lambda x: (getattr(x, "ndim", 0) == 2 and x.shape[-1] == 2
-                            and np.dtype(x.dtype) == np.uint64)
-        a_fold = carry.a_bits if packed(carry.a_bits) else a_rows
-        b_fold = carry.b_bits if packed(carry.b_bits) else b_rows
+        is_packed = lambda x: (getattr(x, "ndim", 0) == 2 and x.shape[-1] == 2
+                               and x.dtype == np.uint64)
+        a_fold = carry.a_bits if is_packed(carry.a_bits) else a_rows
+        b_fold = carry.b_bits if is_packed(carry.b_bits) else b_rows
         carry = replace(carry, a_rows=a_fold, b_rows=b_fold, round1_ab=round1_ab,
                         round1_c=round1_c, z=z, final_c_eval=final_c_eval)
         return carry, transcript, (round1_ab, round1_c)

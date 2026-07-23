@@ -67,12 +67,12 @@ def run():
     prover.bind_statement(ch, g["stmt"], root)
     a_bits, b_bits, c_bits = g["a"], g["b"], g["z"]  # packed F128 — witness_to_rows unpacks on device
     zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch)
-    results.append(("zerocheck round1_ab", np.array_equal(zc.round1_ab, g["zc"]["r1ab"])))
-    results.append(("zerocheck final_c", np.array_equal(zc.final_c_eval, g["zc"]["fc"])))
+    results.append(("zerocheck round1_ab", np.array_equal(ghash.to_lanes(zc.round1_ab), g["zc"]["r1ab"])))
+    results.append(("zerocheck final_c", np.array_equal(ghash.to_lanes(zc.final_c_eval).reshape(2), g["zc"]["fc"])))
 
     csc = lincheck.CscCircuit(g["a0_rows"], g["b0_rows"], 1 << k_log, const_pin=meta["const_pin"])
     x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, ir)
-    _lr, lc_zp, lc_claim, _zv = lincheck.prove(g["zlc"], None, None, x_ab, m, k_log, k_skip, ch=ch, capture=True, circuit=csc)
+    _lr, lc_zp, lc_claim = lincheck.prove(g["zlc"], None, None, x_ab, m, k_log, k_skip, ch=ch, circuit=csc)
     results.append(("lincheck z_partial", np.array_equal(ghash.to_lanes(lc_zp), g["lc"]["zp"])))
 
     ab_full = fnp.concatenate([lc_claim.r_inner_rest, x_ab.x_outer], axis=0)

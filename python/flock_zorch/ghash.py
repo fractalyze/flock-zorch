@@ -12,7 +12,10 @@ readers and the challenger's F128 byte serde).
 `to_ghash`/`from_ghash` are the device uint64-lane <-> `binary_field_ghash` bitcast
 (a pure reinterpret — flock's {lo, hi} limbs are the dtype's storage bytes);
 `_lanes_to_ghash`/`_ghash_to_lanes` are the same reinterpret as a host numpy view.
-Requires `jax_enable_x64`.
+The prove path holds native ghash end-to-end (flock-zorch#155): nothing here
+forces a device->host materialization — `to_lanes` is the byte-gate readers'
+compare-edge lift, and the only remaining host crossing inside a prove is the
+challenger's SHA-256 byte serde. Requires `jax_enable_x64`.
 """
 from __future__ import annotations
 
@@ -45,12 +48,6 @@ def zeros(n: int):
     `fnp.zeros(n, binary_field_ghash)` (an int->ghash convert is unimplemented; a
     scalar default even emits an S64->ghash convert at compile — see CLAUDE.md)."""
     return frx.lax.bitcast_convert_type(fnp.zeros((n, 2), U64), _GHASH)
-
-
-def from_ghash_host(g) -> np.ndarray:
-    """`from_ghash` materialized to host numpy — for the host-consumed uint64 lanes
-    (verify replay, transcript serde, the chain / lincheck reductions)."""
-    return np.asarray(from_ghash(g))
 
 
 def to_lanes(x) -> np.ndarray:

@@ -7,12 +7,15 @@ Overview, setup, the reproduction path, and the benchmark all live in
 
 The rules every change must respect:
 
-- **Byte-identical to flock.** Every layer is gated `frx port ≡ unmodified flock`
-  over serialized bytes, anchored bottom-up (field → additive NTT → Merkle →
-  zerocheck → lincheck → PCS → full `R1csProof`). The golden fixtures are dumped
-  from flock-core (the `flock-core` / `flock-prover` git rev dep), so the gate
-  transitively pins us to upstream. A layer is not done until its `*_oracle_test`
-  is green on GPU, and no behavior change ships without its byte-match.
+- **Byte-identical to flock.** The gate is **proof-level**: the `*_oracle_test`
+  gates byte-compare every field of a full serialized proof against goldens
+  dumped from flock-core (the `flock-core` / `flock-prover` git rev dep) — the
+  `LigeritoProof` gate on CPU CI, the identity-e2e + hash-circuit full provers
+  on GPU. One diverging byte in any layer flips every Fiat-Shamir draw after it,
+  so the proof gates transitively pin FS framing, NTT, Merkle/octopus,
+  zerocheck, lincheck, and ring-switch; per-layer golden gates are retired —
+  don't add one, add a python-native test (no golden) for primitive behavior.
+  No behavior change ships without the proof gates green (GPU set included).
 - **Assemble zorch's blocks, never re-implement the scheme.** The prover is built
   from zorch's scheme-agnostic spine (`Round`, Fiat-Shamir, `PCS`, fold,
   zero-check). flock-zorch adds only the flock-specific pieces the byte-match

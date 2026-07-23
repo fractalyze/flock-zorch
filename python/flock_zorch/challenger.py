@@ -53,8 +53,7 @@ class Challenger:
         """Sample F128 as native `binary_field_ghash`. Bare `sample_f128()` is a
         single scalar draw; `sample_f128(n)` is a length-`n` slice — the two frame
         differently on the wire, so a length-1 vector still passes an explicit `n=1`
-        (scalar vs slice(1) are NOT the same bytes). Host-int consumers (Lagrange
-        nodes, query positions) do `ghash.from_ghash_host` themselves."""
+        (scalar vs slice(1) are NOT the same bytes)."""
         if n is None:
             self._t, g = fs.sample_scalar(self._t)
             return g
@@ -64,7 +63,3 @@ class Challenger:
     def grind_pow(self, bits: int) -> int:
         self._t, witness = fs.grind(self._t, bits)
         return int(witness)
-
-    def verify_pow(self, nonce: int, bits: int) -> bool:
-        self._t, ok = fs.check_witness(self._t, nonce, bits)
-        return bool(np.asarray(ok))

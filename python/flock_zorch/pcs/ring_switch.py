@@ -6,7 +6,7 @@ transparent `rs_eq_ind`, the tensor-algebra transpose, the claim inner product)
 live in zorch, dtype-native over `binary_field_ghash`. This module keeps only
 what is flock-specific: the GHASH uint64-lane <-> `binary_field_ghash` boundary,
 the Fiat-Shamir order (observe `flock-ring-switch-v0` + s_hat_v, sample r''), the
-batched gamma combination, and the uint64-lane serialization the byte-gate reads.
+batched gamma combination, and the uint64-lane serialization the proof gates read.
 
 flock's F128 is `uint64 [.., 2] = [lo, hi]` with bit i = coefficient of x^i — the
 little-endian storage of `binary_field_ghash` (same GHASH basis, verified
@@ -37,7 +37,7 @@ def _zorch_ring_switch():
 def _bits(x):
     limbs = lax.bitcast_convert_type(x, fnp.uint32)
     shifts = fnp.arange(32, dtype=fnp.uint32)
-    return ((limbs[..., :, None] >> shifts) & fnp.uint32(1)).reshape(*x.shape, -1)
+    return ((limbs[..., None] >> shifts) & fnp.uint32(1)).reshape(*x.shape, -1)
 
 
 def _from_bits(bits, dtype):
@@ -53,23 +53,23 @@ def _from_bits(bits, dtype):
 def _bit_slice_evals(packed, tensor):
     if frx.default_backend() == "gpu":
         return _zorch_ring_switch().bit_slice_evals(packed, tensor)
-    selected = lax.bitcast_convert_type(tensor, fnp.uint32)[:, None, :] * _bits(
+    selected = lax.bitcast_convert_type(tensor, fnp.uint32)[..., None, :] * _bits(
         packed
-    )[:, :, None]
-    return fnp.sum(lax.bitcast_convert_type(selected, tensor.dtype), axis=0)
+    )[..., None]
+    return fnp.sum(lax.bitcast_convert_type(selected, tensor.dtype), axis=-2)
 
 
 def _rs_eq_ind(tensor, eq_r_dprime):
     if frx.default_backend() == "gpu":
         return _zorch_ring_switch().rs_eq_ind(tensor, eq_r_dprime)
-    selected = _bits(tensor)[:, :, None] * lax.bitcast_convert_type(
+    selected = _bits(tensor)[..., None] * lax.bitcast_convert_type(
         eq_r_dprime, fnp.uint32
-    )[None, :, :]
-    return fnp.sum(lax.bitcast_convert_type(selected, eq_r_dprime.dtype), axis=1)
+    )[None, ...]
+    return fnp.sum(lax.bitcast_convert_type(selected, eq_r_dprime.dtype), axis=-1)
 
 
 def _tensor_algebra_transpose(v):
-    return _from_bits(_bits(v).T, v.dtype)
+    return _from_bits(_bits(v).swapaxes(-1, -2), v.dtype)
 
 
 def _inner_product(a, b):
@@ -78,7 +78,7 @@ def _inner_product(a, b):
 
 @frx.jit
 def _reduce_one(t, packed, x_outer):
-    """One claim's observe-and-reduce (the block prove and prove_batched share):
+    """One claim's observe-and-reduce (prove_batched runs it per opening point):
     observe LABEL + s_hat_v, sample r'', compute the sumcheck claim. A pure jitted
     region that THREADS the functional transcript `t` in and out — so the whole
     observe/build/sample/reduce fuses as one program. `build_eq` is called directly
@@ -97,16 +97,6 @@ def _reduce_one(t, packed, x_outer):
     eq_r_dprime = sumcheck.build_eq(r_dprime)          # [128] ghash, for the gamma combine
     claim = _inner_product(_tensor_algebra_transpose(s_hat_v), eq_r_dprime)
     return t, s_hat_v, suffix_tensor, eq_r_dprime, claim       # claim native ghash
-
-
-def prove(packed_witness, x_outer, ch: Challenger):
-    """Returns (s_hat_v [128,2], rs_eq_ind [2^L] ghash, sumcheck_claim [ghash]).
-    Byte-identical to flock `ring_switch::prove`."""
-    packed = ghash.to_ghash(packed_witness)
-    # Thread the mutable Challenger's functional transcript through the jitted region.
-    ch._t, s_hat_v, suffix_tensor, eq_r_dprime, claim = _reduce_one(ch._t, packed, x_outer)
-    rs_eq_ind = _rs_eq_ind(suffix_tensor, eq_r_dprime)
-    return s_hat_v, rs_eq_ind, claim                          # rs_eq_ind native ghash (the open's b)
 
 
 def prove_batched(packed_witness, x_outers, ch: Challenger):

@@ -78,28 +78,33 @@ scripts/dump_goldens.sh core && bazel test //python:all
 ## Reproduce
 
 The oracle is the pinned flock itself: `examples/dump_*.rs` dump fixtures from
-`flock-core`, and each `*_oracle_test.py` checks the FRX port's serialized output
-against them, anchored bottom-up (field → additive NTT → Merkle → zerocheck →
-lincheck → PCS → full `R1csProof`). A layer is not done until its gate is green
-on GPU.
+`flock-core`, and the `*_oracle_test.py` gates byte-compare the FRX port's
+serialized proofs against them. The gates are **proof-level**: every field of a
+full serialized proof is compared, which transitively pins every layer under it
+(FS framing, NTT, Merkle/octopus, zerocheck, lincheck, ring-switch — one
+diverging byte anywhere flips every Fiat-Shamir draw after it). Primitives are
+covered by python-native tests (no goldens); the retired per-layer golden gates
+live in git history.
 
-### Core gates (bazel, CPU)
+### Bazel tests (CPU)
 
-The 21 core gates run under bazel — deps from the pip lock, `zorch` from the
-`MODULE.bazel` `git_override`, goldens from `//artifacts` runfiles:
+Run under bazel — deps from the pip lock, `zorch` from the `MODULE.bazel`
+`git_override`, goldens from `//artifacts` runfiles. One byte-match gate (the
+full `LigeritoProof` — flock's fused prove has no config below m=22, so the e2e
+gate can't come down to CPU) plus the native tests:
 
 ```bash
-scripts/dump_goldens.sh core           # goldens the gates byte-compare against
-bazel test //python:all                # all 21 (JAX_PLATFORMS=cpu + x64 pinned in .bazelrc)
-bazel test //python:e2e_oracle_test    # a single gate
+scripts/dump_goldens.sh core              # goldens the gates byte-compare against
+bazel test //python:all                   # (JAX_PLATFORMS=cpu + x64 pinned in .bazelrc)
+bazel test //python:ligerito_oracle_test  # the CPU byte-match anchor alone
 ```
 
-### Heavy + GPU gates (venv)
+### Proof gates (GPU, venv)
 
-The heavy hash-circuit gates (keccak/sha2/blake3 — hundreds-of-MB goldens) and
-the GPU runs are **not** bazel targets (the CUDA wheels aren't hermetic). Run
-them on the venv, resolving the same git_override'd zorch via
-`scripts/zorch_pythonpath.sh`:
+The full-prove gates — the identity e2e and the hash-circuit provers
+(keccak/sha2/blake3, hundreds-of-MB goldens) — are **not** bazel targets (the
+CUDA wheels aren't hermetic). Run them on the venv, resolving the same
+git_override'd zorch via `scripts/zorch_pythonpath.sh`:
 
 ```bash
 export JAX_PLATFORMS=cuda
@@ -113,8 +118,8 @@ $VENV python/flock_zorch/testing/keccak3_ligerito_oracle_test.py # Keccak full p
 $VENV python/flock_zorch/testing/blake3_ligerito_oracle_test.py
 ```
 
-The full per-layer + per-hash-circuit gate list is the `*_oracle_test.py` set
-under `python/flock_zorch/testing/`. `artifacts/` is gitignored (regenerable, and
+The full proof-gate list is the `*_oracle_test.py` set under
+`python/flock_zorch/testing/`. `artifacts/` is gitignored (regenerable, and
 `blake3_golden.bin` alone is ~118 MB); `scripts/dump_goldens.sh [core|all]`
 rebuilds it from the pinned flock.
 
