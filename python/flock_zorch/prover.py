@@ -194,7 +194,7 @@ class _LincheckStage(Stage):
         x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, inner_rest)
         lp = lincheck.prove(
             carry.z_lincheck, carry.a0, carry.b0, x_ab, self._m,
-            self._k_log, self._k_skip, ch=transcript, capture=True, circuit=self._circuit)
+            self._k_log, self._k_skip, ch=transcript, circuit=self._circuit)
         return replace(carry, lc_claim=lp.claim), transcript, (lp.rounds, lp.z_partial)
 
 
