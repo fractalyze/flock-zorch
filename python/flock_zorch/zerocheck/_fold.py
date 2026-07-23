@@ -1,7 +1,9 @@
 """Device precompute for zerocheck's round-1 c-claim and round-2 binding — the
-Lagrange-weight / batched-inverse / fold-at-z cluster, kept out of zerocheck.py so
-prove_packed reads as the PIOP. Byte-identical to flock's zerocheck/{univariate_skip,
-multilinear}. The deeply-sequential Lagrange/Fermat work runs on the native binary_field_ghash multiply.
+Lagrange-weight / fold-at-z cluster, kept out of zerocheck.py so prove_packed
+reads as the PIOP. Byte-identical to flock's zerocheck/{univariate_skip,
+multilinear}: the basis machinery is zorch's `compute_lagrange_basis` (Lagrange
+values are unique field elements, so the wire cannot move); only the φ₈ node
+selection is flock's.
 
 Requires jax_enable_x64.
 """
@@ -13,66 +15,20 @@ import frx.numpy as fnp
 
 from flock_zorch import ghash
 from flock_zorch.zerocheck import _urm
-
-_ONE = np.array([1, 0], dtype=np.uint64)
-_ONE_G = ghash.to_ghash(fnp.asarray(_ONE))  # binary_field_ghash scalar one
-
-
-def _prod_axis1(mat):
-    """F128 product over axis 1 of ghash [n, k] via log2(k) pairwise mul steps."""
-    n = mat.shape[1]
-    while n > 1:
-        h = n // 2
-        prod = mat[:, :h] * mat[:, h:2 * h]
-        if n % 2:
-            prod = fnp.concatenate([prod, mat[:, 2 * h:]], axis=1)
-        mat = prod
-        n = mat.shape[1]
-    return mat[:, 0]
-
-
-@frx.jit
-def _lag_numden(sg, zg):
-    """num[i]=Π_{j≠i}(z+s_j), den[i]=Π_{j≠i}(s_i+s_j); diagonal terms set to 1."""
-    ell = sg.shape[0]
-    eye = fnp.eye(ell, dtype=bool)
-    num_mat = fnp.where(eye, _ONE_G, fnp.broadcast_to((zg + sg)[None, :], (ell, ell)))
-    den_mat = fnp.where(eye, _ONE_G, sg[:, None] + sg[None, :])
-    return _prod_axis1(num_mat), _prod_axis1(den_mat)
-
-
-@frx.jit
-def _lag_w(num, inv_den):
-    return num * inv_den
-
-
-@frx.jit
-def _batch_inv(ag):
-    """Batched GF(2^128) inverse via the dtype's native divide — one elementwise
-    op in every enclosing jit.
-
-    This replaced a 127-step square-and-multiply `fori_loop` (Fermat), whose
-    `while` thunk dispatched ~2 host launches per iteration — ~254 per call,
-    measured ~2/3 of lincheck's whole launch count across this function's ~6
-    call sites per prove. The inverse is unique in a field, and the native
-    lowering matches the Fermat chain bit-for-bit on every input including
-    zero (both map 0 -> 0), so the wire is unchanged."""
-    return fnp.broadcast_to(_ONE_G, ag.shape) / ag
+from zorch.poly.univariate import compute_lagrange_basis
 
 
 def _lagrange_weights(k_skip: int, zg, offset: int):
     """L_i(z) over the φ₈-embedded nodes PHI_8_TABLE[offset+i], i∈[0, 2^k_skip).
     offset=0 → the S domain; offset=2^k_skip → the Λ domain.
 
-    Vectorized + jitted (replaces the scalar O(ell²) host-Python F128 double-loop;
-    jit is essential — it keeps the native ghash multiplies fused).
-    Same field math → byte-identical weights (gated).
+    zorch's `compute_lagrange_basis` (one jitted kernel: masked num/den products
+    + the dtype's native divide); flock only picks the φ₈ nodes.
 
     zg: `binary_field_ghash` scalar (z is a value in the L_i formula, not an index).
     Returns `binary_field_ghash [2^k_skip]` — never leaves the dtype."""
     sg = ghash.to_ghash(fnp.asarray(_urm.PHI_8_TABLE[offset:offset + (1 << k_skip)]))
-    num, den = _lag_numden(sg, zg)
-    return _lag_w(num, _batch_inv(den))
+    return compute_lagrange_basis(zg, sg)
 
 
 def _interpolate_at_z_on_lambda(values, k_skip: int, zg):
