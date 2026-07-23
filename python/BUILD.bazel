@@ -24,6 +24,10 @@ py_library(
         "@zorch//zorch/pcs/ligerito",
         "@zorch//zorch/poly",
         "@zorch//zorch/utils:binary_field",
+        # zorch.utils.binary_field imports frx's pallas at module scope, whose
+        # mosaic-gpu chain does `from absl import logging`; the frx wheel does
+        # not declare absl-py, so the hermetic env must.
+        requirement("absl-py"),
         requirement("frx"),
         requirement("numpy"),
         requirement("zk_dtypes"),
