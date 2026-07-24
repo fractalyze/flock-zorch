@@ -32,6 +32,7 @@ from flock_zorch.challenger import Challenger
 from flock_zorch.lincheck._csc_fold import _flatten_nz, _csc_segments, _seg_xor_fold
 from flock_zorch.sumcheck.inf_product import prove_inf_product
 from zorch.round import ProveChain, Round
+from zorch.utils import binary_field as bf
 
 U64 = fnp.uint64
 _GHASH = fnp.binary_field_ghash
@@ -105,27 +106,20 @@ def partial_fold_packed_z(z_packed_bytes: bytes, m: int, k_log: int, x_outer):
     n_outer = 1 << (m - k_log)
     n_bytes = n_outer // 8
     zp = fnp.asarray(np.frombuffer(z_packed_bytes, np.uint8).reshape(n_bytes, k))
-    return _partial_fold(zp, x_outer, n_outer)          # device + jit (keeps the intermediate off HBM)
+    return _partial_fold(zp, x_outer)          # device + jit (keeps the intermediate off HBM)
 
 
-@functools.partial(frx.jit, static_argnums=(2,))
-def _partial_fold(zp, x_outer, n_outer):
-    """z_vec[i_inner] = Σ_{i_outer} bit·eq_outer[i_outer].
-
-    On GPU this is the packed UniSkipFoldTable fold — `byte_select_xor_reduce`
-    reads B/8 selector bytes per output row and never expands the [n_outer, k]
-    bit matrix, so it drops the ~2^m ghash select→reduce temp (mirrors zerocheck
-    `_fold_packed_at_z`, #135). `zp` is [n_bytes, k] with byte `j` of column
-    i_inner holding outer bits 8j..8j+7 LSB-first (i_outer = byte·8 + r), so the
-    transpose `zp.T` is exactly the primitive's row-major (n, B/8) selector
-    layout with values = eq_outer[n_outer]. CPU keeps the compact select+XOR-sum
-    as the portable byte-match oracle."""
+@frx.jit
+def _partial_fold(zp, x_outer):
+    """z_vec[i_inner] = Σ_{i_outer} bit·eq_outer[i_outer], via zorch's packed
+    UniSkipFoldTable fold — the same primitive zerocheck uses (`_fold_packed_at_z`,
+    #135). It reads B/8 selector bytes per output row and never expands the
+    [n_outer, k] bit matrix, dropping the ~2^m ghash select→reduce temp. `zp` is
+    [n_bytes, k] with byte `j` of column i_inner holding outer bits 8j..8j+7
+    LSB-first (i_outer = byte·8 + r), so `zp.T` is exactly the primitive's
+    row-major (n, B/8) selector layout with values = eq_outer[n_outer]. zorch
+    dispatches CPU (compact select+XOR-sum) vs GPU (Pallas table) internally."""
     eq_outer = build_eq(x_outer)  # ghash [n_outer]
-    if frx.default_backend() == "cpu":
-        bits = ((zp[:, None, :] >> fnp.arange(8, dtype=fnp.uint8)[None, :, None]) & 1)  # [nb,8,k]
-        bits = bits.reshape(n_outer, zp.shape[1]).astype(bool)                          # i_outer=byte·8+r
-        return fnp.sum(fnp.where(bits, eq_outer[:, None], fnp.zeros((), _GHASH)), axis=0)
-    from zorch.utils import binary_field as bf
     return bf.byte_select_xor_reduce(zp.T, eq_outer)  # [k]
 
 
