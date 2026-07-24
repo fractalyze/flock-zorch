@@ -62,8 +62,9 @@ def _load(path):
 
 def _check(path, name):
     g = _load(path)
-    lp = lincheck.prove(
-        g["z_packed"], g["a"], g["b"], g["x_ab"], g["m"], g["k_log"], g["k_skip"])
+    lp, _transcript = lincheck.prove(
+        g["z_packed"], g["a"], g["b"], g["x_ab"], g["m"], g["k_log"], g["k_skip"]
+    )
     rounds, z_partial = lp.rounds, lp.z_partial
     assert len(rounds) == len(g["rounds"]), (len(rounds), len(g["rounds"]))
     for i, ((e1, einf), (ge1, geinf)) in enumerate(zip(rounds, g["rounds"])):

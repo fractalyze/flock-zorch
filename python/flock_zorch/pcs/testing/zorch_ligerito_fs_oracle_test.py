@@ -2,7 +2,7 @@
 
 Two layers, both CPU:
   1. Framing lockstep: `FlockTranscript` / `FlockChoreography` byte streams equal
-     the `Challenger` surface's (which `challenger_oracle_test` pins to
+     the `FlockTranscript` surface's (which `challenger_oracle_test` pins to
      flock-core), op by op — observes, scalar/slice sample split, PoW, and the
      rejection-sampled distinct query draw vs an independent Challenger reference.
   2. Round trip: `zorch.pcs.ligerito` prover+verifier over the GHASH
@@ -30,7 +30,7 @@ from zorch.pcs.ligerito.verifier import LigeritoVerifier  # noqa: E402
 from zorch.poly.multilinear import eval_mle  # noqa: E402
 
 from flock_zorch.hash import merkle  # noqa: E402
-from flock_zorch.challenger import Challenger  # noqa: E402
+from flock_zorch.challenger import FlockTranscript, flock_transcript  # noqa: E402
 from flock_zorch.pcs.ligerito import (  # noqa: E402
     FlockChoreography,
     FlockTranscript,
@@ -76,19 +76,18 @@ def check(name: str, ok: bool):
 
 def test_observe_framing():
     """observe: ghash scalar == observe_f128, vector == per-element observe_f128,
-    uint8 == observe_bytes — buffer-exact vs the Challenger-side ops."""
+    uint8 == observe_bytes — buffer-exact vs the explicit-transcript ops."""
     vs = _rand_ghash(1, 3)
     root = np.arange(32, dtype=np.uint8)
 
     t = flock_transcript(DOMAIN)
     t = t.observe(vs[0]).observe(vs).observe(fnp.asarray(root))
 
-    ch = Challenger(DOMAIN)
-    ch.observe_f128(vs[0])
+    ref = flock_transcript(DOMAIN).observe_f128(vs[0])
     for v in vs:
-        ch.observe_f128(v)
-    ch.observe_bytes(bytes(root))
-    check("observe framing", _state_eq(t.inner, ch._t))
+        ref = ref.observe_f128(v)
+    ref = ref.observe_bytes(bytes(root))
+    check("observe framing", _state_eq(t.inner, ref.inner))
 
 
 def test_sample_framing():
@@ -98,28 +97,29 @@ def test_sample_framing():
     t, one = t.sample(1)
     t, vec = t.sample(5)
 
-    ch = Challenger(DOMAIN)
-    ref_one = ch.sample_f128()
-    ref_vec = ch.sample_f128(5)
+    ref = flock_transcript(DOMAIN)
+    ref, ref_one = ref.sample_f128()
+    ref, ref_vec = ref.sample_f128(5)
     check(
         "sample values",
         np.array_equal(_lohi(one)[0], _lohi(ref_one)[0])
         and np.array_equal(_lohi(vec), _lohi(ref_vec)),
     )
-    check("sample framing", _state_eq(t.inner, ch._t))
+    check("sample framing", _state_eq(t.inner, ref.inner))
 
 
 def test_grind_lockstep():
-    """FlockChoreography grind/check == Challenger grind_pow/verify_pow."""
+    """FlockChoreography grind/check == FlockTranscript grind_pow/verify_pow."""
     chor = FlockChoreography()
     t = flock_transcript(DOMAIN)
     t, w = chor.grind(t, 6)
     t, w0 = chor.grind(t, 0)  # flock's unconditional 0-bit query grind
 
-    ch = Challenger(DOMAIN)
-    n1, n0 = ch.grind_pow(6), ch.grind_pow(0)
-    check("grind nonces", int(w) == n1 and int(w0) == n0 == 0)
-    check("grind stream", _state_eq(t.inner, ch._t))
+    ref = flock_transcript(DOMAIN)
+    ref, n1 = ref.grind_pow(6)
+    ref, n0 = ref.grind_pow(0)
+    check("grind nonces", int(w) == int(n1) and int(w0) == int(n0) == 0)
+    check("grind stream", _state_eq(t.inner, ref.inner))
 
     v = flock_transcript(DOMAIN)
     v, ok1 = chor.check_grind(v, 6, w)
@@ -127,20 +127,23 @@ def test_grind_lockstep():
     check("check_grind", bool(ok1) and bool(ok0) and _state_eq(v.inner, t.inner))
 
 
-def _ref_distinct_queries(ch: Challenger, block_len: int, count: int) -> list[int]:
+def _ref_distinct_queries(
+    transcript: FlockTranscript, block_len: int, count: int
+) -> tuple[list[int], FlockTranscript]:
     """flock's rejection-sampled distinct queries (sample an F128, take its low
-    limb mod `block_len`, redraw on repeat, sort) — an independent Challenger-side
+    limb mod `block_len`, redraw on repeat, sort) — an independent explicit-transcript
     reference for `FlockChoreography.sample_queries`, spelled out here so the gate
     holds without the retired in-tree Ligerito port."""
     seen: set[int] = set()
     out: list[int] = []
     while len(out) < count:
-        q = int(_lohi(ch.sample_f128())[0, 0]) % block_len
+        transcript, sample = transcript.sample_f128()
+        q = int(_lohi(sample)[0, 0]) % block_len
         if q not in seen:
             seen.add(q)
             out.append(q)
     out.sort()
-    return out
+    return out, transcript
 
 
 def test_distinct_queries_lockstep():
@@ -149,11 +152,12 @@ def test_distinct_queries_lockstep():
     t = flock_transcript(DOMAIN)
     t, pos = chor.sample_queries(t, block_len=16, count=6)
 
-    ch = Challenger(DOMAIN)
-    ref = _ref_distinct_queries(ch, 16, 6)
+    ref, ref_transcript = _ref_distinct_queries(
+        flock_transcript(DOMAIN), 16, 6
+    )
     check(
         "distinct queries",
-        pos.tolist() == ref and _state_eq(t.inner, ch._t),
+        pos.tolist() == ref and _state_eq(t.inner, ref_transcript.inner),
     )
 
 

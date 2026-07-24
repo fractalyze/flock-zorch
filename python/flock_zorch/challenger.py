@@ -1,70 +1,104 @@
-"""flock's Fiat-Shamir challenger (SHA-256), authored over zorch's device
-`Sha256FieldTranscript` — byte-identical to flock-core's `FsChallenger`.
+"""Flock's immutable Fiat–Shamir transcript.
 
-The Merlin-over-SHA256 wire framing (op tags, u64-LE length prefixes,
-`SHA256(buffer||ctr)` counter-squeeze, re-absorb, PoW) is zorch's streaming
-device transcript instantiated with the native GHASH dtype, so observes and
-samples carry F128 elements directly and the transcript state is a
-scan-threadable pytree. Byte-identity across substrates is zorch's guarantee
-(`sha256_field_transcript_test` pins it against `ByteHashTranscript`), so flock
-keeps no gate of its own.
+The wire format is byte-identical to flock-core's SHA-256 ``FsChallenger``.
+Unlike Rust's ``&mut self`` surface, Python protocol code threads the returned
+transcript explicitly. This makes transcript state ordinary stage data and
+prevents a prover or verifier from advancing hidden shared state.
 
-This wrapper keeps flock-core's `&mut self` API shape and the `uint64[..., 2]`
-lane representation at its boundary; each `sample_*` therefore materializes the
-challenge to host numpy. Sub-protocols migrate to threading the transcript
-itself through their jitted rounds, at which point this wrapper shrinks away.
-
-Requires `zorch` on PYTHONPATH (run gates with `PYTHONPATH=python:../zorch`).
+Flock's wire format distinguishes a scalar F128 operation from a length-one
+F128 slice operation. The explicit ``observe_f128`` / ``sample_f128`` methods
+preserve that distinction. The generic zorch ``Transcript`` methods implement
+the framing required by the Ligerito choreography.
 """
 from __future__ import annotations
 
-import numpy as np
+import functools
+from dataclasses import dataclass
+
 import frx.numpy as fnp
+import numpy as np
+from frx import Array
+from frx.tree_util import register_dataclass
 
 from zorch.sha256_field_transcript import Sha256FieldTranscript
 
 from flock_zorch import fs
 
 
-class Challenger:
-    """Mutable wrapper over the functional device transcript, mirroring flock's
-    `&mut self` `FsChallenger` API. Observes and samples carry native
-    `binary_field_ghash` elements; host-int consumers convert at their own edge."""
+@functools.partial(register_dataclass, data_fields=["inner"], meta_fields=[])
+@dataclass(frozen=True)
+class FlockTranscript:
+    """Immutable, device-threadable transcript with Flock wire framing."""
 
-    def __init__(self, domain: bytes):
-        self._t = Sha256FieldTranscript.new(domain, fnp.binary_field_ghash)
+    inner: Sha256FieldTranscript
 
-    def observe_label(self, label: bytes) -> None:
-        self._t = fs.observe_label(self._t, label)
+    @classmethod
+    def new(cls, domain: bytes) -> "FlockTranscript":
+        return cls(Sha256FieldTranscript.new(domain, fnp.binary_field_ghash))
 
-    def observe_bytes(self, data) -> None:
-        self._t = fs.observe_bytes(
-            self._t, np.frombuffer(bytes(data), np.uint8))
+    @property
+    def has_dedicated_fusion(self) -> bool:
+        return self.inner.has_dedicated_fusion
 
-    def observe_f128(self, g) -> None:
-        """Observe F128 (native `binary_field_ghash`) — a scalar or a slice,
-        framed by shape (flock scalar-frames a single element, slice-frames many)."""
-        if fnp.ndim(g) == 0:
-            self._t = fs.observe_scalar(self._t, g)
-        else:
-            self._t = fs.observe_slice(self._t, g)
+    # Flock protocol operations. A scalar and a one-element slice are
+    # deliberately different operations on the wire.
+    def observe_label(self, label: bytes) -> "FlockTranscript":
+        return FlockTranscript(fs.observe_label(self.inner, label))
 
-    def sample_f128(self, n: int | None = None):
-        """Sample F128 as native `binary_field_ghash`. Bare `sample_f128()` is a
-        single scalar draw; `sample_f128(n)` is a length-`n` slice — the two frame
-        differently on the wire, so a length-1 vector still passes an explicit `n=1`
-        (scalar vs slice(1) are NOT the same bytes). Host-int consumers (Lagrange
-        nodes, query positions) do `ghash.from_ghash_host` themselves."""
+    def observe_bytes(self, data) -> "FlockTranscript":
+        values = (
+            np.frombuffer(bytes(data), np.uint8)
+            if isinstance(data, (bytes, bytearray, memoryview))
+            else fnp.asarray(data, fnp.uint8)
+        )
+        return FlockTranscript(fs.observe_bytes(self.inner, values))
+
+    def observe_f128(self, values) -> "FlockTranscript":
+        values = fnp.asarray(values)
+        if fnp.ndim(values) == 0:
+            return FlockTranscript(fs.observe_scalar(self.inner, values))
+        return FlockTranscript(fs.observe_slice(self.inner, values))
+
+    def sample_f128(self, n: int | None = None) -> tuple["FlockTranscript", Array]:
         if n is None:
-            self._t, g = fs.sample_scalar(self._t)
-            return g
-        self._t, g = fs.sample_slice(self._t, n)
-        return g
+            inner, value = fs.sample_scalar(self.inner)
+        else:
+            inner, value = fs.sample_slice(self.inner, n)
+        return FlockTranscript(inner), value
 
-    def grind_pow(self, bits: int) -> int:
-        self._t, witness = fs.grind(self._t, bits)
-        return int(witness)
+    def grind_pow(self, bits: int) -> tuple["FlockTranscript", Array]:
+        inner, witness = fs.grind(self.inner, bits)
+        return FlockTranscript(inner), witness
 
-    def verify_pow(self, nonce: int, bits: int) -> bool:
-        self._t, ok = fs.check_witness(self._t, nonce, bits)
-        return bool(np.asarray(ok))
+    def verify_pow(
+        self, nonce: int | Array, bits: int
+    ) -> tuple["FlockTranscript", Array]:
+        inner, ok = fs.check_witness(self.inner, nonce, bits)
+        return FlockTranscript(inner), ok
+
+    # zorch Transcript protocol. Ligerito observes field messages as a sequence
+    # of scalar operations and treats sample(1) as one scalar squeeze.
+    def observe(self, values: Array) -> "FlockTranscript":
+        values = fnp.asarray(values)
+        if values.dtype == fnp.uint8:
+            return FlockTranscript(fs.observe_bytes(self.inner, values))
+        if values.dtype != fnp.binary_field_ghash:
+            raise TypeError(f"no Flock framing for observed dtype {values.dtype}")
+        return FlockTranscript(fs.observe_scalar(self.inner, values.reshape(-1)))
+
+    def sample(self, n: int = 1) -> tuple["FlockTranscript", Array]:
+        if n == 1:
+            inner, value = fs.sample_scalar(self.inner)
+            return FlockTranscript(inner), value.reshape(1)
+        inner, values = fs.sample_slice(self.inner, n)
+        return FlockTranscript(inner), values
+
+    def observe_and_sample(
+        self, values: Array, n: int = 1
+    ) -> tuple["FlockTranscript", Array]:
+        return self.observe(values).sample(n)
+
+
+def flock_transcript(domain: bytes) -> FlockTranscript:
+    """Construct a fresh Flock transcript."""
+    return FlockTranscript.new(domain)

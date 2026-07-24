@@ -76,13 +76,45 @@ def _lagrange_weights(k_skip: int, zg, offset: int):
     return _lag_w(num, _batch_inv(den))
 
 
-def _interpolate_at_z_on_lambda(values, k_skip: int, zg) -> np.ndarray:
-    """Σ_i L_i^Λ(z)·values[i] (flock `interpolate_at_z_on_lambda`).
-
-    values: uint64 [2^k_skip, 2]; zg: ghash scalar; returns uint64 [2] (a proof field)."""
+def _interpolate_at_z_on_lambda_g(values, k_skip: int, zg):
+    """Σ_i L_i^Λ(z)·values[i] as a native ghash scalar."""
     w = _lagrange_weights(k_skip, zg, 1 << k_skip)
-    prod = w * ghash.to_ghash(fnp.asarray(values))
-    return ghash.from_ghash_host(fnp.sum(prod))  # XOR-sum inner product
+    return fnp.sum(w * ghash.to_ghash(fnp.asarray(values)))
+
+
+def _interpolate_at_z_on_lambda(values, k_skip: int, zg) -> np.ndarray:
+    """`_interpolate_at_z_on_lambda_g` serialized as uint64 lanes.
+
+    values: uint64 [2^k_skip, 2]; zg: ghash scalar; returns uint64 [2]."""
+    return ghash.from_ghash_host(
+        _interpolate_at_z_on_lambda_g(values, k_skip, zg)
+    )
+
+
+def _interpolate_at_z_combined(values, k_skip: int, zg):
+    """Evaluate the degree-<2·ell combined polynomial, zero on S, at `zg`.
+
+    `values` are its ell evaluations on Λ. The omitted S evaluations are zero,
+    so only the Λ Lagrange weights over the full S∪Λ domain contribute.
+    """
+    ell = 1 << k_skip
+    nodes = ghash.to_ghash(fnp.asarray(_urm.PHI_8_TABLE[: 2 * ell]))
+    selected = nodes[ell:]
+    positions = fnp.arange(2 * ell)[None, :]
+    selected_positions = fnp.arange(ell, 2 * ell)[:, None]
+    same = positions == selected_positions
+    num = _prod_axis1(
+        fnp.where(
+            same,
+            _ONE_G,
+            fnp.broadcast_to((zg + nodes)[None, :], (ell, 2 * ell)),
+        )
+    )
+    den = _prod_axis1(
+        fnp.where(same, _ONE_G, selected[:, None] + nodes[None, :])
+    )
+    weights = num * _batch_inv(den)
+    return fnp.sum(weights * ghash.to_ghash(fnp.asarray(values)))
 
 
 @frx.jit

@@ -2,7 +2,7 @@
 zorch's `ByteHashTranscript` (host `HostSha256` backend).
 
 Replays the EXACT scripted observe/sample/grind sequence from
-`examples/dump_challenger.rs` through `flock_zorch.challenger.Challenger` and
+`examples/dump_challenger.rs` through `flock_zorch.challenger.FlockTranscript` and
 byte-compares every sampled F128 and the grind nonce against the flock golden.
 A divergence in any absorbed byte (tag, length prefix, F128 LE order, re-absorb,
 PoW) changes a downstream sample, so the samples transitively pin the whole
@@ -18,7 +18,7 @@ from pathlib import Path
 import numpy as np
 
 from flock_zorch import ghash
-from flock_zorch.challenger import Challenger
+from flock_zorch.challenger import FlockTranscript
 
 _MAGIC = b"FLKCHL01"
 
@@ -47,37 +47,41 @@ def _load(path: Path):
     return samples, nonce
 
 
-def _replay(make_challenger=Challenger) -> tuple[list[np.ndarray], int]:
-    """The scripted sequence — identical to dump_challenger.rs. `make_challenger`
-    builds the `Challenger` (its default backend is the host transcript; the device
-    gate passes a device-backed factory)."""
-    ch = make_challenger(DOMAIN)
+def _replay(make_transcript=FlockTranscript.new) -> tuple[list[np.ndarray], int]:
+    """The scripted sequence — identical to dump_challenger.rs."""
+    transcript = make_transcript(DOMAIN)
     samples: list[np.ndarray] = []
 
-    ch.observe_label(LABEL)
-    ch.observe_bytes(bytes(range(32)))
-    ch.observe_f128(_f128(0x0123456789ABCDEF, 0xFEDCBA9876543210))
-    ch.observe_f128(np.stack([_f128(1, 0), _f128(2, 0), _f128(0xDEADBEEF, 0xCAFEBABE)]))
+    transcript = transcript.observe_label(LABEL)
+    transcript = transcript.observe_bytes(bytes(range(32)))
+    transcript = transcript.observe_f128(
+        _f128(0x0123456789ABCDEF, 0xFEDCBA9876543210)
+    )
+    transcript = transcript.observe_f128(
+        np.stack([_f128(1, 0), _f128(2, 0), _f128(0xDEADBEEF, 0xCAFEBABE)])
+    )
 
-    s0 = ch.sample_f128()
+    transcript, s0 = transcript.sample_f128()
     samples.append(s0)
-    ch.observe_f128(s0)
+    transcript = transcript.observe_f128(s0)
 
-    sv = ch.sample_f128(5)
+    transcript, sv = transcript.sample_f128(5)
     samples.extend(sv)
-    ch.observe_f128(sv)
+    transcript = transcript.observe_f128(sv)
 
-    nonce = ch.grind_pow(GRIND_BITS)
+    transcript, nonce = transcript.grind_pow(GRIND_BITS)
 
-    samples.append(ch.sample_f128())
-    samples.append(ch.sample_f128())
-    return samples, nonce
+    transcript, sample = transcript.sample_f128()
+    samples.append(sample)
+    transcript, sample = transcript.sample_f128()
+    samples.append(sample)
+    return samples, int(np.asarray(nonce))
 
 
-def run(path: Path | None = None, *, make_challenger=Challenger):
+def run(path: Path | None = None, *, make_transcript=FlockTranscript.new):
     path = path or (_artifacts_dir() / "challenger_golden.bin")
     golden, golden_nonce = _load(path)
-    samples, nonce = _replay(make_challenger)
+    samples, nonce = _replay(make_transcript)
 
     got = ghash.to_lanes(np.stack(samples))
     if not np.array_equal(got, golden):

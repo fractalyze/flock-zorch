@@ -14,6 +14,7 @@ py_library(
         "@zorch//zorch:prove",
         "@zorch//zorch:round",
         "@zorch//zorch:sha256_field_transcript",
+        "@zorch//zorch:stage",
         "@zorch//zorch/sumcheck",
         "@zorch//zorch/coding:additive_reed_solomon",
         "@zorch//zorch/coding:reed_solomon",
@@ -78,6 +79,16 @@ py_test(
     name = "merkle_openings_test",
     size = "small",
     srcs = ["flock_zorch/hash/testing/merkle_openings_test.py"],
+    deps = [
+        ":flock_zorch",
+        ":test_support",
+    ],
+)
+
+py_test(
+    name = "zerocheck_stage_test",
+    size = "medium",
+    srcs = ["flock_zorch/zerocheck/testing/zerocheck_stage_test.py"],
     deps = [
         ":flock_zorch",
         ":test_support",

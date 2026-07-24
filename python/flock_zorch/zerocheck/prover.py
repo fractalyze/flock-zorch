@@ -5,7 +5,7 @@ serializable proof — authored as a host round loop, byte-identical to flock-co
 Proves `a(y)·b(y) ⊕ c(y) = 0 ∀ y ∈ {0,1}^m`. Structure: one univariate-skip
 round-1 (URM, `_urm.round1_naive`) over K_SKIP=6 skip variables, then a multilinear
 sumcheck over the remaining `m − K_SKIP` variables (the iter-10 `sumcheck`
-primitives). Fiat-Shamir is the host SHA-256 `Challenger`; the bulk field arith
+primitives). Fiat-Shamir state is an immutable `FlockTranscript`; the bulk field arith
 (`round_pair`, the multilinear fold) runs on the native `binary_field_ghash` multiply (→ clmad on GPU).
 
 The protocol fixes the inner 7 of the `r` challenge coordinates to constants
@@ -26,11 +26,10 @@ import frx.numpy as fnp
 from flock_zorch import ghash, sumcheck
 from flock_zorch.zerocheck import _urm
 from flock_zorch.ghash import _lanes_to_ghash, _ghash_to_lanes
-from flock_zorch.challenger import Challenger
+from flock_zorch.challenger import FlockTranscript, flock_transcript
 from flock_zorch.zerocheck._fold import (
     _lagrange_weights, _interpolate_at_z_on_lambda, _fold_at_z,
 )
-from zorch.round import ProveChain, Round
 from zorch.sumcheck.domain import fold
 
 K_SKIP = 6
@@ -54,6 +53,18 @@ class ZerocheckProof:
     z: Any                # claim cross-check
     mlv_challenges: Any   # claim cross-check
     r_rest: Any           # claim cross-check
+
+
+@dataclass(frozen=True)
+class ZerocheckClaim:
+    """Verifier-derived terminal claims and their two opening points."""
+
+    z: Any
+    mlv_challenges: Any
+    r_rest: Any
+    a_eval: Any
+    b_eval: Any
+    c_eval: Any
 
 
 @dataclass(frozen=True)
@@ -126,7 +137,7 @@ def _observe_finals(t, final_a, final_b):
 _EQ_TABLES = frx.jit(sumcheck.build_eq_suffix_tables)
 
 
-class _SetupRound(Round):
+class _SetupRound:
     """Sample the challenge vector r and fix the inner-7 constants (small ++
     medium). No proof message — writes r onto the carry."""
 
@@ -135,15 +146,15 @@ class _SetupRound(Round):
 
     def __call__(self, carry, transcript):
         m, k_skip = self._m, self._k_skip
-        transcript.observe_label(LABEL)
+        transcript = transcript.observe_label(LABEL)
         # r = r_skip ++ small ++ medium ++ r_outer, assembled on the dtype.
-        r_skip = transcript.sample_f128(k_skip)
-        r_outer = transcript.sample_f128(m - k_skip - N_INNER)
+        transcript, r_skip = transcript.sample_f128(k_skip)
+        transcript, r_outer = transcript.sample_f128(m - k_skip - N_INNER)
         r = fnp.concatenate([r_skip, _SMALL_G, _MEDIUM_G, r_outer])
         return replace(carry, r=r), transcript, None
 
 
-class _UrmRound(Round):
+class _UrmRound:
     """Round-1 univariate-skip URM (== wire round1_ab/round1_c): F8-NTT extend +
     a·b + φ8-accumulate on the GPU, then the c-claim interpolation at z. Message
     = (round1_ab, round1_c)."""
@@ -159,9 +170,9 @@ class _UrmRound(Round):
         b_rows = _urm.witness_to_rows(carry.b_bits, m, k_skip)
         c_rows = _urm.witness_to_rows(carry.c_bits, m, k_skip)
         round1_ab, round1_c = _urm.round1_rows(a_rows, b_rows, c_rows, m, k_skip, carry.r)
-        transcript.observe_f128(ghash.to_ghash(fnp.asarray(round1_ab)))
-        transcript.observe_f128(ghash.to_ghash(fnp.asarray(round1_c)))
-        z = transcript.sample_f128()
+        transcript = transcript.observe_f128(ghash.to_ghash(fnp.asarray(round1_ab)))
+        transcript = transcript.observe_f128(ghash.to_ghash(fnp.asarray(round1_c)))
+        transcript, z = transcript.sample_f128()
         # c-claim: interpolate round1_c at z.
         final_c_eval = _interpolate_at_z_on_lambda(round1_c, k_skip, z)
         carry = replace(carry, a_rows=a_rows, b_rows=b_rows, round1_ab=round1_ab,
@@ -169,7 +180,7 @@ class _UrmRound(Round):
         return carry, transcript, (round1_ab, round1_c)
 
 
-class _MultilinearRound(Round):
+class _MultilinearRound:
     """The multilinear sumcheck over the m − k_skip outer variables: fold the
     witness at z, then bind each remaining variable (round message + fold),
     finishing at ρ_last. Message = (rounds, final_a_eval, final_b_eval)."""
@@ -189,7 +200,7 @@ class _MultilinearRound(Round):
         b_g = _fold_at_z(carry.b_rows, weights)
         r_g = carry.r
 
-        t = transcript._t
+        t = transcript.inner
         # All rounds' eq suffix tables in one program (round i reads
         # eq(r[k_skip+1+i:])); r[0] of every round's message is fixed to one.
         eq_tables = _EQ_TABLES(r_g[k_skip + 1:])
@@ -200,7 +211,7 @@ class _MultilinearRound(Round):
             rounds.append((m1, minf))
             rhos.append(rho)
         final_a, final_b = a_g[0], b_g[0]
-        transcript._t = _observe_finals(t, final_a, final_b)
+        transcript = FlockTranscript(_observe_finals(t, final_a, final_b))
 
         final_a_eval = final_a
         final_b_eval = final_b
@@ -210,30 +221,30 @@ class _MultilinearRound(Round):
         return carry, transcript, (rounds, final_a_eval, final_b_eval)
 
 
-def zerocheck_chain(m: int, k_skip: int) -> ProveChain:
-    """The zerocheck sub-chain: setup → round-1 URM → multilinear sumcheck. One
-    definition for the stage wiring (cf. prover.prove_fast / sp1-zorch
-    prove_shard_chain)."""
-    return ProveChain([_SetupRound(m, k_skip), _UrmRound(m, k_skip),
-                       _MultilinearRound(m, k_skip)])
+def prove_packed(
+    a_bits,
+    b_bits,
+    c_bits,
+    m: int,
+    domain: bytes | None = None,
+    transcript: FlockTranscript | None = None,
+) -> tuple[ZerocheckProof, FlockTranscript]:
+    """Return the proof and advanced transcript.
 
-
-def prove_packed(a_bits, b_bits, c_bits, m: int, domain: bytes | None = None,
-                 ch: Challenger | None = None) -> ZerocheckProof:
-    """Returns a `ZerocheckProof` (proof fields + the claim's z / mlv_challenges /
-    r_rest, the latter for the oracle's localization cross-checks).
-
-    A `zerocheck_chain` of stage `Round`s (setup → URM → multilinear) threading one
-    `Challenger`; pass a shared `ch` (the e2e challenger carrying commit/bind state)
-    to thread Fiat-Shamir through the fused prover, else a fresh Challenger(domain)
-    is made."""
+    Supplying ``transcript`` continues a larger protocol. Otherwise ``domain``
+    seeds a fresh transcript. The caller must retain the returned state.
+    """
     k_skip = K_SKIP
     assert m >= k_skip + N_INNER, f"m must be >= {k_skip + N_INNER}"
-    if ch is None:
-        ch = Challenger(domain)
-    carry, _ch, _msgs = zerocheck_chain(m, k_skip)(
-        _ZerocheckCarry(a_bits, b_bits, c_bits), ch)
-    return ZerocheckProof(
+    if transcript is None:
+        if domain is None:
+            raise ValueError("domain is required when no transcript is supplied")
+        transcript = flock_transcript(domain)
+    carry = _ZerocheckCarry(a_bits, b_bits, c_bits)
+    carry, transcript, _ = _SetupRound(m, k_skip)(carry, transcript)
+    carry, transcript, _ = _UrmRound(m, k_skip)(carry, transcript)
+    carry, transcript, _ = _MultilinearRound(m, k_skip)(carry, transcript)
+    proof = ZerocheckProof(
         round1_ab=carry.round1_ab,
         round1_c=carry.round1_c,
         multilinear_rounds=carry.multilinear_rounds,
@@ -244,3 +255,4 @@ def prove_packed(a_bits, b_bits, c_bits, m: int, domain: bytes | None = None,
         mlv_challenges=carry.mlv_challenges,
         r_rest=carry.r[k_skip:],   # native ghash: the c-open point coords; byte-gate lanes-converts
     )
+    return proof, transcript

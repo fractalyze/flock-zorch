@@ -88,7 +88,7 @@ def run(path: Path | None = None):
         r_rest = rd.f128(m - K_SKIP)
         _a_eval, _b_eval, _c_eval = rd.f128(1)[0], rd.f128(1)[0], rd.f128(1)[0]
 
-        out = zerocheck.prove_packed(a, b, c, m, DOMAIN)
+        out, _transcript = zerocheck.prove_packed(a, b, c, m, DOMAIN)
 
         # Localization cross-checks (claim) first.
         _eq(f"r_rest(m={m})", out.r_rest, r_rest)
