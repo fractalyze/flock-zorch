@@ -12,7 +12,7 @@ round/bind): lincheck's sumcheck binds the **top** bit (split at half, not the
 interleaved (2x,2x+1) pairs) and carries **no eq factor** (plain product sum
 `Σ comb·z`). The eq tables (`build_eq`) and φ8 Lagrange weights are shared.
 
-Reuses zorch via the challenger (`zorch.byte_transcript`). Requires
+Uses zorch through the immutable transcript boundary. Requires
 `jax_enable_x64` and `zorch` on PYTHONPATH.
 """
 from __future__ import annotations
@@ -28,10 +28,9 @@ import frx.numpy as fnp
 from flock_zorch import ghash
 from flock_zorch.sumcheck import build_eq, ONE
 from flock_zorch.zerocheck import _lagrange_weights, ZerocheckProof
-from flock_zorch.challenger import Challenger
+from flock_zorch.challenger import FlockTranscript, flock_transcript
 from flock_zorch.lincheck._csc_fold import _flatten_nz, _csc_segments, _seg_xor_fold
 from flock_zorch.sumcheck.inf_product import prove_inf_product
-from zorch.round import ProveChain, Round
 
 U64 = fnp.uint64
 _GHASH = fnp.binary_field_ghash
@@ -203,7 +202,7 @@ class _LincheckCarry:
     claim: Any = None                # ← _ClaimRound
 
 
-class _CombRound(Round):
+class _CombRound:
     """Sample α, build the quirky eq table, and fold the constraint matrices into
     comb = α·(A₀ᵀ·eq_inner) ⊕ (B₀ᵀ·eq_inner) — dense or via a `CscCircuit`, with the
     optional const_pin +β. No proof message — writes comb onto the carry."""
@@ -214,13 +213,13 @@ class _CombRound(Round):
     def __call__(self, carry, transcript):
         k_skip = self._k_skip
         x_ab, circuit = carry.x_ab, carry.circuit
-        transcript.observe_label(LABEL)
-        alpha = transcript.sample_f128()
+        transcript = transcript.observe_label(LABEL)
+        transcript, alpha = transcript.sample_f128()
         eq_inner = build_quirky_eq_table(x_ab.z_skip, x_ab.x_inner_rest, k_skip)
         if circuit is not None:
             comb = circuit.fold_alpha_batched(alpha, eq_inner)
             if circuit.const_pin is not None:
-                beta = transcript.sample_f128()               # sampled AFTER alpha (flock order)
+                transcript, beta = transcript.sample_f128()   # sampled AFTER alpha (flock order)
                 col = circuit.const_pin
                 comb = comb.at[col].set(comb[col] + beta)
         else:
@@ -229,7 +228,7 @@ class _CombRound(Round):
         return replace(carry, comb=comb), transcript, None
 
 
-class _SumcheckRound(Round):
+class _SumcheckRound:
     """Partial-fold z at x_outer, then the (k_log − k_skip)-round product sumcheck
     binding the TOP bit. Message = (rounds, z_partial)."""
 
@@ -246,8 +245,9 @@ class _SumcheckRound(Round):
         rounds, r_rounds = [], []
         if inner_rest > 0:
             stacked = fnp.stack([comb, z_vec])
-            stacked, transcript._t, msgs = prove_inf_product(
-                stacked, transcript._t, inner_rest)
+            stacked, inner, msgs = prove_inf_product(
+                stacked, transcript.inner, inner_rest)
+            transcript = FlockTranscript(inner)
             for e1, einf, r in msgs:
                 rounds.append((e1, einf))
                 r_rounds.append(r)                            # native ghash fold challenge
@@ -260,7 +260,7 @@ class _SumcheckRound(Round):
         return carry, transcript, (rounds, z_partial)
 
 
-class _ClaimRound(Round):
+class _ClaimRound:
     """Claim derivation (flock prove_padded_inner steps 6-9): observe z_partial,
     sample a fresh z_skip, then w = ⟨φ8-weights(r_inner_skip), z_partial⟩ and the
     LSB-first r_inner_rest. Only in the capture chain. Message = the claim."""
@@ -270,8 +270,8 @@ class _ClaimRound(Round):
 
     def __call__(self, carry, transcript):
         k_skip = self._k_skip
-        transcript.observe_f128(carry.z_partial_g)      # 6. observe z_partial
-        r_inner_skip = transcript.sample_f128()               # 7. fresh z_skip AFTER
+        transcript = transcript.observe_f128(carry.z_partial_g)  # 6. observe z_partial
+        transcript, r_inner_skip = transcript.sample_f128()      # 7. fresh z_skip AFTER
         lam = _lagrange_weights(k_skip, r_inner_skip, 0)       # 8. φ8 S-domain weights
         w = fnp.sum(lam * carry.z_partial_g, axis=0)          # inner_product (ghash)
         r_inner_rest = list(reversed(carry.r_rounds))         # 9. LSB-first (ghash scalars)
@@ -283,32 +283,42 @@ class _ClaimRound(Round):
         return replace(carry, claim=claim), transcript, claim
 
 
-def lincheck_chain(m: int, k_log: int, k_skip: int, capture: bool) -> ProveChain:
-    """The lincheck sub-chain: comb → product sumcheck (→ claim, capture only).
-    One definition for the stage wiring (cf. zerocheck.zerocheck_chain). The
-    claim derivation is FS-bearing, so it joins the chain only when captured —
-    that is the exact transcript difference between the two return shapes."""
-    rounds = [_CombRound(k_skip), _SumcheckRound(m, k_log, k_skip, capture)]
-    if capture:
-        rounds.append(_ClaimRound(k_skip))
-    return ProveChain(rounds)
-
-
-def prove(z_packed_bytes, a_dense, b_dense, x_ab: AbClaimPoint, m: int, k_log: int,
-          k_skip: int, domain: bytes = b"flock-test-v0", ch: Challenger | None = None,
-          capture: bool = False, circuit: LincheckCircuit | None = None) -> LincheckProof:
+def prove(
+    z_packed_bytes,
+    a_dense,
+    b_dense,
+    x_ab: AbClaimPoint,
+    m: int,
+    k_log: int,
+    k_skip: int,
+    domain: bytes = b"flock-test-v0",
+    transcript: FlockTranscript | None = None,
+    capture: bool = False,
+    circuit: LincheckCircuit | None = None,
+) -> tuple[LincheckProof, FlockTranscript]:
     """Run lincheck. `x_ab` is an `AbClaimPoint` (z_skip:[2], x_inner_rest:[*,2],
     x_outer:[*,2]). Byte-identical to flock `lincheck::prove`/`prove_padded_capture_z_vec`.
 
-    A `lincheck_chain` of stage `Round`s (comb → sumcheck → claim) threading one
-    `Challenger`. `circuit`: a `CscCircuit` for real hash R1CS (sparse A₀/B₀ at
-    large k, with an optional const_pin +β column); when None, the dense
-    `a_dense`/`b_dense` path is used (small test R1CS). Returns a `LincheckProof`;
-    its `claim`/`z_vec_pre` are populated only with `capture=True` (the e2e fused
-    prover). Pass a shared `ch` to thread Fiat-Shamir; else a fresh Challenger(domain)."""
-    if ch is None:
-        ch = Challenger(domain)
-    carry, _ch, _msgs = lincheck_chain(m, k_log, k_skip, capture)(
-        _LincheckCarry(z_packed_bytes, a_dense, b_dense, x_ab, circuit), ch)
-    return LincheckProof(rounds=carry.rounds, z_partial=carry.z_partial,
-                         claim=carry.claim, z_vec_pre=carry.z_vec_pre)
+    The comb, product-sumcheck, and optional claim phases have different semantic
+    outputs, so their dataflow is explicit. `circuit`: a `CscCircuit` for real hash
+    R1CS (sparse A₀/B₀ at large k, with an optional const_pin +β column); when None,
+    the dense `a_dense`/`b_dense` path is used (small test R1CS). Returns a
+    `LincheckProof`; its `claim`/`z_vec_pre` are populated only with `capture=True`
+    (the e2e fused prover). The returned transcript is the only advanced state.
+    """
+    if transcript is None:
+        transcript = flock_transcript(domain)
+    carry = _LincheckCarry(z_packed_bytes, a_dense, b_dense, x_ab, circuit)
+    carry, transcript, _ = _CombRound(k_skip)(carry, transcript)
+    carry, transcript, _ = _SumcheckRound(
+        m, k_log, k_skip, capture
+    )(carry, transcript)
+    if capture:
+        carry, transcript, _ = _ClaimRound(k_skip)(carry, transcript)
+    proof = LincheckProof(
+        rounds=carry.rounds,
+        z_partial=carry.z_partial,
+        claim=carry.claim,
+        z_vec_pre=carry.z_vec_pre,
+    )
+    return proof, transcript

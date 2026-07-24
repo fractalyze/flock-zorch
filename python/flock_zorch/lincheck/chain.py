@@ -26,6 +26,7 @@ import frx
 import frx.numpy as fnp
 
 from flock_zorch import ghash
+from flock_zorch.challenger import FlockTranscript
 from flock_zorch.sumcheck import build_eq
 from flock_zorch.sumcheck.inf_product import prove_inf_product
 
@@ -42,11 +43,12 @@ class PackedDirectClaim:
 LOG_PACKING = ghash.LOG_PACKING  # 128 = 2^7 bits per packed F128 element
 
 
-def prove_chain_shift(in_vals, out_vals, ch):
+def prove_chain_shift(in_vals, out_vals, transcript: FlockTranscript):
     """flock `chain::prove_chain_shift`. in_vals/out_vals: (2^n, 2) F128 (already
     region-folded per instance). Threads τ, α, and the sumcheck challenges through
-    the shared challenger `ch`. Returns (rounds [(e1,einf)], g_at_point, claims)
-    where claims = {instance_point (n,2), sel0 (2,), value [ghash scalar]}."""
+    the returned transcript state. Returns ``(rounds, g_at_point, claims,
+    transcript)`` where claims contains ``instance_point``, ``sel0``, and
+    ``value``."""
     in_vals = fnp.asarray(in_vals).reshape(-1)   # ghash [n_total]
     out_vals = fnp.asarray(out_vals).reshape(-1)
     n_total = in_vals.shape[0]
@@ -54,8 +56,8 @@ def prove_chain_shift(in_vals, out_vals, ch):
     n = int(n_total).bit_length() - 1
 
     # τ ∈ Fⁿ then α — both before the sumcheck (mirrored by the verifier).
-    tau = ch.sample_f128(n)
-    alpha = ch.sample_f128()
+    transcript, tau = transcript.sample_f128(n)
+    transcript, alpha = transcript.sample_f128()
     eqtau = build_eq(tau)                       # eqtau[y] = eq(τ, y), ghash [n_total]
 
     # Weight table over (y, s₀), s₀ the HIGH bit (index y + s₀·N):
@@ -67,7 +69,8 @@ def prove_chain_shift(in_vals, out_vals, ch):
 
     # Product sumcheck Σ_{y,s₀} W·g over n+1 vars (round msg + fold == lincheck's).
     stacked = fnp.stack([wt, g])
-    stacked, ch._t, msgs = prove_inf_product(stacked, ch._t, n + 1)
+    stacked, inner, msgs = prove_inf_product(stacked, transcript.inner, n + 1)
+    transcript = FlockTranscript(inner)
     rounds = [(e1, einf) for e1, einf, _ in msgs]
     r_pts = [ghash.from_ghash_host(r).reshape(2) for _, _, r in msgs]
 
@@ -79,7 +82,7 @@ def prove_chain_shift(in_vals, out_vals, ch):
     for k, r in enumerate(r_pts):
         full[d - 1 - k] = r
     claims = {"instance_point": full[:n].copy(), "sel0": full[n].copy(), "value": value}
-    return rounds, value, claims
+    return rounds, value, claims, transcript
 
 
 def assemble_chain_claim(tau_pos, claims, k_log, region_log):

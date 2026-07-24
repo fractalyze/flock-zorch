@@ -6,7 +6,7 @@ flock side of both seams so the code-generic driver produces flock's byte wire:
 
 - `FlockTranscript`: zorch's functional `Transcript` protocol over the device
   SHA-256 substrate (`Sha256FieldTranscript`, the same one
-  `challenger.Challenger` wraps). Framing is flock's: an F128 observe is a
+  used by every Flock protocol. Framing is flock's: an F128 observe is a
   scalar-framed `observe_scalar` per element, a root a raw `observe_bytes`,
   one challenge a scalar squeeze and an n-vector a slice squeeze.
 - `FlockChoreography`: flock `pcs::ligerito`'s FS shape — the
@@ -28,10 +28,7 @@ zorch's folds, commits, and induces reproduce flock's bytes exactly (gate:
 """
 from __future__ import annotations
 
-import functools
 from dataclasses import dataclass
-
-from frx.tree_util import register_dataclass
 
 import frx.numpy as fnp
 import numpy as np
@@ -41,58 +38,11 @@ from zorch.coding.reed_solomon import ReedSolomon
 from zorch.pcs.ligerito.choreography import LigeritoChoreography
 from zorch.pcs.ligerito.config import LigeritoConfig
 from zorch.pcs.ligerito.prover import LigeritoProver, LigeritoProverData
-from zorch.sha256_field_transcript import Sha256FieldTranscript
-
 from flock_zorch import ghash, fs
+from flock_zorch.challenger import FlockTranscript, flock_transcript
 from flock_zorch.hash import merkle
 
 FLOCK_LIGERITO_LABEL = b"flock-ligerito-basis-v0"
-
-
-@functools.partial(register_dataclass, data_fields=["inner"], meta_fields=[])
-@dataclass(frozen=True)
-class FlockTranscript:
-    """zorch `Transcript` over flock's device SHA-256 transcript. A pytree, so
-    it threads jitted regions (the ligerito driver's fold level) as a carry.
-
-    `sample(1)` is a scalar squeeze and `sample(n>1)` a slice squeeze, matching
-    where the driver draws flock's `sample_f128` vs `sample_f128_vec` — the two
-    frame differently, so a config whose vector draws degenerate to width 1
-    (`queries[j] <= 2`, which makes the alpha draw 0- or 1-wide) is rejected by
-    `flock_ligerito_config` rather than silently mis-framed. An F128 observe is
-    per-element scalar framing (flock's `observe_f128` convention), a uint8
-    array an `observe_bytes`.
-    """
-
-    inner: Sha256FieldTranscript
-
-    @property
-    def has_dedicated_fusion(self) -> bool:
-        return self.inner.has_dedicated_fusion
-
-    def observe(self, values: Array) -> "FlockTranscript":
-        if values.dtype == fnp.uint8:
-            return FlockTranscript(fs.observe_bytes(self.inner, values))
-        if values.dtype != fnp.binary_field_ghash:
-            raise TypeError(f"no flock framing for observed dtype {values.dtype}")
-        return FlockTranscript(fs.observe_scalar(self.inner, values.reshape(-1)))
-
-    def sample(self, n: int = 1) -> tuple["FlockTranscript", Array]:
-        if n == 1:
-            inner, g = fs.sample_scalar(self.inner)
-            return FlockTranscript(inner), g.reshape(1)
-        inner, g = fs.sample_slice(self.inner, n)
-        return FlockTranscript(inner), g
-
-    def observe_and_sample(
-        self, values: Array, n: int = 1
-    ) -> tuple["FlockTranscript", Array]:
-        return self.observe(values).sample(n)
-
-
-def flock_transcript(domain: bytes) -> FlockTranscript:
-    """A fresh `FlockTranscript` seeded like flock's `FsChallenger`."""
-    return FlockTranscript(Sha256FieldTranscript.new(domain, fnp.binary_field_ghash))
 
 
 @dataclass(frozen=True)
@@ -323,23 +273,29 @@ def commit_flock_ligerito(cfg: dict, z_packed) -> tuple[np.ndarray, LigeritoProv
     return np.asarray(root), pdata
 
 
-def prove_flock_ligerito(cfg: dict, pdata: LigeritoProverData, b_combined, target, ch) -> dict:
-    """Drive `zorch.pcs.ligerito` over flock's shared challenger and assemble a
+def prove_flock_ligerito(
+    cfg: dict,
+    pdata: LigeritoProverData,
+    b_combined,
+    target,
+    transcript: FlockTranscript,
+) -> tuple[dict, FlockTranscript]:
+    """Drive `zorch.pcs.ligerito` over Flock's transcript and assemble a
     flock `LigeritoProof` dict — byte-identical to the retired in-tree
     `ligerito.recursive_prover_with_basis`.
 
     `pdata` is the `LigeritoProverData` from `commit_flock_ligerito` (the L0
     commit made once, in the commit phase); the open reuses it rather than
-    re-encoding L0. The Fiat-Shamir rides flock's live `ch` (bridged into a
-    `FlockTranscript` at its current state, written back after the open) so the
-    open continues the transcript the commit / zerocheck / lincheck phases
-    built."""
+    re-encoding L0. The returned transcript continues the state built by prior
+    protocol stages."""
     log_n = pdata.f.shape[0].bit_length() - 1
     prover, config, chor = _flock_ligerito_prover(cfg, log_n)
 
     b = _bitrev(b_combined)          # b_combined already native ghash [2^L]
     value = target                   # native ghash scalar
 
-    proof, t_open = prover.open_with_basis(pdata, b, value, FlockTranscript(ch._t))
-    ch._t = t_open.inner
-    return _flock_proof_dict(proof, np.asarray(pdata.initial.root), config, chor)
+    proof, transcript = prover.open_with_basis(pdata, b, value, transcript)
+    return (
+        _flock_proof_dict(proof, np.asarray(pdata.initial.root), config, chor),
+        transcript,
+    )

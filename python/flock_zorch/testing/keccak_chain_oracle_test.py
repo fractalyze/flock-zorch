@@ -2,7 +2,7 @@
 prove_chain (task #14, M4b). Proves 2^n keccaks form a sequential chain
 x_{i+1}=keccak_f(x_i) with public endpoints.
 
-Replays the full chain prover on one shared challenger:
+Replays the full chain prover on one explicitly threaded transcript:
   commit → bind → zerocheck → walker lincheck → τ_pos → region fold → shift
   sumcheck → MIXED open (ab,c ring-switched + chain packed-direct)
 and byte-compares the full ChainProofLigerito {zerocheck, lincheck, shift,
@@ -26,7 +26,7 @@ import frx.numpy as fnp  # noqa: E402
 from flock_zorch import zerocheck, lincheck, prover, ghash  # noqa: E402
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
 from flock_zorch.lincheck import chain  # noqa: E402
-from flock_zorch.challenger import Challenger  # noqa: E402
+from flock_zorch.challenger import flock_transcript  # noqa: E402
 from flock_zorch.lincheck.keccak import KeccakLincheckCircuit  # noqa: E402
 
 ART = Path(__file__).resolve().parents[3] / "artifacts"
@@ -92,23 +92,34 @@ def run():
     root, pdata = zorch_ligerito.commit_flock_ligerito(cfg, g["z"])
     results.append(("commit root", np.array_equal(root, g["root"])))
 
-    ch = Challenger(b"flock-keccak-chain-v0")
-    prover.bind_statement(ch, g["stmt"], root)
+    transcript = flock_transcript(b"flock-keccak-chain-v0")
+    transcript = prover.bind_statement(transcript, g["stmt"], root)
     a_bits, b_bits, c_bits = _unpack(g["a"], m), _unpack(g["b"], m), _unpack(g["z"], m)
-    zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch)
+    zc, transcript = zerocheck.prove_packed(
+        a_bits, b_bits, c_bits, m, transcript=transcript
+    )
     results.append(("zerocheck round1_ab", np.array_equal(ghash.to_lanes(zc.round1_ab), g["zc"]["r1ab"])))
     results.append(("zerocheck final_c", np.array_equal(ghash.to_lanes(zc.final_c_eval).reshape(2), g["zc"]["fc"])))
 
     circ = KeccakLincheckCircuit()
     x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, ir)
-    _lr, lc_zp, lc_claim, _zv = lincheck.prove(g["zlc"], None, None, x_ab, m, k_log, k_skip, ch=ch, capture=True, circuit=circ)
+    lp, transcript = lincheck.prove(
+        g["zlc"], None, None, x_ab, m, k_log, k_skip,
+        transcript=transcript, capture=True, circuit=circ
+    )
+    _lr, lc_zp, lc_claim, _zv = lp
     results.append(("lincheck z_partial", np.array_equal(ghash.to_lanes(lc_zp), g["lc"]["zp"])))
 
     # ---- chain: τ_pos → region fold → shift sumcheck → assemble packed-direct claim
-    tau_pos = ghash.from_ghash_host(ch.sample_f128(region_log - chain.LOG_PACKING))
+    transcript, tau_pos = transcript.sample_f128(
+        region_log - chain.LOG_PACKING
+    )
+    tau_pos = ghash.from_ghash_host(tau_pos)
     in_vals, out_vals = chain.fold_in_out(g["z"], k_log, tau_pos,
                                           meta["input_byte_off"], meta["output_byte_off"])
-    sh_rounds, _g_at, sh_claims = chain.prove_chain_shift(in_vals, out_vals, ch)
+    sh_rounds, _g_at, sh_claims, transcript = chain.prove_chain_shift(
+        in_vals, out_vals, transcript
+    )
     got_sr = np.array([np.concatenate([ghash.to_lanes(e1).reshape(2), ghash.to_lanes(ei).reshape(2)])
                        for e1, ei in sh_rounds]) if sh_rounds else np.zeros((0, 4), np.uint64)
     want_sr = np.array([np.concatenate([e1, ei]) for e1, ei in g["shift"]["rounds"]]) if g["shift"]["rounds"] else np.zeros((0, 4), np.uint64)
@@ -119,8 +130,9 @@ def run():
     # ---- mixed open: [ab, c] ring-switched + [chain] packed-direct
     ab_full = fnp.concatenate([lc_claim.r_inner_rest, x_ab.x_outer], axis=0)
     c_full = fnp.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
-    out = prover.open_batch_mixed_ligerito(cfg, g["z"], pdata,
-                                           [ab_full, c_full], [chain_claim], ch)
+    out, transcript = prover.open_batch_mixed_ligerito(
+        cfg, g["z"], pdata, [ab_full, c_full], [chain_claim], transcript
+    )
 
     for i in range(len(g["rs"])):
         results.append((f"open ring_switch[{i}]", np.array_equal(ghash.to_lanes(out.ring_switches[i]), g["rs"][i])))

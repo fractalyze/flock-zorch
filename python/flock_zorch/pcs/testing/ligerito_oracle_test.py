@@ -22,7 +22,7 @@ frx.config.update("jax_enable_x64", True)
 
 from flock_zorch import ghash  # noqa: E402
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
-from flock_zorch.challenger import Challenger  # noqa: E402
+from flock_zorch.challenger import flock_transcript  # noqa: E402
 
 ART = Path(__file__).resolve().parents[4] / "artifacts"
 
@@ -71,10 +71,11 @@ def run():
     results = []
 
     # The flock-zorch prove path → byte-gate every LigeritoProof field.
-    ch = Challenger(b"flock-ligerito-test")
+    ch = flock_transcript(b"flock-ligerito-test")
     _root, pdata = zorch_ligerito.commit_flock_ligerito(cfg, g["f"])
-    p = zorch_ligerito.prove_flock_ligerito(cfg, pdata, ghash.to_ghash(g["b"]),
-                                            ghash.to_ghash(g["target"]), ch)
+    p, _transcript = zorch_ligerito.prove_flock_ligerito(
+        cfg, pdata, ghash.to_ghash(g["b"]), ghash.to_ghash(g["target"]), ch
+    )
 
     def pairs(t): return np.array([np.concatenate([a, b]) for a, b in t]) if t else np.zeros((0, 4), np.uint64)
     def rows_eq(a, b): return len(a) == len(b) and all(np.array_equal(np.asarray(x), np.asarray(y)) for x, y in zip(a, b))

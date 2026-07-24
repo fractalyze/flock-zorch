@@ -18,7 +18,7 @@ from __future__ import annotations
 import frx
 
 from flock_zorch import fs, ghash, sumcheck
-from flock_zorch.challenger import Challenger
+from flock_zorch.challenger import FlockTranscript
 from zorch.pcs import ring_switch as zrs
 
 LOG_PACKING = ghash.LOG_PACKING
@@ -48,17 +48,19 @@ def _reduce_one(t, packed, x_outer):
     return t, s_hat_v, suffix_tensor, eq_r_dprime, claim       # claim native ghash
 
 
-def prove(packed_witness, x_outer, ch: Challenger):
+def prove(packed_witness, x_outer, transcript: FlockTranscript):
     """Returns (s_hat_v [128,2], rs_eq_ind [2^L] ghash, sumcheck_claim [ghash]).
     Byte-identical to flock `ring_switch::prove`."""
     packed = ghash.to_ghash(packed_witness)
-    # Thread the mutable Challenger's functional transcript through the jitted region.
-    ch._t, s_hat_v, suffix_tensor, eq_r_dprime, claim = _reduce_one(ch._t, packed, x_outer)
+    inner, s_hat_v, suffix_tensor, eq_r_dprime, claim = _reduce_one(
+        transcript.inner, packed, x_outer
+    )
+    transcript = FlockTranscript(inner)
     rs_eq_ind = zrs.rs_eq_ind(suffix_tensor, eq_r_dprime)
-    return s_hat_v, rs_eq_ind, claim                          # rs_eq_ind native ghash (the open's b)
+    return s_hat_v, rs_eq_ind, claim, transcript
 
 
-def prove_batched(packed_witness, x_outers, ch: Challenger):
+def prove_batched(packed_witness, x_outers, transcript: FlockTranscript):
     """Batched ring-switch over N opening points — byte-identical to flock
     `ring_switch::prove_batched_padded_with_precomputed`.
 
@@ -70,9 +72,13 @@ def prove_batched(packed_witness, x_outers, ch: Challenger):
     packed = ghash.to_ghash(packed_witness)
     works = []
     for x_outer in x_outers:
-        ch._t, *work = _reduce_one(ch._t, packed, x_outer)
-        works.append(work)                                    # [s_hat_v, suffix_tensor, eq_r_dprime, claim]
-    gammas = [ch.sample_f128() for _ in range(len(x_outers))]
+        inner, *work = _reduce_one(transcript.inner, packed, x_outer)
+        transcript = FlockTranscript(inner)
+        works.append(work)
+    gammas = []
+    for _ in x_outers:
+        transcript, gamma = transcript.sample_f128()
+        gammas.append(gamma)
 
     s_hat_vs, rs_eq_inds, sumcheck_claims = [], [], []
     for (s_hat_v, suffix_tensor, eq_r_dprime, claim), g in zip(works, gammas):
@@ -80,4 +86,4 @@ def prove_batched(packed_witness, x_outers, ch: Challenger):
         rs_eq_inds.append(zrs.rs_eq_ind(suffix_tensor, scaled))  # ghash [2^L], device-resident
         s_hat_vs.append(s_hat_v)
         sumcheck_claims.append(claim)
-    return s_hat_vs, rs_eq_inds, sumcheck_claims, gammas
+    return s_hat_vs, rs_eq_inds, sumcheck_claims, gammas, transcript

@@ -2,7 +2,7 @@
 the HEADLINE blake3 path, mirroring sha2_ligerito_oracle_test.py.
 
 Ingests dump_blake3_ligerito (real blake3 R1CS + Ligerito config + full
-R1csProofLigerito), replays flock-zorch's prover on one shared challenger
+R1csProofLigerito), replays flock-zorch's prover on one explicitly threaded transcript
 (commit → bind → zerocheck → CSC lincheck → batched Ligerito open) and
 byte-compares every field of the R1csProofLigerito. BLAKE3 mirrors sha2: its
 a_0/b_0 are populated sparse matrices folded by the generic `CscCircuit`.
@@ -25,7 +25,7 @@ import frx.numpy as fnp  # noqa: E402
 from flock_zorch import ghash  # noqa: E402
 from flock_zorch import zerocheck, lincheck, prover  # noqa: E402
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
-from flock_zorch.challenger import Challenger  # noqa: E402
+from flock_zorch.challenger import flock_transcript  # noqa: E402
 
 ART = Path(__file__).resolve().parents[3] / "artifacts"
 
@@ -89,21 +89,28 @@ def run():
     root, pdata = zorch_ligerito.commit_flock_ligerito(cfg, g["z"])
     results.append(("commit root", np.array_equal(root, g["root"])))
 
-    ch = Challenger(b"flock-blake3-lig-v0")
-    prover.bind_statement(ch, g["stmt"], root)
+    transcript = flock_transcript(b"flock-blake3-lig-v0")
+    transcript = prover.bind_statement(transcript, g["stmt"], root)
     a_bits, b_bits, c_bits = g["a"], g["b"], g["z"]  # packed F128 — witness_to_rows unpacks on device
-    zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch)
+    zc, transcript = zerocheck.prove_packed(
+        a_bits, b_bits, c_bits, m, transcript=transcript
+    )
     results.append(("zerocheck round1_ab", np.array_equal(zc.round1_ab, g["zc"]["r1ab"])))
     results.append(("zerocheck final_c", np.array_equal(zc.final_c_eval, g["zc"]["fc"])))
 
     csc = lincheck.CscCircuit(g["a0_rows"], g["b0_rows"], 1 << k_log, const_pin=meta["const_pin"])
     x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, ir)
-    _lr, lc_zp, lc_claim, _zv = lincheck.prove(g["zlc"], None, None, x_ab, m, k_log, k_skip, ch=ch, capture=True, circuit=csc)
+    lp, transcript = lincheck.prove(
+        g["zlc"], None, None, x_ab, m, k_log, k_skip,
+        transcript=transcript, capture=True, circuit=csc)
+    _lr, lc_zp, lc_claim, _zv = lp
     results.append(("lincheck z_partial", np.array_equal(ghash.to_lanes(lc_zp), g["lc"]["zp"])))
 
     ab_full = fnp.concatenate([lc_claim.r_inner_rest, x_ab.x_outer], axis=0)
     c_full = fnp.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
-    out = prover.open_batch_ligerito(cfg, g["z"], pdata, [ab_full, c_full], ch)
+    out, transcript = prover.open_batch_ligerito(
+        cfg, g["z"], pdata, [ab_full, c_full], transcript
+    )
 
     for i in range(len(g["rs"])):
         results.append((f"open ring_switch[{i}]", np.array_equal(ghash.to_lanes(out.ring_switches[i]), g["rs"][i])))

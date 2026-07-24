@@ -2,7 +2,7 @@
 sumcheck (chain.prove_chain_shift) and the region fold (chain.fold_in_out) — the
 two new prover pieces of the keccak hash-CHAIN protocol.
   Gate A: prove_chain_shift on dumped In/Out → ChainShiftProof rounds/g_at_point
-          + ChainClaims (instance_point, sel0, value), on a shared challenger.
+          + ChainClaims (instance_point, sel0, value), on an explicitly threaded transcript.
   Gate B: fold_in_out on a dumped packed witness + τ_pos → (in_vals, out_vals).
 
 Run (regen: cargo run --release --example dump_chain_shift -- artifacts/chain_shift_golden.bin):
@@ -20,7 +20,7 @@ frx.config.update("jax_enable_x64", True)
 
 from flock_zorch import ghash  # noqa: E402
 from flock_zorch.lincheck import chain  # noqa: E402
-from flock_zorch.challenger import Challenger  # noqa: E402
+from flock_zorch.challenger import flock_transcript  # noqa: E402
 
 ART = Path(__file__).resolve().parents[4] / "artifacts"
 
@@ -49,9 +49,11 @@ def run():
     ga, gb = load()
     results = []
 
-    # ---- Gate A: shift sumcheck on a fresh shared challenger.
-    ch = Challenger(b"flock-chain-shift-v0")
-    rounds, g_at, claims = chain.prove_chain_shift(ghash.to_ghash(ga["in_vals"]), ghash.to_ghash(ga["out_vals"]), ch)
+    # ---- Gate A: shift sumcheck on a fresh transcript.
+    ch = flock_transcript(b"flock-chain-shift-v0")
+    rounds, g_at, claims, _transcript = chain.prove_chain_shift(
+        ghash.to_ghash(ga["in_vals"]), ghash.to_ghash(ga["out_vals"]), ch
+    )
     got_r = np.array([np.concatenate([ghash.to_lanes(e1).reshape(2), ghash.to_lanes(ei).reshape(2)])
                       for e1, ei in rounds]) if rounds else np.zeros((0, 4), np.uint64)
     want_r = np.array([np.concatenate([e1, ei]) for e1, ei in ga["rounds"]]) if ga["rounds"] else np.zeros((0, 4), np.uint64)
