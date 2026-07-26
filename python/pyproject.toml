@@ -1,5 +1,6 @@
-# Type-check config only — nothing here is built or pip-installed. The package is
-# consumed off PYTHONPATH (PYTHONPATH=python), like accumulation-zorch.
+# Type-check config only — no [project] table, so no build backend ever reads it.
+# The packaging manifest is the repo-root pyproject.toml, which points
+# setuptools at this directory (`where = ["python"]`).
 [tool.mypy]
 files = ["flock_zorch"]
 python_version = "3.11"

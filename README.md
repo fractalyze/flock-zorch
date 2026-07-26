@@ -27,6 +27,41 @@ round-1 URM, the ∞-trick round loop, F128↔bytes serialization). The full pro
 zerocheck → lincheck → batched dual-claim open, one shared challenger,
 device-resident — reproducing flock `prove`'s proof bit-for-bit.
 
+## Installation
+
+**Python 3.11 on Linux x86_64 only.**
+
+Run with `JAX_ENABLE_X64=true` — the GF(2¹²⁸) dtypes are 64-bit lane pairs and
+x32 truncates them.
+
+### CPU
+
+```sh
+pip install flock-zorch
+```
+
+### GPU (CUDA 12)
+
+```sh
+pip install flock-zorch 'frx[cuda12]' \
+    --extra-index-url https://fractalyze.github.io/pypi/simple/
+```
+
+The extra index carries the CUDA plugin wheels, which are too large for PyPI's
+per-file limit. It is not needed for the CPU tier.
+
+### Verify
+
+```sh
+JAX_ENABLE_X64=true python -c \
+    "import frx, flock_zorch.prover; print(frx.devices()); print(flock_zorch.__version__)"
+```
+
+`[CpuDevice(id=0)]` means the CPU tier; a CUDA install prints the GPU devices.
+Importing `flock_zorch.prover` rather than the package is deliberate: the package
+`__init__` is a docstring, so a bare import stays green on an x32 interpreter and
+on a `zk-dtypes` too old for the binary-field dtypes.
+
 ## Setup
 
 No submodules and nothing to clone by hand — both pinned deps are fetched by the
@@ -34,18 +69,17 @@ build:
 
 | dep | how |
 |---|---|
-| **flock** — the reference prover + byte-compare oracle | a cargo **git rev dep** (`flock-core` / `flock-prover` in [`Cargo.toml`](Cargo.toml)); `cargo build` fetches it at the pinned rev, and `examples/dump_*.rs` drive it to dump the golden fixtures |
-| **zorch** — the scheme-agnostic spine (`zorch.hash.sha256`, the device Fiat-Shamir transcript, the `Round`/`Bridge`/`Stage` chain roles, `pcs.ligerito`) | a bazel **`git_override`** in [`MODULE.bazel`](MODULE.bazel); bazel fetches it |
+| **flock** — the reference prover + byte-compare oracle | a cargo **git rev dep** (`flock-core` / `flock-prover` in [`Cargo.toml`](https://github.com/fractalyze/flock-zorch/blob/main/Cargo.toml)); `cargo build` fetches it at the pinned rev, and `examples/dump_*.rs` drive it to dump the golden fixtures |
+| **zorch** — the scheme-agnostic spine (`zorch.hash.sha256`, the device Fiat-Shamir transcript, the `Round`/`Bridge`/`Stage` chain roles, `pcs.ligerito`) | a bazel **`git_override`** in [`MODULE.bazel`](https://github.com/fractalyze/flock-zorch/blob/main/MODULE.bazel); bazel fetches it |
 
 **Prerequisites** — an NVIDIA GPU (CUDA; RTX 5090 / sm_120 reference), a Rust
-toolchain (`flock-core` is edition 2024), Python 3.11, and SSH access to
-`fractalyze/zorch` (bazel clones it). For the GPU fast path, a **CUDA 13.3
+toolchain (`flock-core` is edition 2024), Python 3.11. For the GPU fast path, a **CUDA 13.3
 `ptxas`** at `~/.local/cuda13/bin`: with it on `PATH` the pinned frx wheel's
 compiler emits the hardware `clmad` GF(2¹²⁸) multiply; without it, the software
 `binary_field_ghash` multiply — same output, just slower.
 
 ```bash
-git clone git@github.com:fractalyze/flock-zorch.git && cd flock-zorch
+git clone https://github.com/fractalyze/flock-zorch.git && cd flock-zorch
 ```
 
 Reproduction has three tiers with independent deps: a **Rust toolchain**
@@ -63,8 +97,8 @@ python3.11 -m venv .venv
 ### Bumping the pins
 
 - **flock** — bump the `rev` on the `flock-core` / `flock-prover` git deps in
-  [`Cargo.toml`](Cargo.toml); cargo re-fetches on the next build.
-- **zorch** — bump the `git_override` commit in [`MODULE.bazel`](MODULE.bazel),
+  [`Cargo.toml`](https://github.com/fractalyze/flock-zorch/blob/main/Cargo.toml); cargo re-fetches on the next build.
+- **zorch** — bump the `git_override` commit in [`MODULE.bazel`](https://github.com/fractalyze/flock-zorch/blob/main/MODULE.bazel),
   and move `requirements.in`'s `frx` / `frxlib` / `frx-cuda12` wheels to the SAME
   version as zorch's own `requirements.in` — the binary-field GPU kernels must
   match, and CPU-only CI can't catch a desync.
