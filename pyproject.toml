@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flock-zorch"
+dynamic = ["version"]
+description = "flock-zorch — a GPU prover for flock's binary-field R1CS PIOP, built on zorch's scheme-agnostic blocks."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "The Flock-Zorch Authors" }]
+# frxlib ships a single cp311 wheel and no sdist, so no other interpreter can
+# resolve the tree. This floor matches the sibling repos rather than capping at
+# <3.12: pip then reports a missing frxlib rather than a Requires-Python
+# rejection, which is worse, but a cap here that the siblings lack would be its
+# own trap. Track it with them, not separately.
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+]
+# pyzorch is the PyPI distribution of `zorch` (the bare `zorch` name on PyPI
+# belongs to an unrelated pytorch helper); the import package stays `zorch`, and
+# 13 non-testing modules import it at module top level.
+#
+# zk-dtypes is declared even though frx already requires it, because
+# zerocheck/_urm.py dereferences `zk_dtypes.binary_field_gf8_aes` at module scope
+# on the main prover import path, and that attribute only exists from 0.0.10.
+# requirements.in records that the transitive resolve lags behind the frx wheel,
+# so leaning on frx's floor for an attribute we read directly is a coincidence,
+# not a contract. frxlib is left out — nothing here imports it.
+#
+# The `.dev0` floor on frx stays compatible with the exact dev build
+# requirements.in pins; a plain `>=0.10.0` would reject it, since 0.10.0.devN
+# sorts below 0.10.0.
+#
+# absl-py is absent on purpose: it appears only under the excluded testing
+# packages, so declaring it would make every consumer install it for nothing.
+#
+# The frx-cuda12-* plugins are GPU-only and come from the Fractalyze index.
+dependencies = [
+    "numpy",
+    "pyzorch>=0.1.0",
+    "frx>=0.10.0.dev0",
+    "zk-dtypes>=0.0.10",
+]
+
+[project.urls]
+Repository = "https://github.com/fractalyze/flock-zorch"
+
+[tool.setuptools.dynamic]
+version = { attr = "flock_zorch.__version__" }
+
+# The package lives under python/, not at the repo root — the root also holds the
+# Rust golden-file generator (Cargo.toml, src/, examples/), which must stay out of
+# the distribution.
+[tool.setuptools.packages.find]
+where = ["python"]
+include = ["flock_zorch*"]
+# Both globs are load-bearing: `flock_zorch.testing*` alone catches only the
+# top-level testing package, leaving the nested `*/testing/` oracle gates (and
+# the hundreds-of-MB goldens they expect) in the wheel.
+exclude = ["flock_zorch.testing*", "flock_zorch.*.testing*"]
