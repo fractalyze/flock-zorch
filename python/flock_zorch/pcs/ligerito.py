@@ -75,6 +75,13 @@ class FlockTranscript:
     inner: Sha256FieldTranscript
 
     @property
+    def field(self):
+        """The field one `sample` word is drawn from — GHASH, from the wrapped
+        transcript. Part of zorch's `Transcript` seam; without it this adapter
+        does not satisfy the protocol it exists to implement."""
+        return self.inner.field
+
+    @property
     def has_dedicated_fusion(self) -> bool:
         return self.inner.has_dedicated_fusion
 
