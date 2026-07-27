@@ -28,6 +28,7 @@ from zorch.coding.reed_solomon import ReedSolomon  # noqa: E402
 from zorch.pcs.ligerito.config import LigeritoConfig  # noqa: E402
 from zorch.pcs.ligerito.prover import LigeritoProver  # noqa: E402
 from zorch.pcs.ligerito.verifier import LigeritoVerifier  # noqa: E402
+from zorch.pcs.stage import OpeningClaim, OpeningWitness  # noqa: E402
 from zorch.poly.multilinear import eval_mle  # noqa: E402
 
 from flock_zorch.challenger import Challenger  # noqa: E402
@@ -213,17 +214,19 @@ def test_round_trip_ghash():
     f = _rand_ghash(7, 1 << config.num_vars)
     z = _rand_ghash(11, config.num_vars)
     root, pdata = prover.commit([f])
-    value, proof, t_open = prover.open(pdata, [z], flock_transcript(DOMAIN))
+    claim = OpeningClaim(root, [z])
+    opened = prover.prove(claim, OpeningWitness(pdata), flock_transcript(DOMAIN))
+    value, proof = opened.reduction_proof.values, opened.reduction_proof.proof
     check("value = f(z)", np.array_equal(_lohi(value), _lohi(eval_mle(f, z))))
     check(
         "eager wire counts",
         len(proof.sumcheck_messages) == chor.num_messages(config)
         and len(proof.pow_witnesses) == chor.num_pow_witnesses(config),
     )
-    ok, t_verify = verifier.verify(root, [z], value, proof, flock_transcript(DOMAIN))
-    check("verify ok", bool(ok))
-    _, s_open = t_open.sample(1)
-    _, s_verify = t_verify.sample(1)
+    verified = verifier.verify(claim, opened.reduction_proof, flock_transcript(DOMAIN))
+    check("verify ok", bool(verified.ok))
+    _, s_open = opened.transcript.sample(1)
+    _, s_verify = verified.transcript.sample(1)
     check("FS lockstep", np.array_equal(_lohi(s_open), _lohi(s_verify)))
 
 

@@ -1,5 +1,5 @@
 """flock's fused R1CS prover (`prover::prove` / `prove_fast_core`), authored in
-frx — byte-identical to flock-core. A zorch `ProveChain` of Stages threading ONE
+frx — byte-identical to flock-core. A sequence of stages threading ONE
 shared SHA-256 challenger with device-resident state (no per-phase host
 re-transfer): commit+bind → zerocheck → lincheck → batched PCS open (see
 `prove_fast`).
@@ -18,7 +18,7 @@ import frx
 import frx.numpy as fnp
 import numpy as np
 from frx import Array
-from zorch.round import ProveChain, Stage
+from zorch.round import prove_rounds
 
 from flock_zorch import ghash, lincheck, zerocheck
 from flock_zorch.challenger import Challenger  # noqa: F401  (re-exported for callers)
@@ -169,7 +169,7 @@ class _ProveCarry:
     )
 
 
-class _CommitStage(Stage):
+class _CommitStage:
     """Commit ẑ through the Ligerito commit (`commit_flock_ligerito`), then bind the
     transcript to the statement (flock `bind_statement`): the trace-commit Stage
     (commit + preamble absorb). Message = the root."""
@@ -183,7 +183,7 @@ class _CommitStage(Stage):
         return replace(carry, pdata=pdata), transcript, root
 
 
-class _ZerocheckStage(Stage):
+class _ZerocheckStage:
     """R1CS zerocheck on the identity witness (a = b = c = ẑ). Message = the
     zerocheck proof/claim dict, also threaded onto the carry for later stages."""
 
@@ -197,7 +197,7 @@ class _ZerocheckStage(Stage):
         return replace(carry, zc=zc), transcript, zc
 
 
-class _LincheckStage(Stage):
+class _LincheckStage:
     """Lincheck reducing a = A·z, b = B·z to the ab evaluation claim at the
     zerocheck challenge point. Message = (rounds, z_partial); writes the ab claim
     onto the carry."""
@@ -228,7 +228,7 @@ class _LincheckStage(Stage):
         return replace(carry, lc_claim=lp.claim), transcript, (lp.rounds, lp.z_partial)
 
 
-class _PcsOpenStage(Stage):
+class _PcsOpenStage:
     """Batched dual-claim PCS open of the ab + c claims — the final stage. ab
     point = lincheck r_inner_rest ++ zerocheck x_outer; c point = the zerocheck
     r_rest. Message = the BatchOpeningProof dict."""
@@ -272,7 +272,7 @@ def prove_fast(
     domain: bytes = b"flock-test-v0",
 ) -> ProveFastResult:
     """Fused single-call R1CS prover on the Ligerito PCS, byte-identical to flock
-    `prover::prove_fast_ligerito`. A zorch `ProveChain` of Stages threading one
+    `prover::prove_fast_ligerito`. A sequence of stages threading one
     shared challenger + a `_ProveCarry` (no per-phase host re-transfer): Ligerito
     commit+bind → zerocheck → lincheck → batched dual-claim Ligerito open. `cfg` is
     the flock Ligerito config; `circuit` a `LincheckCircuit` for real hash R1CS
@@ -286,14 +286,16 @@ def prove_fast(
         a0=a0,
         b0=b0,
     )
-    carry, _ch, msgs = ProveChain(
+    carry, _ch, msgs = prove_rounds(
         [
             _CommitStage(cfg),
             _ZerocheckStage(m),
             _LincheckStage(m, k_log, k_skip, circuit),
             _PcsOpenStage(cfg, k_log, k_skip),
-        ]
-    )(carry, ch)
+        ],
+        carry,
+        ch,
+    )
     _root, zc, (lc_rounds, lc_zp), pcs_open_proof = msgs
     # _LincheckStage always sets the claim before _PcsOpenStage consumes it, so
     # the optional carry field is populated by the time the chain returns.

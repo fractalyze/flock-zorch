@@ -24,7 +24,7 @@ from typing import Any
 import frx
 import frx.numpy as fnp
 import numpy as np
-from zorch.round import ProveChain, Round
+from zorch.round import prove_rounds
 from zorch.sumcheck.domain import fold
 
 from flock_zorch import ghash, sumcheck
@@ -137,7 +137,7 @@ def _observe_finals(t, final_a, final_b):
 _EQ_TABLES = frx.jit(sumcheck.build_eq_suffix_tables)
 
 
-class _SetupRound(Round):
+class _SetupRound:
     """Sample the challenge vector r and fix the inner-7 constants (small ++
     medium). No proof message — writes r onto the carry."""
 
@@ -154,7 +154,7 @@ class _SetupRound(Round):
         return replace(carry, r=r), transcript, None
 
 
-class _UrmRound(Round):
+class _UrmRound:
     """Round-1 univariate-skip URM (== wire round1_ab/round1_c): F8-NTT extend +
     a·b + φ8-accumulate on the GPU, then the c-claim interpolation at z. Message
     = (round1_ab, round1_c)."""
@@ -195,7 +195,7 @@ class _UrmRound(Round):
         return carry, transcript, (round1_ab, round1_c)
 
 
-class _MultilinearRound(Round):
+class _MultilinearRound:
     """The multilinear sumcheck over the m − k_skip outer variables: fold the
     witness at z, then bind each remaining variable (round message + fold),
     finishing at ρ_last. Message = (rounds, final_a_eval, final_b_eval)."""
@@ -241,13 +241,11 @@ class _MultilinearRound(Round):
         return carry, transcript, (rounds, final_a_eval, final_b_eval)
 
 
-def zerocheck_chain(m: int, k_skip: int) -> ProveChain:
-    """The zerocheck sub-chain: setup → round-1 URM → multilinear sumcheck. One
-    definition for the stage wiring (cf. prover.prove_fast / sp1-zorch
-    prove_shard_chain)."""
-    return ProveChain(
-        [_SetupRound(m, k_skip), _UrmRound(m, k_skip), _MultilinearRound(m, k_skip)]
-    )
+def zerocheck_steps(m: int, k_skip: int) -> list:
+    """The zerocheck sub-sequence: setup → round-1 URM → multilinear sumcheck.
+    One definition for the wiring (cf. prover.prove_fast). Drive with
+    ``zorch.round.prove_rounds``."""
+    return [_SetupRound(m, k_skip), _UrmRound(m, k_skip), _MultilinearRound(m, k_skip)]
 
 
 def prove_packed(
@@ -261,7 +259,7 @@ def prove_packed(
     """Returns a `ZerocheckProof` (proof fields + the claim's z / mlv_challenges /
     r_rest, the latter for the oracle's localization cross-checks).
 
-    A `zerocheck_chain` of stage `Round`s (setup → URM → multilinear) threading one
+    A `zerocheck_steps` sequence (setup → URM → multilinear) threading one
     `Challenger`; pass a shared `ch` (the e2e challenger carrying commit/bind state)
     to thread Fiat-Shamir through the fused prover, else a fresh Challenger(domain)
     is made."""
@@ -270,8 +268,8 @@ def prove_packed(
     if ch is None:
         assert domain is not None, "pass either a domain or a Challenger"
         ch = Challenger(domain)
-    carry, _ch, _msgs = zerocheck_chain(m, k_skip)(
-        _ZerocheckCarry(a_bits, b_bits, c_bits), ch
+    carry, _ch, _msgs = prove_rounds(
+        zerocheck_steps(m, k_skip), _ZerocheckCarry(a_bits, b_bits, c_bits), ch
     )
     return ZerocheckProof(
         round1_ab=carry.round1_ab,

@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 import frx.numpy as fnp
-from zorch.round import Round, VerifyChain
+from zorch.round import verify_rounds
 from zorch.sumcheck.domain import fold
 
 from flock_zorch import ghash
@@ -41,14 +41,14 @@ class _VerifyCarry:
     claim: Any = None
 
 
-class _CombVerifyRound(Round):
+class _CombVerifyRound:
     """Sample α, rebuild comb = α·(A₀ᵀ·eq) ⊕ (B₀ᵀ·eq) from the public matrices, and
     seed the running claim α·v_a + v_b. No message."""
 
     def __init__(self, k_skip: int):
         self._k_skip = k_skip
 
-    def __call__(self, carry, msg, transcript):
+    def __call__(self, carry, transcript, msg):
         transcript.observe_label(LABEL)
         alpha = transcript.sample_f128()
         eq_inner = build_quirky_eq_table(
@@ -61,13 +61,13 @@ class _CombVerifyRound(Round):
         return replace(carry, comb=comb, running=running), transcript, True
 
 
-class _SumcheckVerifyRound(Round):
+class _SumcheckVerifyRound:
     """Replay the ∞-product sumcheck, folding comb at each challenge; `ok` iff the
     reduced running claim equals ⟨comb_partial, z_partial⟩.
     Message = (rounds, z_partial).
     """
 
-    def __call__(self, carry, msg, transcript):
+    def __call__(self, carry, transcript, msg):
         rounds, z_partial = msg
         comb, running, r_rounds = carry.comb, carry.running, []
         for e1, einf in rounds:
@@ -85,7 +85,7 @@ class _SumcheckVerifyRound(Round):
         return replace(carry, r_rounds=r_rounds, z_partial=z_partial), transcript, ok
 
 
-class _ClaimVerifyRound(Round):
+class _ClaimVerifyRound:
     """Observe z_partial, sample the fresh inner z_skip, derive
     w = ⟨φ8(z_skip), z_partial⟩
     and the LSB-first inner-rest challenges. No message."""
@@ -93,7 +93,7 @@ class _ClaimVerifyRound(Round):
     def __init__(self, k_skip: int):
         self._k_skip = k_skip
 
-    def __call__(self, carry, msg, transcript):
+    def __call__(self, carry, transcript, msg):
         transcript.observe_f128(carry.z_partial)
         r_inner_skip = transcript.sample_f128()
         w = fnp.sum(_lagrange_weights(self._k_skip, r_inner_skip, 0) * carry.z_partial)
@@ -103,11 +103,9 @@ class _ClaimVerifyRound(Round):
         return replace(carry, claim=claim), transcript, True
 
 
-def lincheck_verify_chain(k_skip: int) -> VerifyChain:
-    """comb → product sumcheck → claim, the verify side of `lincheck_chain`."""
-    return VerifyChain(
-        [_CombVerifyRound(k_skip), _SumcheckVerifyRound(), _ClaimVerifyRound(k_skip)]
-    )
+def lincheck_verify_steps(k_skip: int) -> list:
+    """comb → product sumcheck → claim, the verify side of `lincheck_steps`."""
+    return [_CombVerifyRound(k_skip), _SumcheckVerifyRound(), _ClaimVerifyRound(k_skip)]
 
 
 def verify(m, k_log, k_skip, a_dense, b_dense, x_ab, v_a, v_b, proof, transcript):
@@ -124,5 +122,7 @@ def verify(m, k_log, k_skip, a_dense, b_dense, x_ab, v_a, v_b, proof, transcript
 
     carry = _VerifyCarry(a_dense, b_dense, x_ab, v_a, v_b, k_skip)
     msgs = [None, (proof.rounds, proof.z_partial), None]
-    carry, transcript, ok = lincheck_verify_chain(k_skip)(carry, msgs, transcript)
+    carry, transcript, ok = verify_rounds(
+        lincheck_verify_steps(k_skip), carry, msgs, transcript
+    )
     return carry.claim, transcript, ok

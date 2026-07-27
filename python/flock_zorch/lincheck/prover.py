@@ -25,7 +25,7 @@ from typing import Any, NamedTuple, Protocol, runtime_checkable
 import frx
 import frx.numpy as fnp
 import numpy as np
-from zorch.round import ProveChain, Round
+from zorch.round import prove_rounds
 
 from flock_zorch import ghash
 from flock_zorch.challenger import Challenger
@@ -209,7 +209,7 @@ class _LincheckCarry:
     claim: Any = None  # ← _ClaimRound
 
 
-class _CombRound(Round):
+class _CombRound:
     """Sample α, build the quirky eq table, and fold the constraint matrices into
     comb = α·(A₀ᵀ·eq_inner) ⊕ (B₀ᵀ·eq_inner) — dense or via a `CscCircuit`, with the
     optional const_pin +β. No proof message — writes comb onto the carry."""
@@ -236,7 +236,7 @@ class _CombRound(Round):
         return replace(carry, comb=comb), transcript, None
 
 
-class _SumcheckRound(Round):
+class _SumcheckRound:
     """Partial-fold z at x_outer, then the (k_log − k_skip)-round product sumcheck
     binding the TOP bit. Message = (rounds, z_partial)."""
 
@@ -267,7 +267,7 @@ class _SumcheckRound(Round):
         return carry, transcript, (rounds, z_partial)
 
 
-class _ClaimRound(Round):
+class _ClaimRound:
     """Claim derivation (flock prove_padded_inner steps 6-9): observe z_partial,
     sample a fresh z_skip, then w = ⟨φ8-weights(r_inner_skip), z_partial⟩ and the
     LSB-first r_inner_rest. FS-bearing (one observe + one draw). Message = the
@@ -295,12 +295,11 @@ class _ClaimRound(Round):
         return replace(carry, claim=claim), transcript, claim
 
 
-def lincheck_chain(m: int, k_log: int, k_skip: int) -> ProveChain:
-    """The lincheck sub-chain: comb → product sumcheck → claim. One definition
-    for the stage wiring (cf. zerocheck.zerocheck_chain)."""
-    return ProveChain(
-        [_CombRound(k_skip), _SumcheckRound(m, k_log, k_skip), _ClaimRound(k_skip)]
-    )
+def lincheck_steps(m: int, k_log: int, k_skip: int) -> list:
+    """The lincheck sub-sequence: comb → product sumcheck → claim. One definition
+    for the wiring (cf. zerocheck.zerocheck_steps). Drive with
+    ``zorch.round.prove_rounds``."""
+    return [_CombRound(k_skip), _SumcheckRound(m, k_log, k_skip), _ClaimRound(k_skip)]
 
 
 def prove(
@@ -319,15 +318,17 @@ def prove(
     x_outer:[*,2]). Byte-identical to flock `prove_padded_capture_z_vec` — the
     claim-bearing entry point, the only one anything downstream consumes.
 
-    A `lincheck_chain` of stage `Round`s (comb → sumcheck → claim) threading one
+    A `lincheck_steps` sequence (comb → sumcheck → claim) threading one
     `Challenger`. `circuit`: a `CscCircuit` for real hash R1CS (sparse A₀/B₀ at
     large k, with an optional const_pin +β column); when None, the dense
     `a_dense`/`b_dense` path is used (small test R1CS). Returns a `LincheckProof`.
     Pass a shared `ch` to thread Fiat-Shamir; else a fresh Challenger(domain)."""
     if ch is None:
         ch = Challenger(domain)
-    carry, _ch, _msgs = lincheck_chain(m, k_log, k_skip)(
-        _LincheckCarry(z_packed_bytes, a_dense, b_dense, x_ab, circuit), ch
+    carry, _ch, _msgs = prove_rounds(
+        lincheck_steps(m, k_log, k_skip),
+        _LincheckCarry(z_packed_bytes, a_dense, b_dense, x_ab, circuit),
+        ch,
     )
     return LincheckProof(
         rounds=carry.rounds, z_partial=carry.z_partial, claim=carry.claim
