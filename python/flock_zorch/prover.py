@@ -314,11 +314,9 @@ class FlockProver(ProverStage[R1csClaim, R1csWitness, TrivialClaim, ProveFastRes
     """flock's R1CS prover: the Ligerito commit, then two reductions, then the
     batched open.
 
-    A composite role, so the wiring has one definition and `prove_fast` and the
-    oracle gates cannot drift on it. The zerocheck and lincheck each reduce the
-    previous claim; the PCS brackets them, binding ẑ up front and discharging
-    the final opening claim at the end, with `LigeritoCommitData` held here in
-    between because it belongs to neither claim.
+    One definition of the wiring, so `prove_fast` and the oracle gates cannot
+    drift on it. `LigeritoCommitData` is held here between the PCS halves
+    because it belongs to neither claim.
     """
 
     def __init__(self, cfg, m, k_log, k_skip, circuit=None):
