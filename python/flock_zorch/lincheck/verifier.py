@@ -11,6 +11,8 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 import frx.numpy as fnp
+from zorch.round import Round, VerifyChain
+from zorch.sumcheck.domain import fold
 
 from flock_zorch import ghash
 from flock_zorch.lincheck.prover import (
@@ -20,8 +22,6 @@ from flock_zorch.lincheck.prover import (
     fold_alpha_batched,
 )
 from flock_zorch.zerocheck import _lagrange_weights
-from zorch.round import Round, VerifyChain
-from zorch.sumcheck.domain import fold
 
 _EMPTY_G = ghash.to_ghash(fnp.zeros((0, 2), fnp.uint64))
 
@@ -51,16 +51,21 @@ class _CombVerifyRound(Round):
     def __call__(self, carry, msg, transcript):
         transcript.observe_label(LABEL)
         alpha = transcript.sample_f128()
-        eq_inner = build_quirky_eq_table(carry.x_ab.z_skip, carry.x_ab.x_inner_rest, self._k_skip)
+        eq_inner = build_quirky_eq_table(
+            carry.x_ab.z_skip, carry.x_ab.x_inner_rest, self._k_skip
+        )
         comb = fold_alpha_batched(
-            alpha, fnp.asarray(carry.a_dense), fnp.asarray(carry.b_dense), eq_inner)
+            alpha, fnp.asarray(carry.a_dense), fnp.asarray(carry.b_dense), eq_inner
+        )
         running = alpha * carry.v_a + carry.v_b
         return replace(carry, comb=comb, running=running), transcript, True
 
 
 class _SumcheckVerifyRound(Round):
     """Replay the ∞-product sumcheck, folding comb at each challenge; `ok` iff the
-    reduced running claim equals ⟨comb_partial, z_partial⟩. Message = (rounds, z_partial)."""
+    reduced running claim equals ⟨comb_partial, z_partial⟩.
+    Message = (rounds, z_partial).
+    """
 
     def __call__(self, carry, msg, transcript):
         rounds, z_partial = msg
@@ -69,7 +74,8 @@ class _SumcheckVerifyRound(Round):
             transcript.observe_f128(e1)
             transcript.observe_f128(einf)
             r = transcript.sample_f128()
-            # q(X) = einf·X² + c1·X + e0 through (q(0),q(1),q(∞)); q(0)=claim+q(1) in char 2.
+            # q(X) = einf·X² + c1·X + e0 through (q(0),q(1),q(∞));
+            # q(0)=claim+q(1) in char 2.
             e0 = running + e1
             c1 = e0 + e1 + einf
             running = einf * r * r + c1 * r + e0
@@ -80,7 +86,8 @@ class _SumcheckVerifyRound(Round):
 
 
 class _ClaimVerifyRound(Round):
-    """Observe z_partial, sample the fresh inner z_skip, derive w = ⟨φ8(z_skip), z_partial⟩
+    """Observe z_partial, sample the fresh inner z_skip, derive
+    w = ⟨φ8(z_skip), z_partial⟩
     and the LSB-first inner-rest challenges. No message."""
 
     def __init__(self, k_skip: int):
@@ -98,7 +105,9 @@ class _ClaimVerifyRound(Round):
 
 def lincheck_verify_chain(k_skip: int) -> VerifyChain:
     """comb → product sumcheck → claim, the verify side of `lincheck_chain`."""
-    return VerifyChain([_CombVerifyRound(k_skip), _SumcheckVerifyRound(), _ClaimVerifyRound(k_skip)])
+    return VerifyChain(
+        [_CombVerifyRound(k_skip), _SumcheckVerifyRound(), _ClaimVerifyRound(k_skip)]
+    )
 
 
 def verify(m, k_log, k_skip, a_dense, b_dense, x_ab, v_a, v_b, proof, transcript):
@@ -107,7 +116,9 @@ def verify(m, k_log, k_skip, a_dense, b_dense, x_ab, v_a, v_b, proof, transcript
     on a malformed proof shape."""
     inner_rest = k_log - k_skip
     if len(proof.rounds) != inner_rest:
-        raise ValueError(f"expected {inner_rest} sumcheck rounds, got {len(proof.rounds)}")
+        raise ValueError(
+            f"expected {inner_rest} sumcheck rounds, got {len(proof.rounds)}"
+        )
     if proof.z_partial.shape[0] != (1 << k_skip):
         raise ValueError(f"z_partial must have length 2^k_skip = {1 << k_skip}")
 

@@ -1,19 +1,20 @@
 """Device CSC (column-sparse) fold for `lincheck.CscCircuit` — the perf machinery
-kept out of lincheck/prover.py so its protocol reads top-to-bottom. The transposed binary
-matvec out[c] = XOR_{r:M[r,c]=1} eq[r] is a column-segmented XOR-reduce: sort the
-flat nonzeros by column ONCE (host), then per fold run a device prefix-XOR scan +
-segment diff + clean scatter-set — no atomics, so the skewed const_pin column is
-not a hotspot. Byte-identical to a host scatter.
+kept out of lincheck/prover.py so its protocol reads top-to-bottom. The
+transposed binary matvec out[c] = XOR_{r:M[r,c]=1} eq[r] is a column-segmented
+XOR-reduce: sort the flat nonzeros by column ONCE (host), then per fold run a
+device prefix-XOR scan + segment diff + clean scatter-set — no atomics, so the
+skewed const_pin column is not a hotspot. Byte-identical to a host scatter.
 
 Requires jax_enable_x64.
 """
+
 from __future__ import annotations
 
 import functools
 
-import numpy as np
 import frx
 import frx.numpy as fnp
+import numpy as np
 
 from flock_zorch import ghash
 
@@ -44,7 +45,7 @@ def _csc_segments(col, row):
     row_s = row[order].astype(np.int32)
     change = np.empty(len(col_s), dtype=bool)
     change[-1] = True
-    change[:-1] = col_s[1:] != col_s[:-1]            # run boundaries (last-of-run)
+    change[:-1] = col_s[1:] != col_s[:-1]  # run boundaries (last-of-run)
     seg_end = np.nonzero(change)[0].astype(np.int32)
     present = col_s[seg_end].astype(np.int32)
     return fnp.asarray(row_s), fnp.asarray(seg_end), fnp.asarray(present)
@@ -56,9 +57,11 @@ def _seg_xor_fold(eq, row_sorted, seg_end, present, k):
     sorted prefix-XOR scan. Inclusive prefix-XOR P over the column-sorted gathered
     values; each column's reduce = P[seg_end] XOR P[prev seg_end] (XOR is its own
     inverse), scattered (set, no duplicates) into the dense [k,2] output."""
-    vals = eq[row_sorted]                                          # ghash [nnz]
-    pref = frx.lax.associative_scan(lambda a, b: a + b, vals, axis=0)  # inclusive prefix XOR (ghash add)
-    ends = pref[seg_end]                                           # cumulative through each run end
+    vals = eq[row_sorted]  # ghash [nnz]
+    pref = frx.lax.associative_scan(
+        lambda a, b: a + b, vals, axis=0
+    )  # inclusive prefix XOR (ghash add)
+    ends = pref[seg_end]  # cumulative through each run end
     prev = fnp.concatenate([ghash.zeros(1), ends[:-1]], axis=0)
-    seg = ends + prev                                            # per-column XOR-reduce (add is its own inverse)
+    seg = ends + prev  # per-column XOR-reduce (add is its own inverse)
     return ghash.zeros(k).at[present].set(seg)

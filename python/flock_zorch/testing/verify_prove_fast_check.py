@@ -14,8 +14,8 @@ from __future__ import annotations
 import dataclasses
 import sys
 
-import numpy as np
 import frx
+import numpy as np
 
 frx.config.update("jax_enable_x64", True)
 
@@ -25,9 +25,16 @@ from flock_zorch.pcs import ligerito as zlig  # noqa: E402
 from flock_zorch.pcs.pack import pack_witness, pack_z_lincheck_from_packed  # noqa: E402
 
 _M, _K_LOG, _K_SKIP, _DOMAIN = 13, 8, 6, b"flock-verify-check"
-_CFG = dict(initial_k=2, recursive_ks=[2], log_inv_rates=[1, 2], queries=[4, 3],
-            grinding_bits=[1, 0], fold_grinding_bits=[1, 0], ood_samples=[0, 1],
-            recursive_steps=1)
+_CFG = dict(
+    initial_k=2,
+    recursive_ks=[2],
+    log_inv_rates=[1, 2],
+    queries=[4, 3],
+    grinding_bits=[1, 0],
+    fold_grinding_bits=[1, 0],
+    ood_samples=[0, 1],
+    recursive_steps=1,
+)
 
 
 def _flip(x):
@@ -37,8 +44,11 @@ def _flip(x):
 
 
 def _verify(res, root, eye, stmt):
-    return bool(verifier.verify(_CFG, root, stmt, res, eye, eye, _M, _K_LOG, _K_SKIP,
-                                Challenger(_DOMAIN)))
+    return bool(
+        verifier.verify(
+            _CFG, root, stmt, res, eye, eye, _M, _K_LOG, _K_SKIP, Challenger(_DOMAIN)
+        )
+    )
 
 
 def main() -> int:
@@ -48,8 +58,9 @@ def main() -> int:
     eye = np.eye(1 << _K_LOG, dtype=np.uint64)
     stmt = bytes(range(32))
 
-    res = prover.prove_fast(z_packed, _M, _K_LOG, _K_SKIP, eye, eye, z_lincheck, stmt,
-                            _CFG, domain=_DOMAIN)
+    res = prover.prove_fast(
+        z_packed, _M, _K_LOG, _K_SKIP, eye, eye, z_lincheck, stmt, _CFG, domain=_DOMAIN
+    )
     root = zlig.commit_flock_ligerito(_CFG, z_packed)[0]
 
     ok = True
@@ -58,7 +69,9 @@ def main() -> int:
     print(f"  {'PASS' if accept else 'FAIL'}  accept honest proof")
 
     # Tamper the zerocheck claim → the sumcheck chain rejects.
-    zc_bad = dataclasses.replace(res.zerocheck, final_a_eval=_flip(res.zerocheck.final_a_eval))
+    zc_bad = dataclasses.replace(
+        res.zerocheck, final_a_eval=_flip(res.zerocheck.final_a_eval)
+    )
     t1 = not _verify(dataclasses.replace(res, zerocheck=zc_bad), root, eye, stmt)
     ok = ok and t1
     print(f"  {'PASS' if t1 else 'FAIL'}  reject tampered zerocheck eval")

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import frx.numpy as fnp
+from zorch.pcs import ring_switch as zrs
 
 from flock_zorch import ghash, sumcheck
 from flock_zorch.lincheck import verifier as lincheck_verifier
@@ -20,7 +21,6 @@ from flock_zorch.pcs import ligerito as zorch_ligerito
 from flock_zorch.pcs import ring_switch
 from flock_zorch.prover import bind_statement
 from flock_zorch.zerocheck import verifier as zerocheck_verifier
-from zorch.pcs import ring_switch as zrs
 
 
 @dataclass(frozen=True)
@@ -39,14 +39,22 @@ def verify_core(cfg, root, statement, zc_proof, lc_proof, a0, b0, m, k_log, k_sk
     bind_statement(ch, statement, root)
     zc, _, ok1 = zerocheck_verifier.verify(m, zc_proof, ch)
     ir = k_log - k_skip
-    x_ab = AbClaimPoint(z_skip=zc.z, x_inner_rest=zc.mlv_challenges[:ir],
-                        x_outer=zc.mlv_challenges[ir:])
-    lc, _, ok2 = lincheck_verifier.verify(m, k_log, k_skip, a0, b0, x_ab,
-                                          zc.a_eval, zc.b_eval, lc_proof, ch)
-    ab = _ZClaim(z_skip=lc.r_inner_skip,
-                 x_full=fnp.concatenate([lc.r_inner_rest, x_ab.x_outer]), value=lc.w)
-    c = _ZClaim(z_skip=zc.z,
-                x_full=fnp.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]]), value=zc.c_eval)
+    x_ab = AbClaimPoint(
+        z_skip=zc.z, x_inner_rest=zc.mlv_challenges[:ir], x_outer=zc.mlv_challenges[ir:]
+    )
+    lc, _, ok2 = lincheck_verifier.verify(
+        m, k_log, k_skip, a0, b0, x_ab, zc.a_eval, zc.b_eval, lc_proof, ch
+    )
+    ab = _ZClaim(
+        z_skip=lc.r_inner_skip,
+        x_full=fnp.concatenate([lc.r_inner_rest, x_ab.x_outer]),
+        value=lc.w,
+    )
+    c = _ZClaim(
+        z_skip=zc.z,
+        x_full=fnp.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]]),
+        value=zc.c_eval,
+    )
     return ab, c, ok1 & ok2
 
 
@@ -58,7 +66,8 @@ def verify_claims_ligerito(cfg, root, claims, pcs_open, ch):
     ok = True
     for claim, s_hat_v in zip(claims, pcs_open.ring_switches):
         sc, eq_r_dprime, ok_i = ring_switch.verify(
-            claim.value, claim.z_skip, claim.x_full, s_hat_v, ch)
+            claim.value, claim.z_skip, claim.x_full, s_hat_v, ch
+        )
         reduced.append((sc, eq_r_dprime, claim.x_full))
         ok = ok & ok_i
     gammas = [ch.sample_f128() for _ in claims]
@@ -67,18 +76,22 @@ def verify_claims_ligerito(cfg, root, claims, pcs_open, ch):
     b_combined = None
     for (sc, eq_r_dprime, x_full), g in zip(reduced, gammas):
         target = target + g * sc
-        b_i = zrs.rs_eq_ind(sumcheck.build_eq(x_full[1:]), g * eq_r_dprime)  # γ baked in
+        b_i = zrs.rs_eq_ind(
+            sumcheck.build_eq(x_full[1:]), g * eq_r_dprime
+        )  # γ baked in
         b_combined = b_i if b_combined is None else b_combined + b_i
 
     ok_lig = zorch_ligerito.verify_flock_ligerito(
-        cfg, root, b_combined, target, pcs_open.ligerito_obj, ch)
+        cfg, root, b_combined, target, pcs_open.ligerito_obj, ch
+    )
     return ok & ok_lig
 
 
 def verify(cfg, root, statement, res, a0, b0, m, k_log, k_skip, ch):
     """Verify a `prove_fast` result. Returns the scalar `ok`."""
     lc_proof = LincheckProof(rounds=res.lincheck[0], z_partial=res.lincheck[1])
-    ab, c, ok_core = verify_core(cfg, root, statement, res.zerocheck, lc_proof,
-                                 a0, b0, m, k_log, k_skip, ch)
+    ab, c, ok_core = verify_core(
+        cfg, root, statement, res.zerocheck, lc_proof, a0, b0, m, k_log, k_skip, ch
+    )
     ok_open = verify_claims_ligerito(cfg, root, [ab, c], res.pcs_open, ch)
     return ok_core & ok_open

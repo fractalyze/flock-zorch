@@ -8,8 +8,8 @@ from __future__ import annotations
 import dataclasses
 import functools
 
-import numpy as np
 import frx
+import numpy as np
 
 frx.config.update("jax_enable_x64", True)
 
@@ -31,7 +31,9 @@ def _witness(m: int, seed: int):
     nbytes = (1 << m) // 8
 
     def bits():
-        return np.unpackbits(rng.integers(0, 256, nbytes, dtype=np.uint8), bitorder="little")
+        return np.unpackbits(
+            rng.integers(0, 256, nbytes, dtype=np.uint8), bitorder="little"
+        )
 
     a, b = bits(), bits()
     return a, b, a & b  # honest witness: a·b = c
@@ -67,8 +69,9 @@ class ZerocheckVerifyTest(parameterized.TestCase):
         lanes = _lanes(proof.final_a_eval).copy().reshape(2)
         lanes[0] ^= np.uint64(1)
         bad_a = ghash.to_ghash(frx.numpy.asarray(lanes))
-        _, _, ok_bad = verifier.verify(m, dataclasses.replace(proof, final_a_eval=bad_a),
-                                       Challenger(DOMAIN))
+        _, _, ok_bad = verifier.verify(
+            m, dataclasses.replace(proof, final_a_eval=bad_a), Challenger(DOMAIN)
+        )
         self.assertFalse(bool(ok_bad))
 
 

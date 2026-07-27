@@ -17,15 +17,18 @@ forces a device->host materialization — `to_lanes` is the byte-gate readers'
 compare-edge lift, and the only remaining host crossing inside a prove is the
 challenger's SHA-256 byte serde. Requires `jax_enable_x64`.
 """
+
 from __future__ import annotations
 
-import numpy as np
 import frx
 import frx.numpy as fnp
+import numpy as np
 
 U64 = fnp.uint64
 
-LOG_PACKING = 7  # an F128 packs 2^7 = 128 bits; witness log-size m -> 2^(m-7) packed elems
+LOG_PACKING = (
+    7  # an F128 packs 2^7 = 128 bits; witness log-size m -> 2^(m-7) packed elems
+)
 
 _GHASH = fnp.binary_field_ghash
 
@@ -39,7 +42,10 @@ def to_ghash(a):
 
 
 def from_ghash(g):
-    """`binary_field_ghash [...]` -> uint64 `[..., 2]` (lo, hi). Inverse of `to_ghash`."""
+    """`binary_field_ghash [...]` -> uint64 `[..., 2]` (lo, hi).
+
+    Inverse of `to_ghash`.
+    """
     return frx.lax.bitcast_convert_type(g, U64)
 
 
@@ -73,6 +79,9 @@ def _lanes_to_ghash(lanes) -> np.ndarray:
 
 
 def _ghash_to_lanes(g) -> np.ndarray:
-    """Host `binary_field_ghash [...]` -> `uint64 [..., 2]`. Inverse of `_lanes_to_ghash`."""
+    """Host `binary_field_ghash [...]` -> `uint64 [..., 2]`.
+
+    Inverse of `_lanes_to_ghash`.
+    """
     g = np.asarray(g)
     return g.reshape(-1).view(np.uint64).reshape(*g.shape, 2)

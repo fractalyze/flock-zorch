@@ -17,13 +17,13 @@ The round message + fold are the shared ∞-product round
 packed-direct PCS open consumes (the `ChainProof` assembly).
 """
 
-from dataclasses import dataclass
 import functools
+from dataclasses import dataclass
 from typing import Any
 
-import numpy as np
 import frx
 import frx.numpy as fnp
+import numpy as np
 
 from flock_zorch import ghash
 from flock_zorch.sumcheck import build_eq
@@ -39,6 +39,7 @@ class PackedDirectClaim:
     point: Any
     value: Any
 
+
 LOG_PACKING = ghash.LOG_PACKING  # 128 = 2^7 bits per packed F128 element
 
 
@@ -48,7 +49,7 @@ def prove_chain_shift(in_vals, out_vals, ch):
     challenges through the shared challenger `ch`. Returns (rounds [(e1,einf)],
     g_at_point, claims) where claims = {instance_point: ghash (n,), sel0: ghash
     scalar, value: ghash scalar} — device-resident for `assemble_chain_claim`."""
-    in_vals = fnp.asarray(in_vals).reshape(-1)   # ghash [n_total]
+    in_vals = fnp.asarray(in_vals).reshape(-1)  # ghash [n_total]
     out_vals = fnp.asarray(out_vals).reshape(-1)
     n_total = in_vals.shape[0]
     assert out_vals.shape[0] == n_total and (n_total & (n_total - 1)) == 0
@@ -57,14 +58,16 @@ def prove_chain_shift(in_vals, out_vals, ch):
     # τ ∈ Fⁿ then α — both before the sumcheck (mirrored by the verifier).
     tau = ch.sample_f128(n)
     alpha = ch.sample_f128()
-    eqtau = build_eq(tau)                       # eqtau[y] = eq(τ, y), ghash [n_total]
+    eqtau = build_eq(tau)  # eqtau[y] = eq(τ, y), ghash [n_total]
 
     # Weight table over (y, s₀), s₀ the HIGH bit (index y + s₀·N):
     #   W(y,0) = shift(τ,y) + α·eq(y,0ⁿ) = eqtau[y-1] (y≥1), α at y==0
     #   W(y,1) = eq(τ,y) = eqtau[y]
-    w_lo = fnp.concatenate([alpha.reshape(1), eqtau[:n_total - 1]])  # [α, eqtau[0..N-2]]
-    wt = fnp.concatenate([w_lo, eqtau])                             # [2·N]
-    g = fnp.concatenate([in_vals, out_vals])                        # [In ‖ Out]
+    w_lo = fnp.concatenate(
+        [alpha.reshape(1), eqtau[: n_total - 1]]
+    )  # [α, eqtau[0..N-2]]
+    wt = fnp.concatenate([w_lo, eqtau])  # [2·N]
+    g = fnp.concatenate([in_vals, out_vals])  # [In ‖ Out]
 
     # Product sumcheck Σ_{y,s₀} W·g over n+1 vars (round msg + fold == lincheck's).
     stacked = fnp.stack([wt, g])
@@ -74,7 +77,7 @@ def prove_chain_shift(in_vals, out_vals, ch):
     # After n+1 folds g[0] = g(τ',s₀*). Build the point: full[d-1-k]=r_k (bit
     # d-1 = s₀, the HIGH bit), i.e. the fold challenges reversed — native ghash,
     # no host lift; τ' = full[:n], s₀* = full[n].
-    value = stacked[1].reshape(())              # native ghash scalar
+    value = stacked[1].reshape(())  # native ghash scalar
     full = fnp.stack([fnp.reshape(r, ()) for _, _, r in reversed(msgs)])
     claims = {"instance_point": full[:n], "sel0": full[n], "value": value}
     return rounds, value, claims
@@ -87,12 +90,15 @@ def assemble_chain_claim(tau_pos, claims, k_log, region_log):
     the PCS opens ẑ at this point (its eq_ind == build_eq(point), what
     build_eq_sparse computes), so it never needs to leave the device."""
     high = k_log - region_log - 1
-    point = fnp.concatenate([
-        fnp.reshape(tau_pos, (-1,)),
-        fnp.reshape(claims["sel0"], (1,)),
-        ghash.zeros(high),
-        fnp.reshape(claims["instance_point"], (-1,)),
-    ], axis=0)
+    point = fnp.concatenate(
+        [
+            fnp.reshape(tau_pos, (-1,)),
+            fnp.reshape(claims["sel0"], (1,)),
+            ghash.zeros(high),
+            fnp.reshape(claims["instance_point"], (-1,)),
+        ],
+        axis=0,
+    )
     return PackedDirectClaim(point=point, value=claims["value"])
 
 
@@ -110,7 +116,9 @@ def fold_in_out(packed, k_log, tau_pos, input_byte_off, output_byte_off):
     out_base = (output_byte_off * 8) >> LOG_PACKING
     assert packed.shape[0] % block_packed == 0
     n_inst = packed.shape[0] // block_packed
-    pk = ghash.to_ghash(fnp.asarray(packed).reshape(n_inst, block_packed, 2))  # (n_inst, block_packed)
+    pk = ghash.to_ghash(
+        fnp.asarray(packed).reshape(n_inst, block_packed, 2)
+    )  # (n_inst, block_packed)
     return _fold_in_out_core(pk, tau_pos, in_base, out_base, n_packed)
 
 
@@ -118,9 +126,9 @@ def fold_in_out(packed, k_log, tau_pos, input_byte_off, output_byte_off):
 def _fold_in_out_core(pk, tau_pos, in_base, out_base, n_packed):
     """The device half of `fold_in_out`: build eq(τ) and the two eq-weighted region
     sums in one jitted kernel. `build_eq` is in-kernel (no `build_eq_fused`)."""
-    eq_tau = build_eq(tau_pos)                                   # (n_packed,) ghash
-    in_reg = pk[:, in_base:in_base + n_packed]                   # (n_inst, n_packed)
-    out_reg = pk[:, out_base:out_base + n_packed]
-    in_vals = fnp.sum(in_reg * eq_tau[None], axis=1)            # (n_inst,) ghash
+    eq_tau = build_eq(tau_pos)  # (n_packed,) ghash
+    in_reg = pk[:, in_base : in_base + n_packed]  # (n_inst, n_packed)
+    out_reg = pk[:, out_base : out_base + n_packed]
+    in_vals = fnp.sum(in_reg * eq_tau[None], axis=1)  # (n_inst,) ghash
     out_vals = fnp.sum(out_reg * eq_tau[None], axis=1)
     return in_vals, out_vals

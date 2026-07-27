@@ -11,12 +11,12 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 import frx.numpy as fnp
+from zorch.poly.univariate import compute_lagrange_basis
+from zorch.round import Round, VerifyChain
 
 from flock_zorch import ghash
 from flock_zorch.zerocheck import _urm
-from flock_zorch.zerocheck.prover import K_SKIP, LABEL, N_INNER, _MEDIUM_G, _SMALL_G
-from zorch.poly.univariate import compute_lagrange_basis
-from zorch.round import Round, VerifyChain
+from flock_zorch.zerocheck.prover import _MEDIUM_G, _SMALL_G, K_SKIP, LABEL, N_INNER
 
 _ONE_G = ghash.to_ghash(fnp.array([1, 0], fnp.uint64))
 
@@ -32,7 +32,7 @@ def _lagrange_at_z(nodes_g, values_g, zg):
     `values_g` aligns with the LAST len(values_g) nodes: the Λ half of the combined
     Λ∪S set, or all of the plain Λ set."""
     w = compute_lagrange_basis(zg, nodes_g)
-    return fnp.sum(w[nodes_g.shape[0] - values_g.shape[0]:] * values_g)
+    return fnp.sum(w[nodes_g.shape[0] - values_g.shape[0] :] * values_g)
 
 
 @dataclass(frozen=True)
@@ -91,8 +91,8 @@ class _UrmVerifyRound(Round):
         transcript.observe_f128(c)
         z = transcript.sample_f128()
 
-        lam = ghash.to_ghash(fnp.asarray(_urm.PHI_8_TABLE[ell:2 * ell]))  # Λ nodes
-        full = ghash.to_ghash(fnp.asarray(_urm.PHI_8_TABLE[:2 * ell]))    # Λ∪S nodes
+        lam = ghash.to_ghash(fnp.asarray(_urm.PHI_8_TABLE[ell : 2 * ell]))  # Λ nodes
+        full = ghash.to_ghash(fnp.asarray(_urm.PHI_8_TABLE[: 2 * ell]))  # Λ∪S nodes
         p_c_at_z = _lagrange_at_z(lam, c, z)
         # AB running claim: interpolate the combined poly (zero on S) over Λ∪S at z,
         # then P^{AB}(z) = combined(z) + P^C(z).
@@ -125,16 +125,28 @@ class _MultilinearVerifyRound(Round):
             c_running = g0 * one_plus_rho + g1 * rho + g_inf * rho * one_plus_rho
 
         ok = c_running == final_a * final_b
-        transcript.observe_f128(final_a)  # bind finals at the prover's position (before α)
+        transcript.observe_f128(
+            final_a
+        )  # bind finals at the prover's position (before α)
         transcript.observe_f128(final_b)
-        carry = replace(carry, mlv_challenges=fnp.stack(rhos), a_eval=final_a, b_eval=final_b)
+        carry = replace(
+            carry, mlv_challenges=fnp.stack(rhos), a_eval=final_a, b_eval=final_b
+        )
         return carry, transcript, ok
 
 
 def zerocheck_verify_chain(m: int, k_skip: int) -> VerifyChain:
-    """setup → round-1 URM → multilinear sumcheck, the verify side of `zerocheck_chain`."""
-    return VerifyChain([_SetupVerifyRound(m, k_skip), _UrmVerifyRound(m, k_skip),
-                        _MultilinearVerifyRound(m, k_skip)])
+    """setup → round-1 URM → multilinear sumcheck.
+
+    The verify side of `zerocheck_chain`.
+    """
+    return VerifyChain(
+        [
+            _SetupVerifyRound(m, k_skip),
+            _UrmVerifyRound(m, k_skip),
+            _MultilinearVerifyRound(m, k_skip),
+        ]
+    )
 
 
 def verify(m: int, proof, transcript):
@@ -155,9 +167,15 @@ def verify(m: int, proof, transcript):
         (proof.round1_ab, proof.round1_c, proof.final_c_eval),
         (proof.multilinear_rounds, proof.final_a_eval, proof.final_b_eval),
     ]
-    carry, transcript, ok = zerocheck_verify_chain(m, k_skip)(_VerifyCarry(), msgs, transcript)
+    carry, transcript, ok = zerocheck_verify_chain(m, k_skip)(
+        _VerifyCarry(), msgs, transcript
+    )
     claim = ZerocheckClaim(
-        z=carry.z, mlv_challenges=carry.mlv_challenges, r_rest=carry.r_rest,
-        a_eval=carry.a_eval, b_eval=carry.b_eval, c_eval=carry.c_eval,
+        z=carry.z,
+        mlv_challenges=carry.mlv_challenges,
+        r_rest=carry.r_rest,
+        a_eval=carry.a_eval,
+        b_eval=carry.b_eval,
+        c_eval=carry.c_eval,
     )
     return claim, transcript, ok

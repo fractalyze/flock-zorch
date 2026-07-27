@@ -16,13 +16,14 @@ old zero-pad-to-2ℓ + size-2ℓ NTT + discard-half trick.
 
 Requires jax_enable_x64.
 """
+
 from __future__ import annotations
 
 import functools
 
-import numpy as np
 import frx
 import frx.numpy as fnp
+import numpy as np
 import zk_dtypes
 from frx import lax
 
@@ -34,16 +35,19 @@ from flock_zorch import ghash, sumcheck
 # flock's PHI_8_TABLE transitively by the proof-level byte gates.
 # ---------------------------------------------------------------------------
 
-_PHI8_BASIS = np.array([
-    [0x0000000000000001, 0x0000000000000000],  # phi8(0x01)
-    [0x6B8330483C2E9849, 0x0DCB364640A222FE],  # phi8(0x02)
-    [0x7573DA4A5F7710ED, 0x3D5BD35C94646A24],  # phi8(0x04)
-    [0x41A12DB1F974F3AC, 0x6D58C4E181F9199F],  # phi8(0x08)
-    [0x5E2F716F4EDE412F, 0xA72EC17764D7CED5],  # phi8(0x10)
-    [0x5CB10FBABCF00118, 0x4D52354A3A3D8C86],  # phi8(0x20)
-    [0x95ED1F57F3632D4D, 0x553E92E8BC0AE9A7],  # phi8(0x40)
-    [0x512625B1F09FA87E, 0x93252331BF042B11],  # phi8(0x80)
-], dtype=np.uint64)
+_PHI8_BASIS = np.array(
+    [
+        [0x0000000000000001, 0x0000000000000000],  # phi8(0x01)
+        [0x6B8330483C2E9849, 0x0DCB364640A222FE],  # phi8(0x02)
+        [0x7573DA4A5F7710ED, 0x3D5BD35C94646A24],  # phi8(0x04)
+        [0x41A12DB1F974F3AC, 0x6D58C4E181F9199F],  # phi8(0x08)
+        [0x5E2F716F4EDE412F, 0xA72EC17764D7CED5],  # phi8(0x10)
+        [0x5CB10FBABCF00118, 0x4D52354A3A3D8C86],  # phi8(0x20)
+        [0x95ED1F57F3632D4D, 0x553E92E8BC0AE9A7],  # phi8(0x40)
+        [0x512625B1F09FA87E, 0x93252331BF042B11],  # phi8(0x80)
+    ],
+    dtype=np.uint64,
+)
 
 
 def _build_phi8_table() -> np.ndarray:
@@ -60,7 +64,9 @@ def _build_phi8_table() -> np.ndarray:
 PHI_8_TABLE = _build_phi8_table()  # uint64 [256, 2] = F128 (host; `_fold` indexes it)
 
 _PHI_DEV = fnp.asarray(PHI_8_TABLE)
-_PHI_DEV_G = ghash.to_ghash(_PHI_DEV)        # [256] ghash — indexed in-kernel, no lane bitcast
+_PHI_DEV_G = ghash.to_ghash(
+    _PHI_DEV
+)  # [256] ghash — indexed in-kernel, no lane bitcast
 _AES = np.dtype(zk_dtypes.binary_field_gf8_aes)
 
 
@@ -87,7 +93,7 @@ def _round1_core(a, b, c, k_skip, r):
     eq-accumulate — all in ONE jit kernel so the large [N,ell,2] φ8 intermediate is
     consumed in-fusion and never written to HBM (halves round1's bandwidth vs the
     separate extend + accumulate). `build_eq` is in-kernel (no `build_eq_fused`)."""
-    eqx = sumcheck.build_eq(r[k_skip:])[:, None]           # r is ghash [m]; [n_chunks, 1]
+    eqx = sumcheck.build_eq(r[k_skip:])[:, None]  # r is ghash [m]; [n_chunks, 1]
     a_l = _extend_rows(a, k_skip)
     b_l = _extend_rows(b, k_skip)
     c_l = _to_u8(_extend_rows(c, k_skip))
@@ -109,7 +115,7 @@ def _packed_to_rows(packed, m: int, k_skip: int):
     bi = fnp.arange(64, dtype=fnp.uint64)
     lo = ((packed[:, 0:1] >> bi) & fnp.uint64(1)).astype(fnp.uint8)
     hi = ((packed[:, 1:2] >> bi) & fnp.uint64(1)).astype(fnp.uint8)
-    bits = fnp.concatenate([lo, hi], axis=1).reshape(-1)        # [2^m]
+    bits = fnp.concatenate([lo, hi], axis=1).reshape(-1)  # [2^m]
     return bits.reshape(1 << (m - k_skip), 1 << k_skip)
 
 
@@ -125,8 +131,14 @@ def witness_to_rows(bits, m: int, k_skip: int):
     on device (8x less host transfer, the preferred form); a uint8 [2^m] (0/1) bit
     array (transferred once); or an already-device array (reshaped, no copy)."""
     n_chunks, ell = 1 << (m - k_skip), 1 << k_skip
-    if getattr(bits, "ndim", 0) == 2 and bits.shape[-1] == 2 and np.dtype(bits.dtype) == np.uint64:
-        return _packed_to_rows(fnp.asarray(bits), m, k_skip)   # packed F128 -> device unpack
+    if (
+        getattr(bits, "ndim", 0) == 2
+        and bits.shape[-1] == 2
+        and np.dtype(bits.dtype) == np.uint64
+    ):
+        return _packed_to_rows(
+            fnp.asarray(bits), m, k_skip
+        )  # packed F128 -> device unpack
     if isinstance(bits, frx.Array):
         return bits.reshape(n_chunks, ell)
     return fnp.asarray(np.asarray(bits, np.uint8).reshape(n_chunks, ell))

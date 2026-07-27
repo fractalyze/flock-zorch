@@ -16,11 +16,11 @@ itself through their jitted rounds, at which point this wrapper shrinks away.
 
 Requires `zorch` on PYTHONPATH (run gates with `PYTHONPATH=python:../zorch`).
 """
+
 from __future__ import annotations
 
-import numpy as np
 import frx.numpy as fnp
-
+import numpy as np
 from zorch.sha256_field_transcript import Sha256FieldTranscript
 
 from flock_zorch import fs
@@ -38,8 +38,7 @@ class Challenger:
         self._t = fs.observe_label(self._t, label)
 
     def observe_bytes(self, data) -> None:
-        self._t = fs.observe_bytes(
-            self._t, np.frombuffer(bytes(data), np.uint8))
+        self._t = fs.observe_bytes(self._t, np.frombuffer(bytes(data), np.uint8))
 
     def observe_f128(self, g) -> None:
         """Observe F128 (native `binary_field_ghash`) — a scalar or a slice,

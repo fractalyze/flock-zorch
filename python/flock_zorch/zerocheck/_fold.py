@@ -7,16 +7,17 @@ selection is flock's.
 
 Requires jax_enable_x64.
 """
+
 from __future__ import annotations
 
-import numpy as np
 import frx
 import frx.numpy as fnp
+import numpy as np
+from zorch.poly.univariate import compute_lagrange_basis
+from zorch.utils import binary_field as bf
 
 from flock_zorch import ghash
 from flock_zorch.zerocheck import _urm
-from zorch.poly.univariate import compute_lagrange_basis
-from zorch.utils import binary_field as bf
 
 
 def _lagrange_weights(k_skip: int, zg, offset: int):
@@ -28,7 +29,7 @@ def _lagrange_weights(k_skip: int, zg, offset: int):
 
     zg: `binary_field_ghash` scalar (z is a value in the L_i formula, not an index).
     Returns `binary_field_ghash [2^k_skip]` — never leaves the dtype."""
-    sg = ghash.to_ghash(fnp.asarray(_urm.PHI_8_TABLE[offset:offset + (1 << k_skip)]))
+    sg = ghash.to_ghash(fnp.asarray(_urm.PHI_8_TABLE[offset : offset + (1 << k_skip)]))
     return compute_lagrange_basis(zg, sg)
 
 
@@ -67,7 +68,10 @@ def _fold_packed_at_z(packed, w_g):
 
 def _fold_at_z(rows, w_g):
     """Dispatch to the packed-byte fold when the original witness is available."""
-    if (getattr(rows, "ndim", 0) == 2 and rows.shape[-1] == 2
-            and rows.dtype == np.uint64):
+    if (
+        getattr(rows, "ndim", 0) == 2
+        and rows.shape[-1] == 2
+        and rows.dtype == np.uint64
+    ):
         return _fold_packed_at_z(rows, w_g)
     return _fold_unpacked_at_z(rows, w_g)

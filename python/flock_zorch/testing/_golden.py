@@ -43,18 +43,51 @@ class R:
     """Cursor over a `dump_*` golden. Every field is little-endian; `f`/`fv` read
     F128 as the uint64 [lo, hi] lane pair that is also its wire form."""
 
-    def __init__(self, buf): self.b = buf; self.o = 0
-    def take(self, n): v = self.b[self.o:self.o + n]; self.o += n; return v
-    def u(self): return int.from_bytes(self.take(8), "little")
-    def uv(self): return [self.u() for _ in range(self.u())]
-    def u64v(self): return [self.u() for _ in range(self.u())]
-    def f(self): return np.frombuffer(self.take(16), np.uint64).copy()
-    def fv(self): n = self.u(); return np.frombuffer(self.take(16 * n), np.uint64).reshape(n, 2).copy()
-    def pair(self): n = self.u(); return [(self.f(), self.f()) for _ in range(n)]
-    def raw(self, n): return np.frombuffer(self.take(n), np.uint8).copy()
-    def hv(self): n = self.u(); return np.frombuffer(self.take(32 * n), np.uint8).reshape(n, 32).copy()
-    def rowsf(self): n = self.u(); return [self.fv() for _ in range(n)]
-    def rowsu(self): n = self.u(); return [np.frombuffer(self.take(4 * self.u()), np.uint32).copy() for _ in range(n)]
+    def __init__(self, buf):
+        self.b = buf
+        self.o = 0
+
+    def take(self, n):
+        v = self.b[self.o : self.o + n]
+        self.o += n
+        return v
+
+    def u(self):
+        return int.from_bytes(self.take(8), "little")
+
+    def uv(self):
+        return [self.u() for _ in range(self.u())]
+
+    def u64v(self):
+        return [self.u() for _ in range(self.u())]
+
+    def f(self):
+        return np.frombuffer(self.take(16), np.uint64).copy()
+
+    def fv(self):
+        n = self.u()
+        return np.frombuffer(self.take(16 * n), np.uint64).reshape(n, 2).copy()
+
+    def pair(self):
+        n = self.u()
+        return [(self.f(), self.f()) for _ in range(n)]
+
+    def raw(self, n):
+        return np.frombuffer(self.take(n), np.uint8).copy()
+
+    def hv(self):
+        n = self.u()
+        return np.frombuffer(self.take(32 * n), np.uint8).reshape(n, 32).copy()
+
+    def rowsf(self):
+        n = self.u()
+        return [self.fv() for _ in range(n)]
+
+    def rowsu(self):
+        n = self.u()
+        return [
+            np.frombuffer(self.take(4 * self.u()), np.uint32).copy() for _ in range(n)
+        ]
 
     # `pcs/testing` spelled the F128-rows reader `rows`; keep both names so those
     # gates read unchanged.
@@ -77,7 +110,8 @@ def open_golden(name: str) -> R:
             f"missing golden {path}\n"
             f"  the goldens are gitignored and dumped on demand — regenerate with the\n"
             f"  matching `cargo run --release --example dump_*` (see examples/) or\n"
-            f"  `scripts/dump_goldens.sh`") from None
+            f"  `scripts/dump_goldens.sh`"
+        ) from None
 
 
 def unpack_bits(packed, m: int):
@@ -93,12 +127,22 @@ def unpack_bits(packed, m: int):
 
 # --------------------------------------------------------------- wire sections
 
+
 def read_ligerito_config(rd: R) -> dict:
     """The Ligerito prover config every `dump_*_ligerito` golden carries."""
-    return dict(log_inv_rates=rd.uv(), recursive_steps=rd.u(), initial_log_msg_cols=rd.u(),
-                initial_log_num_interleaved=rd.u(), initial_k=rd.u(),
-                recursive_log_msg_cols=rd.uv(), recursive_ks=rd.uv(), queries=rd.uv(),
-                grinding_bits=rd.uv(), fold_grinding_bits=rd.uv(), ood_samples=rd.uv())
+    return dict(
+        log_inv_rates=rd.uv(),
+        recursive_steps=rd.u(),
+        initial_log_msg_cols=rd.u(),
+        initial_log_num_interleaved=rd.u(),
+        initial_k=rd.u(),
+        recursive_log_msg_cols=rd.uv(),
+        recursive_ks=rd.uv(),
+        queries=rd.uv(),
+        grinding_bits=rd.uv(),
+        fold_grinding_bits=rd.uv(),
+        ood_samples=rd.uv(),
+    )
 
 
 def read_ligerito_proof(rd: R) -> dict:
@@ -108,8 +152,9 @@ def read_ligerito_proof(rd: R) -> dict:
     lig["initial_proof"] = dict(opened_rows=rd.rowsf(), merkle_proof=rd.hv())
     lig["recursive_roots"] = rd.hv()
     nrp = rd.u()
-    lig["recursive_proofs"] = [dict(opened_rows=rd.rowsf(), merkle_proof=rd.hv())
-                               for _ in range(nrp)]
+    lig["recursive_proofs"] = [
+        dict(opened_rows=rd.rowsf(), merkle_proof=rd.hv()) for _ in range(nrp)
+    ]
     lig["final_proof"] = dict(yr=rd.fv(), opened_rows=rd.rowsf(), merkle_proof=rd.hv())
     lig["sumcheck_transcript"] = rd.pair()
     lig["grinding_nonces"] = rd.u64v()
@@ -120,19 +165,27 @@ def read_ligerito_proof(rd: R) -> dict:
 
 # ------------------------------------------------------------------ comparison
 
+
 def _pairs(t):
-    return (np.array([np.concatenate([a, b]) for a, b in t]) if t
-            else np.zeros((0, 4), np.uint64))
+    return (
+        np.array([np.concatenate([a, b]) for a, b in t])
+        if t
+        else np.zeros((0, 4), np.uint64)
+    )
 
 
 def _rows_eq(a, b):
     return len(a) == len(b) and all(
-        np.array_equal(np.asarray(x), np.asarray(y)) for x, y in zip(a, b))
+        np.array_equal(np.asarray(x), np.asarray(y)) for x, y in zip(a, b)
+    )
 
 
 def _stk(v):
-    return (np.stack([np.asarray(x).reshape(2) for x in v]) if len(v)
-            else np.zeros((0, 2), np.uint64))
+    return (
+        np.stack([np.asarray(x).reshape(2) for x in v])
+        if len(v)
+        else np.zeros((0, 2), np.uint64)
+    )
 
 
 def ligerito_proof_results(p, gl, prefix: str = "lig ") -> list[tuple[str, bool]]:
@@ -143,34 +196,68 @@ def ligerito_proof_results(p, gl, prefix: str = "lig ") -> list[tuple[str, bool]
     every gate starts checking it.
     """
     return [
-        (f"{prefix}initial_root",
-         np.array_equal(p["initial_root"], gl["initial_root"])),
-        (f"{prefix}sumcheck_transcript",
-         np.array_equal(_pairs(p["sumcheck_transcript"]), _pairs(gl["sumcheck_transcript"]))),
-        (f"{prefix}recursive_roots",
-         np.array_equal(np.asarray(p["recursive_roots"]), gl["recursive_roots"])),
-        (f"{prefix}ood_values", np.array_equal(_stk(p["ood_values"]), gl["ood_values"])),
-        (f"{prefix}grinding_nonces",
-         list(map(int, p["grinding_nonces"])) == list(gl["grinding_nonces"])),
-        (f"{prefix}fold_grinding_nonces",
-         list(map(int, p["fold_grinding_nonces"])) == list(gl["fold_grinding_nonces"])),
-        (f"{prefix}initial_proof.opened_rows",
-         _rows_eq(p["initial_proof"]["opened_rows"], gl["initial_proof"]["opened_rows"])),
-        (f"{prefix}initial_proof.merkle_proof",
-         np.array_equal(p["initial_proof"]["merkle_proof"], gl["initial_proof"]["merkle_proof"])),
+        (
+            f"{prefix}initial_root",
+            np.array_equal(p["initial_root"], gl["initial_root"]),
+        ),
+        (
+            f"{prefix}sumcheck_transcript",
+            np.array_equal(
+                _pairs(p["sumcheck_transcript"]), _pairs(gl["sumcheck_transcript"])
+            ),
+        ),
+        (
+            f"{prefix}recursive_roots",
+            np.array_equal(np.asarray(p["recursive_roots"]), gl["recursive_roots"]),
+        ),
+        (
+            f"{prefix}ood_values",
+            np.array_equal(_stk(p["ood_values"]), gl["ood_values"]),
+        ),
+        (
+            f"{prefix}grinding_nonces",
+            list(map(int, p["grinding_nonces"])) == list(gl["grinding_nonces"]),
+        ),
+        (
+            f"{prefix}fold_grinding_nonces",
+            list(map(int, p["fold_grinding_nonces"]))
+            == list(gl["fold_grinding_nonces"]),
+        ),
+        (
+            f"{prefix}initial_proof.opened_rows",
+            _rows_eq(
+                p["initial_proof"]["opened_rows"], gl["initial_proof"]["opened_rows"]
+            ),
+        ),
+        (
+            f"{prefix}initial_proof.merkle_proof",
+            np.array_equal(
+                p["initial_proof"]["merkle_proof"], gl["initial_proof"]["merkle_proof"]
+            ),
+        ),
         (f"{prefix}recursive_proofs", _recursive_proofs_eq(p, gl)),
-        (f"{prefix}final_proof.yr",
-         np.array_equal(np.asarray(p["final_proof"]["yr"]), gl["final_proof"]["yr"])),
-        (f"{prefix}final_proof.opened_rows",
-         _rows_eq(p["final_proof"]["opened_rows"], gl["final_proof"]["opened_rows"])),
-        (f"{prefix}final_proof.merkle_proof",
-         np.array_equal(p["final_proof"]["merkle_proof"], gl["final_proof"]["merkle_proof"])),
+        (
+            f"{prefix}final_proof.yr",
+            np.array_equal(np.asarray(p["final_proof"]["yr"]), gl["final_proof"]["yr"]),
+        ),
+        (
+            f"{prefix}final_proof.opened_rows",
+            _rows_eq(p["final_proof"]["opened_rows"], gl["final_proof"]["opened_rows"]),
+        ),
+        (
+            f"{prefix}final_proof.merkle_proof",
+            np.array_equal(
+                p["final_proof"]["merkle_proof"], gl["final_proof"]["merkle_proof"]
+            ),
+        ),
     ]
 
 
 def _recursive_proofs_eq(p, gl) -> bool:
     if len(p["recursive_proofs"]) != len(gl["recursive_proofs"]):
         return False
-    return all(_rows_eq(pr["opened_rows"], gr["opened_rows"])
-               and np.array_equal(pr["merkle_proof"], gr["merkle_proof"])
-               for pr, gr in zip(p["recursive_proofs"], gl["recursive_proofs"]))
+    return all(
+        _rows_eq(pr["opened_rows"], gr["opened_rows"])
+        and np.array_equal(pr["merkle_proof"], gr["merkle_proof"])
+        for pr, gr in zip(p["recursive_proofs"], gl["recursive_proofs"])
+    )

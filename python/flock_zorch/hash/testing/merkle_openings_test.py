@@ -7,6 +7,7 @@ no GPU: this is proof-format encoding, not field math. Builds each query's
 ground-truth sibling path straight from the tree, checks it rebuilds the root,
 then asserts paths→octopus reproduces the reference octopus byte-for-byte.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -67,7 +68,9 @@ def _level_starts(num_leaves: int) -> list[int]:
     return starts
 
 
-def _check(num_leaves: int, leaf_bytes_len: int, positions: list[int], name: str) -> bool:
+def _check(
+    num_leaves: int, leaf_bytes_len: int, positions: list[int], name: str
+) -> bool:
     rng = np.random.default_rng(len(positions) + num_leaves)
     leaves = rng.integers(0, 256, size=(num_leaves, leaf_bytes_len), dtype=np.uint8)
     tree = _ref_tree(leaves)
@@ -77,10 +80,16 @@ def _check(num_leaves: int, leaf_bytes_len: int, positions: list[int], name: str
 
     proof = _ref_octopus(tree, num_leaves, positions)
     # Ground-truth per-query paths straight from the tree: path[k] = sibling of (p>>k).
-    paths = np.stack([
-        np.stack([tree[starts[k] + ((p >> k) ^ 1)] for k in range(depth)])
-        for p in positions
-    ]) if depth else np.zeros((len(positions), 0, 32), np.uint8)
+    paths = (
+        np.stack(
+            [
+                np.stack([tree[starts[k] + ((p >> k) ^ 1)] for k in range(depth)])
+                for p in positions
+            ]
+        )
+        if depth
+        else np.zeros((len(positions), 0, 32), np.uint8)
+    )
 
     ok = paths.shape == (len(positions), depth, 32)
     for qi, p in enumerate(positions):
@@ -103,8 +112,11 @@ def _check(num_leaves: int, leaf_bytes_len: int, positions: list[int], name: str
     if octopus.shape != proof.shape or not np.array_equal(octopus, proof):
         ok = False
 
-    print(f"paths→octopus vs reference multi-proof ({name}, n={num_leaves} q={len(positions)}): "
-          f"{'PASS' if ok else 'FAIL'}")
+    print(
+        f"paths→octopus vs reference multi-proof "
+        f"({name}, n={num_leaves} q={len(positions)}): "
+        f"{'PASS' if ok else 'FAIL'}"
+    )
     return ok
 
 

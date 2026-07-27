@@ -20,9 +20,9 @@ distributes over field addition (XOR).
 
 import functools
 
-import numpy as np
 import frx
 import frx.numpy as fnp
+import numpy as np
 
 _GHASH = fnp.binary_field_ghash
 
@@ -30,14 +30,14 @@ _GHASH = fnp.binary_field_ghash
 N_LANES = 25
 LANE_BITS = 64
 STATE_BITS = 1600  # == N_LANES * LANE_BITS
-N_T = 24           # t_0 .. t_23 AND-output vectors == N_ROUNDS
+N_T = 24  # t_0 .. t_23 AND-output vectors == N_ROUNDS
 K_LOG = 16
-K = 1 << K_LOG     # 65536 columns
+K = 1 << K_LOG  # 65536 columns
 SLOT_BITS = 2048
 STATE0_BIT_BASE = 0
-STATE24_BIT_BASE = SLOT_BITS               # 2048
-Z_CONST = 2 * SLOT_BITS                     # 4096 — the const-pin column
-T_PACKED_BIT_BASE = Z_CONST + LANE_BITS     # 4160
+STATE24_BIT_BASE = SLOT_BITS  # 2048
+Z_CONST = 2 * SLOT_BITS  # 4096 — the const-pin column
+T_PACKED_BIT_BASE = Z_CONST + LANE_BITS  # 4160
 
 # ρ rotation offsets r[x][y] (FIPS 202 Table 2).
 RHO_OFFSETS = [
@@ -50,12 +50,30 @@ RHO_OFFSETS = [
 
 # ι round constants (24 rounds).
 ROUND_CONSTANTS = [
-    0x0000000000000001, 0x0000000000008082, 0x800000000000808A, 0x8000000080008000,
-    0x000000000000808B, 0x0000000080000001, 0x8000000080008081, 0x8000000000008009,
-    0x000000000000008A, 0x0000000000000088, 0x0000000080008009, 0x000000008000000A,
-    0x000000008000808B, 0x800000000000008B, 0x8000000000008089, 0x8000000000008003,
-    0x8000000000008002, 0x8000000000000080, 0x000000000000800A, 0x800000008000000A,
-    0x8000000080008081, 0x8000000000008080, 0x0000000080000001, 0x8000000080008008,
+    0x0000000000000001,
+    0x0000000000008082,
+    0x800000000000808A,
+    0x8000000080008000,
+    0x000000000000808B,
+    0x0000000080000001,
+    0x8000000080008081,
+    0x8000000000008009,
+    0x000000000000008A,
+    0x0000000000000088,
+    0x0000000080008009,
+    0x000000008000000A,
+    0x000000008000808B,
+    0x800000000000008B,
+    0x8000000000008089,
+    0x8000000000008003,
+    0x8000000000008002,
+    0x8000000000000080,
+    0x000000000000800A,
+    0x800000008000000A,
+    0x8000000080008081,
+    0x8000000000008080,
+    0x0000000080000001,
+    0x8000000080008008,
 ]
 
 
@@ -102,15 +120,19 @@ def _build_preimage_maps():
     return pre_fwd, pre_a, pre_b
 
 
-_PRE_FWD, _PRE_CHI_A, _PRE_CHI_B = _build_preimage_maps()  # φ preimage; χ a/b-operand preimages
+_PRE_FWD, _PRE_CHI_A, _PRE_CHI_B = (
+    _build_preimage_maps()
+)  # φ preimage; χ a/b-operand preimages
 
 # within_lane_contiguous(j) = 64·(j%25) + j//25 — the witness sub-vector offset.
 _J = np.arange(STATE_BITS)
 _WLC = (LANE_BITS * (_J % N_LANES) + _J // N_LANES).astype(np.int64)
-_COL_STATE0 = _WLC                                  # z_pos_state(0, j)
-_COL_STATE24 = STATE24_BIT_BASE + _WLC              # z_pos_state(24, j)
+_COL_STATE0 = _WLC  # z_pos_state(0, j)
+_COL_STATE24 = STATE24_BIT_BASE + _WLC  # z_pos_state(24, j)
 # z_pos_t(r, j) = 4160 + r·1600 + within_lane_contiguous(j); shape (N_T, STATE_BITS).
-_ROWS_T = (T_PACKED_BIT_BASE + np.arange(N_T)[:, None] * STATE_BITS + _WLC[None, :]).astype(np.int64)
+_ROWS_T = (
+    T_PACKED_BIT_BASE + np.arange(N_T)[:, None] * STATE_BITS + _WLC[None, :]
+).astype(np.int64)
 # state_idx(0,0,zpos) = 25·zpos — the ι round-constant toggle positions.
 _RC_TOGGLE_IDX = N_LANES * np.arange(LANE_BITS)
 _Z_BITS = np.arange(LANE_BITS, dtype=np.uint64)
@@ -124,6 +146,7 @@ _Z_BITS = np.arange(LANE_BITS, dtype=np.uint64)
 # recurrences are unrolled (static depth 24) so the whole fold lowers to one device
 # program (no host↔device bubble).
 
+
 def _transpose_map(pre_map):
     """Transpose a θ∘ρ∘π preimage map (S,11) into a gather map (S,11): _T[t] = the
     sources s with t ∈ pre_map[s]. Turns the overlapping scatter into a gather."""
@@ -135,13 +158,18 @@ def _transpose_map(pre_map):
     return fnp.asarray(np.array(buckets, np.int64))
 
 
-_FWD_T = _transpose_map(_PRE_FWD)          # φᵀ gather
-_CHI_A_T = _transpose_map(_PRE_CHI_A)      # χ a-operand gather
-_CHI_B_T = _transpose_map(_PRE_CHI_B)      # χ b-operand gather
-_PRE_FWD_DEV = fnp.asarray(_PRE_FWD)       # forward φ_bool gather
+_FWD_T = _transpose_map(_PRE_FWD)  # φᵀ gather
+_CHI_A_T = _transpose_map(_PRE_CHI_A)  # χ a-operand gather
+_CHI_B_T = _transpose_map(_PRE_CHI_B)  # χ b-operand gather
+_PRE_FWD_DEV = fnp.asarray(_PRE_FWD)  # forward φ_bool gather
 _RC_TOGGLE_DEV = fnp.asarray(_RC_TOGGLE_IDX)
-_RC_BITS = fnp.asarray(np.stack([          # (N_T, LANE_BITS) ι round-constant toggle bits
-    (np.uint64(rc) >> _Z_BITS) & np.uint64(1) for rc in ROUND_CONSTANTS]))
+_RC_BITS = fnp.asarray(
+    np.stack(
+        [  # (N_T, LANE_BITS) ι round-constant toggle bits
+            (np.uint64(rc) >> _Z_BITS) & np.uint64(1) for rc in ROUND_CONSTANTS
+        ]
+    )
+)
 
 
 def _gather_xor(vals, map_T):
@@ -156,14 +184,14 @@ def _accumulate_subkeccak(eq, col_state0, col_state24, rows_t):
     functionally (no in-place XOR): values at rows_t (bijective) + col_state0 (2
     contribs, pre-XORed) + the z_const scalars. The caller scatter-sets the bijective
     columns and XOR-merges the shared z_const."""
-    e_s0 = eq[col_state0]                                          # ghash (S,)
-    vec_pin = eq[col_state24]                                      # ghash (S,)
-    e_t = eq[rows_t]                                               # ghash (N_T,S)
-    chi_a = fnp.sum(e_t[:, _CHI_A_T], axis=2)                      # ghash (N_T,S)
+    e_s0 = eq[col_state0]  # ghash (S,)
+    vec_pin = eq[col_state24]  # ghash (S,)
+    e_t = eq[rows_t]  # ghash (N_T,S)
+    chi_a = fnp.sum(e_t[:, _CHI_A_T], axis=2)  # ghash (N_T,S)
     chi_b = fnp.sum(e_t[:, _CHI_B_T], axis=2)
 
-    zc_a = fnp.sum(e_t.reshape(-1))                               # Σ eq_t (A z_const)
-    zc_b = fnp.sum(e_s0) + fnp.sum(vec_pin)                        # state_0 + state_24 pins
+    zc_a = fnp.sum(e_t.reshape(-1))  # Σ eq_t (A z_const)
+    zc_b = fnp.sum(e_s0) + fnp.sum(vec_pin)  # state_0 + state_24 pins
 
     # Round-constant GF(2) state machine (unrolled N_T) → RC_24. `rc` is a 0/1 bit
     # vector (not a field element), so it stays uint64 and masks chi via select.
@@ -175,7 +203,7 @@ def _accumulate_subkeccak(eq, col_state0, col_state24, rows_t):
             m = rc.astype(bool)
             rc_a = rc_a + fnp.sum(fnp.where(m, chi_a[r], fnp.zeros(STATE_BITS, _GHASH)))
             rc_b = rc_b + fnp.sum(fnp.where(m, chi_b[r], fnp.zeros(STATE_BITS, _GHASH)))
-        rc = fnp.bitwise_xor.reduce(rc[_PRE_FWD_DEV], axis=1)      # forward φ_bool
+        rc = fnp.bitwise_xor.reduce(rc[_PRE_FWD_DEV], axis=1)  # forward φ_bool
         rc = rc.at[_RC_TOGGLE_DEV].set(rc[_RC_TOGGLE_DEV] ^ _RC_BITS[r])
     rc_pin = fnp.sum(fnp.where(rc.astype(bool), vec_pin, fnp.zeros(STATE_BITS, _GHASH)))
     zc_a = zc_a + rc_a + rc_pin
@@ -183,21 +211,21 @@ def _accumulate_subkeccak(eq, col_state0, col_state24, rows_t):
 
     # A-side transpose recurrence (unrolled): rows_t[j] ← K^A_{j+1}, col_state0 ← K^A_0.
     ra = [None] * N_T
-    ra[N_T - 1] = vec_pin                                          # K^A_24
-    k_a = _gather_xor(vec_pin, _FWD_T) + chi_a[N_T - 1]            # K^A_23
+    ra[N_T - 1] = vec_pin  # K^A_24
+    k_a = _gather_xor(vec_pin, _FWD_T) + chi_a[N_T - 1]  # K^A_23
     for r in range(N_T - 1, 0, -1):
-        ra[r - 1] = k_a                                           # K^A_r → rows_t[r-1]
+        ra[r - 1] = k_a  # K^A_r → rows_t[r-1]
         k_a = _gather_xor(k_a, _FWD_T) + chi_a[r - 1]
-    cs0_a = e_s0 + k_a                                            # state_0 self-loop ⊕ K^A_0
+    cs0_a = e_s0 + k_a  # state_0 self-loop ⊕ K^A_0
 
     # B-side (K^B_24 = 0): rows_t[j] ← K^B_{j+1} (0 at j=N_T-1), col_state0 ← K^B_0.
     rb = [None] * N_T
     rb[N_T - 1] = fnp.zeros(STATE_BITS, _GHASH)
-    k_b = chi_b[N_T - 1]                                          # K^B_23
+    k_b = chi_b[N_T - 1]  # K^B_23
     for r in range(N_T - 1, 0, -1):
         rb[r - 1] = k_b
         k_b = _gather_xor(k_b, _FWD_T) + chi_b[r - 1]
-    cs0_b = k_b                                                   # K^B_0
+    cs0_b = k_b  # K^B_0
 
     return fnp.stack(ra), fnp.stack(rb), cs0_a, cs0_b, zc_a, zc_b
 
@@ -215,13 +243,15 @@ def _fold_walker_kernel(eq, alpha, sub_cols, z_const):
     zc_a = fnp.zeros((), _GHASH)
     zc_b = fnp.zeros((), _GHASH)
     for col_state0, col_state24, rows_t in sub_cols:
-        ra, rb, ca, cb, za, zb = _accumulate_subkeccak(eq, col_state0, col_state24, rows_t)
+        ra, rb, ca, cb, za, zb = _accumulate_subkeccak(
+            eq, col_state0, col_state24, rows_t
+        )
         rtf = rows_t.reshape(-1)
         comb_a = comb_a.at[rtf].set(ra.reshape(-1)).at[col_state0].set(ca)
         comb_b = comb_b.at[rtf].set(rb.reshape(-1)).at[col_state0].set(cb)
         zc_a = zc_a + za
         zc_b = zc_b + zb
-    e0 = eq[z_const]                                             # row-0 const (shared)
+    e0 = eq[z_const]  # row-0 const (shared)
     comb_a = comb_a.at[z_const].set(zc_a + e0)
     comb_b = comb_b.at[z_const].set(zc_b + e0)
     return alpha * comb_a + comb_b
@@ -230,7 +260,9 @@ def _fold_walker_kernel(eq, alpha, sub_cols, z_const):
 def _device_sub_cols(sub_cols):
     """Device copies of a walker's host index arrays, built once per circuit so the
     constant column maps aren't re-transferred to the device on every fold."""
-    return [(fnp.asarray(c0), fnp.asarray(c24), fnp.asarray(rt)) for c0, c24, rt in sub_cols]
+    return [
+        (fnp.asarray(c0), fnp.asarray(c24), fnp.asarray(rt)) for c0, c24, rt in sub_cols
+    ]
 
 
 def _fold_walker(eq_inner, alpha, sub_cols, z_const):
@@ -247,8 +279,8 @@ class KeccakLincheckCircuit:
 
     n_cols = K
     const_pin = Z_CONST  # const-wire pin column (lincheck.prove applies +β here)
-    _sub_cols = [(_COL_STATE0, _COL_STATE24, _ROWS_T)]   # host arrays (test reference)
-    _sub_cols = _device_sub_cols(_sub_cols)          # device, built once
+    _sub_cols = [(_COL_STATE0, _COL_STATE24, _ROWS_T)]  # host arrays (test reference)
+    _sub_cols = _device_sub_cols(_sub_cols)  # device, built once
 
     def fold_alpha_batched(self, alpha, eq_inner):
         """comb[c] = α·(A_0ᵀ·eq)[c] ⊕ (B_0ᵀ·eq)[c], the keccak.rs walker (device)."""
