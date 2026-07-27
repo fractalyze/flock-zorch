@@ -22,10 +22,10 @@ Conventions match flock exactly:
 
 Requires `jax_enable_x64`.
 """
+
 from __future__ import annotations
 
 import frx.numpy as fnp
-
 from zorch.poly.eq import expand_eq_to_hypercube
 from zorch.sumcheck.domain import compressed_domain, summand_evals
 from zorch.sumcheck.prover import ProductSummand
@@ -77,6 +77,10 @@ def round_pair_eq(ag, bg, eq, r0g):
     `summand_evals` over `compressed_domain(1)` with the eq suffix as the per-point
     weight and `msb=False` (`s(∞)`'s char-2 `(a1−a0)` is flock's `(a0+a1)`)."""
     g_one, g_inf = summand_evals(
-        fnp.stack([ag, bg]), _PRODUCT2, compressed_domain(1, ag.dtype),
-        weight=eq, msb=False)
+        fnp.stack([ag, bg]),
+        _PRODUCT2,
+        compressed_domain(1, ag.dtype),
+        weight=eq,
+        msb=False,
+    )
     return r0g * g_one, g_inf

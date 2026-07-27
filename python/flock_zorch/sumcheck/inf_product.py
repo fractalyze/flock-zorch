@@ -9,12 +9,12 @@ flock-core's wire, so it observes each value on the SHA-256 transcript directly
 transcript needs, byte-matched to flock-core). Driven by `zorch.prove.fold_rounds`
 inside one jit, a whole round loop is a single device program with FS inside.
 """
+
 from __future__ import annotations
 
 import functools
 
 import frx
-
 from zorch.prove import fold_rounds
 from zorch.round import Round
 from zorch.sumcheck.domain import compressed_domain, fold, summand_evals

@@ -15,23 +15,24 @@ interleaved (2x,2x+1) pairs) and carries **no eq factor** (plain product sum
 Reuses zorch via the challenger (`zorch.byte_transcript`). Requires
 `jax_enable_x64` and `zorch` on PYTHONPATH.
 """
+
 from __future__ import annotations
 
 import functools
 from dataclasses import dataclass, replace
 from typing import Any, NamedTuple, Protocol, runtime_checkable
 
-import numpy as np
 import frx
 import frx.numpy as fnp
+import numpy as np
+from zorch.round import ProveChain, Round
 
 from flock_zorch import ghash
-from flock_zorch.sumcheck import build_eq, ONE
-from flock_zorch.zerocheck import _lagrange_weights, ZerocheckProof
 from flock_zorch.challenger import Challenger
-from flock_zorch.lincheck._csc_fold import _flatten_nz, _csc_segments, _seg_xor_fold
+from flock_zorch.lincheck._csc_fold import _csc_segments, _flatten_nz, _seg_xor_fold
+from flock_zorch.sumcheck import build_eq
 from flock_zorch.sumcheck.inf_product import prove_inf_product
-from zorch.round import ProveChain, Round
+from flock_zorch.zerocheck import ZerocheckProof, _lagrange_weights
 
 U64 = fnp.uint64
 _GHASH = fnp.binary_field_ghash
@@ -42,13 +43,14 @@ LABEL = b"flock-lincheck-v0"
 def build_quirky_eq_table(z_skip, x_inner_rest, k_skip: int):
     """eq_inner[i_skip + i_rest·2^k_skip] = λ_skip[i_skip]·eq_rest[i_rest]
     (flock `build_quirky_eq_table`; i_skip in the LOW bits). z_skip: ghash scalar
-    (the zerocheck fold point). Returns the eq table as native ghash [ell_rest·ell_skip].
+    (the zerocheck fold point). Returns the eq table as native ghash
+    [ell_rest·ell_skip].
 
     One jitted kernel (k_skip static), so the Lagrange weights and `build_eq` (called
     directly, not `build_eq_fused`) fuse — the eager caller gets one fused build."""
     lam = _lagrange_weights(k_skip, z_skip, 0)
-    eq_rest = build_eq(x_inner_rest)                   # ghash coords -> [ell_rest]
-    prod = eq_rest[:, None] * lam[None, :]                    # [ell_rest, ell_skip]
+    eq_rest = build_eq(x_inner_rest)  # ghash coords -> [ell_rest]
+    prod = eq_rest[:, None] * lam[None, :]  # [ell_rest, ell_skip]
     return prod.reshape(-1)
 
 
@@ -57,7 +59,9 @@ def _mat_fold(mat_dense, eq):
 
     mat_dense: uint64 [k, k] (0/1, indexed [row, col]); eq: ghash [k] -> ghash [k].
     The 0/1 marginal is a dtype-native select (mask · ghash isn't a field mul)."""
-    return fnp.sum(fnp.where(mat_dense.astype(bool), eq[:, None], fnp.zeros((), _GHASH)), axis=0)
+    return fnp.sum(
+        fnp.where(mat_dense.astype(bool), eq[:, None], fnp.zeros((), _GHASH)), axis=0
+    )
 
 
 def fold_alpha_batched(alpha, a_dense, b_dense, eq_inner):
@@ -87,7 +91,7 @@ class CscCircuit:
         self._b_seg = _csc_segments(b_col, b_row)
 
     def fold_alpha_batched(self, alpha, eq_inner):
-        eq = fnp.asarray(eq_inner).reshape(-1)                # ghash [k]
+        eq = fnp.asarray(eq_inner).reshape(-1)  # ghash [k]
         zero = fnp.zeros(self.k, _GHASH)
         out_a = _seg_xor_fold(eq, *self._a_seg, self.k) if self._a_seg else zero
         out_b = _seg_xor_fold(eq, *self._b_seg, self.k) if self._b_seg else zero
@@ -105,7 +109,9 @@ def partial_fold_packed_z(z_packed_bytes: bytes, m: int, k_log: int, x_outer):
     n_outer = 1 << (m - k_log)
     n_bytes = n_outer // 8
     zp = fnp.asarray(np.frombuffer(z_packed_bytes, np.uint8).reshape(n_bytes, k))
-    return _partial_fold(zp, x_outer, n_outer)          # device + jit (keeps the intermediate off HBM)
+    return _partial_fold(
+        zp, x_outer, n_outer
+    )  # device + jit (keeps the intermediate off HBM)
 
 
 @functools.partial(frx.jit, static_argnums=(2,))
@@ -114,9 +120,13 @@ def _partial_fold(zp, x_outer, n_outer):
     [n_outer,k,2] intermediate stays fused on device and never lands in HBM. `build_eq`
     is in-kernel (no `build_eq_fused`), so the eq build fuses with the fold."""
     eq_outer = build_eq(x_outer)
-    bits = ((zp[:, None, :] >> fnp.arange(8, dtype=fnp.uint8)[None, :, None]) & 1)  # [nb,8,k]
-    bits = bits.reshape(n_outer, zp.shape[1]).astype(bool)                          # i_outer=byte·8+r
-    return fnp.sum(fnp.where(bits, eq_outer[:, None], fnp.zeros((), _GHASH)), axis=0)  # dtype-native 0/1 select
+    bits = (
+        zp[:, None, :] >> fnp.arange(8, dtype=fnp.uint8)[None, :, None]
+    ) & 1  # [nb,8,k]
+    bits = bits.reshape(n_outer, zp.shape[1]).astype(bool)  # i_outer=byte·8+r
+    return fnp.sum(
+        fnp.where(bits, eq_outer[:, None], fnp.zeros((), _GHASH)), axis=0
+    )  # dtype-native 0/1 select
 
 
 @runtime_checkable
@@ -133,8 +143,7 @@ class LincheckCircuit(Protocol):
 
     const_pin: int | None
 
-    def fold_alpha_batched(self, alpha: Any, eq_inner: Any) -> Any:
-        ...
+    def fold_alpha_batched(self, alpha: Any, eq_inner: Any) -> Any: ...
 
 
 @dataclass(frozen=True)
@@ -152,9 +161,11 @@ class AbClaimPoint:
         """The â/b̂ point derived from a zerocheck proof: z_skip is the URM
         fold-point, and the multilinear challenges split into inner/outer at
         `inner_rest`."""
-        return cls(z_skip=zc.z,
-                   x_inner_rest=zc.mlv_challenges[:inner_rest],
-                   x_outer=zc.mlv_challenges[inner_rest:])
+        return cls(
+            z_skip=zc.z,
+            x_inner_rest=zc.mlv_challenges[:inner_rest],
+            x_outer=zc.mlv_challenges[inner_rest:],
+        )
 
 
 @dataclass(frozen=True)
@@ -191,11 +202,11 @@ class _LincheckCarry:
     b_dense: Any
     x_ab: Any
     circuit: Any
-    comb: Any = None                 # ← _CombRound
-    rounds: Any = None               # ← _SumcheckRound
-    r_rounds: Any = None             # ← _SumcheckRound (read by _ClaimRound)
-    z_partial: Any = None            # ← _SumcheckRound (native ghash; observe + w + wire)
-    claim: Any = None                # ← _ClaimRound
+    comb: Any = None  # ← _CombRound
+    rounds: Any = None  # ← _SumcheckRound
+    r_rounds: Any = None  # ← _SumcheckRound (read by _ClaimRound)
+    z_partial: Any = None  # ← _SumcheckRound (native ghash; observe + w + wire)
+    claim: Any = None  # ← _ClaimRound
 
 
 class _CombRound(Round):
@@ -215,12 +226,13 @@ class _CombRound(Round):
         if circuit is not None:
             comb = circuit.fold_alpha_batched(alpha, eq_inner)
             if circuit.const_pin is not None:
-                beta = transcript.sample_f128()               # sampled AFTER alpha (flock order)
+                beta = transcript.sample_f128()  # sampled AFTER alpha (flock order)
                 col = circuit.const_pin
                 comb = comb.at[col].set(comb[col] + beta)
         else:
-            comb = fold_alpha_batched(alpha, fnp.asarray(carry.a_dense),
-                                      fnp.asarray(carry.b_dense), eq_inner)
+            comb = fold_alpha_batched(
+                alpha, fnp.asarray(carry.a_dense), fnp.asarray(carry.b_dense), eq_inner
+            )
         return replace(carry, comb=comb), transcript, None
 
 
@@ -235,16 +247,19 @@ class _SumcheckRound(Round):
         m, k_log, k_skip = self._m, self._k_log, self._k_skip
         inner_rest = k_log - k_skip
         comb = carry.comb
-        z_vec = partial_fold_packed_z(carry.z_packed_bytes, m, k_log, carry.x_ab.x_outer)
+        z_vec = partial_fold_packed_z(
+            carry.z_packed_bytes, m, k_log, carry.x_ab.x_outer
+        )
 
         rounds, r_rounds = [], []
         if inner_rest > 0:
             stacked = fnp.stack([comb, z_vec])
             stacked, transcript._t, msgs = prove_inf_product(
-                stacked, transcript._t, inner_rest)
+                stacked, transcript._t, inner_rest
+            )
             for e1, einf, r in msgs:
                 rounds.append((e1, einf))
-                r_rounds.append(r)                            # native ghash fold challenge
+                r_rounds.append(r)  # native ghash fold challenge
             z_partial = stacked[1]
         else:
             z_partial = z_vec
@@ -263,29 +278,43 @@ class _ClaimRound(Round):
 
     def __call__(self, carry, transcript):
         k_skip = self._k_skip
-        transcript.observe_f128(carry.z_partial)        # 6. observe z_partial
-        r_inner_skip = transcript.sample_f128()               # 7. fresh z_skip AFTER
-        lam = _lagrange_weights(k_skip, r_inner_skip, 0)       # 8. φ8 S-domain weights
-        w = fnp.sum(lam * carry.z_partial, axis=0)            # inner_product (ghash)
-        r_inner_rest = list(reversed(carry.r_rounds))         # 9. LSB-first (ghash scalars)
+        transcript.observe_f128(carry.z_partial)  # 6. observe z_partial
+        r_inner_skip = transcript.sample_f128()  # 7. fresh z_skip AFTER
+        lam = _lagrange_weights(k_skip, r_inner_skip, 0)  # 8. φ8 S-domain weights
+        w = fnp.sum(lam * carry.z_partial, axis=0)  # inner_product (ghash)
+        r_inner_rest = list(reversed(carry.r_rounds))  # 9. LSB-first (ghash scalars)
         claim = LincheckClaim(
             r_inner_skip=r_inner_skip,
-            r_inner_rest=(fnp.stack(r_inner_rest) if r_inner_rest
-                          else ghash.to_ghash(fnp.zeros((0, 2), fnp.uint64))),
-            w=w)
+            r_inner_rest=(
+                fnp.stack(r_inner_rest)
+                if r_inner_rest
+                else ghash.to_ghash(fnp.zeros((0, 2), fnp.uint64))
+            ),
+            w=w,
+        )
         return replace(carry, claim=claim), transcript, claim
 
 
 def lincheck_chain(m: int, k_log: int, k_skip: int) -> ProveChain:
     """The lincheck sub-chain: comb → product sumcheck → claim. One definition
     for the stage wiring (cf. zerocheck.zerocheck_chain)."""
-    return ProveChain([_CombRound(k_skip), _SumcheckRound(m, k_log, k_skip),
-                       _ClaimRound(k_skip)])
+    return ProveChain(
+        [_CombRound(k_skip), _SumcheckRound(m, k_log, k_skip), _ClaimRound(k_skip)]
+    )
 
 
-def prove(z_packed_bytes, a_dense, b_dense, x_ab: AbClaimPoint, m: int, k_log: int,
-          k_skip: int, domain: bytes = b"flock-test-v0", ch: Challenger | None = None,
-          circuit: LincheckCircuit | None = None) -> LincheckProof:
+def prove(
+    z_packed_bytes,
+    a_dense,
+    b_dense,
+    x_ab: AbClaimPoint,
+    m: int,
+    k_log: int,
+    k_skip: int,
+    domain: bytes = b"flock-test-v0",
+    ch: Challenger | None = None,
+    circuit: LincheckCircuit | None = None,
+) -> LincheckProof:
     """Run lincheck. `x_ab` is an `AbClaimPoint` (z_skip:[2], x_inner_rest:[*,2],
     x_outer:[*,2]). Byte-identical to flock `prove_padded_capture_z_vec` — the
     claim-bearing entry point, the only one anything downstream consumes.
@@ -298,6 +327,8 @@ def prove(z_packed_bytes, a_dense, b_dense, x_ab: AbClaimPoint, m: int, k_log: i
     if ch is None:
         ch = Challenger(domain)
     carry, _ch, _msgs = lincheck_chain(m, k_log, k_skip)(
-        _LincheckCarry(z_packed_bytes, a_dense, b_dense, x_ab, circuit), ch)
-    return LincheckProof(rounds=carry.rounds, z_partial=carry.z_partial,
-                         claim=carry.claim)
+        _LincheckCarry(z_packed_bytes, a_dense, b_dense, x_ab, circuit), ch
+    )
+    return LincheckProof(
+        rounds=carry.rounds, z_partial=carry.z_partial, claim=carry.claim
+    )

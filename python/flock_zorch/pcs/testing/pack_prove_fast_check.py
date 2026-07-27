@@ -18,8 +18,8 @@ from __future__ import annotations
 
 import sys
 
-import numpy as np
 import frx
+import numpy as np
 
 frx.config.update("jax_enable_x64", True)
 
@@ -28,9 +28,16 @@ from flock_zorch.pcs.pack import pack_witness, pack_z_lincheck_from_packed  # no
 
 # The m22_fast / log_n=15 flock Ligerito profile (fold_ks=(6,4,3), residual 2).
 _M, _K_LOG, _K_SKIP = 22, 14, 6
-_CFG = dict(initial_k=6, recursive_ks=[4, 3], log_inv_rates=[1, 2, 4],
-            queries=[148, 100, 60], grinding_bits=[2, 1, 0],
-            fold_grinding_bits=[3, 2, 0], ood_samples=[0, 1, 1], recursive_steps=2)
+_CFG = dict(
+    initial_k=6,
+    recursive_ks=[4, 3],
+    log_inv_rates=[1, 2, 4],
+    queries=[148, 100, 60],
+    grinding_bits=[2, 1, 0],
+    fold_grinding_bits=[3, 2, 0],
+    ood_samples=[0, 1, 1],
+    recursive_steps=2,
+)
 
 
 def main() -> int:
@@ -44,17 +51,19 @@ def main() -> int:
     b0 = np.eye(k, dtype=np.uint64)
     stmt = bytes(range(32))  # opaque instance digest; the prover only observes it
 
-    res = prover.prove_fast(z_packed, _M, _K_LOG, _K_SKIP, a0, b0, z_lincheck, stmt, _CFG)
+    res = prover.prove_fast(
+        z_packed, _M, _K_LOG, _K_SKIP, a0, b0, z_lincheck, stmt, _CFG
+    )
 
     checks = {
-        "zerocheck multilinear rounds == m - k_skip":
-            len(res.zerocheck.multilinear_rounds) == _M - _K_SKIP,
-        "lincheck rounds == k_log - k_skip":
-            len(res.lincheck[0]) == _K_LOG - _K_SKIP,
-        "pcs_open ring_switches == 2 (ab + c)":
-            len(res.pcs_open.ring_switches) == 2,
-        "ab/c claims present":
-            res.claim_ab_value is not None and res.claim_c_value is not None,
+        "zerocheck multilinear rounds == m - k_skip": len(
+            res.zerocheck.multilinear_rounds
+        )
+        == _M - _K_SKIP,
+        "lincheck rounds == k_log - k_skip": len(res.lincheck[0]) == _K_LOG - _K_SKIP,
+        "pcs_open ring_switches == 2 (ab + c)": len(res.pcs_open.ring_switches) == 2,
+        "ab/c claims present": res.claim_ab_value is not None
+        and res.claim_c_value is not None,
     }
     ok = True
     for name, passed in checks.items():

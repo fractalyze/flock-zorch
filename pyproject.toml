@@ -62,3 +62,26 @@ include = ["flock_zorch*"]
 # top-level testing package, leaving the nested `*/testing/` oracle gates (and
 # the hundreds-of-MB goldens they expect) in the wheel.
 exclude = ["flock_zorch.testing*", "flock_zorch.*.testing*"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["python/flock_zorch"]
+# Annotations are not required yet: turning these on reports 278 missing
+# annotations across 39 files, which is a typing pass of its own rather than
+# part of enabling the linters.
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+warn_unused_ignores = true
+warn_redundant_casts = true
+
+# Untyped (or statically unresolvable) third parties: frx is an editable build
+# whose own stubs do not parse under mypy, zk_dtypes ships no py.typed, and absl
+# stubs only part of its surface. Our own annotations are still enforced.
+[[tool.mypy.overrides]]
+module = [
+  "frx.*", "frxlib.*", "zk_dtypes.*", "zkbench.*", "absl.*",
+  # zorch arrives through the bazel git_override, so it is not importable
+  # from a plain venv where mypy runs.
+  "zorch.*",
+]
+ignore_missing_imports = true

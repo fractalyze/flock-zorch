@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import functools
 
-import numpy as np
 import frx
+import numpy as np
 
 frx.config.update("jax_enable_x64", True)
 
@@ -44,8 +44,9 @@ def _prove(m: int, k_log: int, k_skip: int):
 def _verify(m, k_log, k_skip, zc, x_ab, lp, eye):
     chv = Challenger(DOMAIN)
     zcv.verify(m, zc, chv)
-    return lcv.verify(m, k_log, k_skip, eye, eye, x_ab,
-                      zc.final_a_eval, zc.final_b_eval, lp, chv)
+    return lcv.verify(
+        m, k_log, k_skip, eye, eye, x_ab, zc.final_a_eval, zc.final_b_eval, lp, chv
+    )
 
 
 class LincheckVerifyTest(parameterized.TestCase):

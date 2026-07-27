@@ -6,7 +6,8 @@ Proves `a(y)·b(y) ⊕ c(y) = 0 ∀ y ∈ {0,1}^m`. Structure: one univariate-sk
 round-1 (URM, `_urm.round1_rows`) over K_SKIP=6 skip variables, then a multilinear
 sumcheck over the remaining `m − K_SKIP` variables (the iter-10 `sumcheck`
 primitives). Fiat-Shamir is the host SHA-256 `Challenger`; the bulk field arith
-(`round_pair_eq`, the multilinear fold) runs on the native `binary_field_ghash` multiply (→ clmad on GPU).
+(`round_pair_eq`, the multilinear fold) runs on the native
+`binary_field_ghash` multiply (→ clmad on GPU).
 
 The protocol fixes the inner 7 of the `r` challenge coordinates to constants
 (`small`/`medium`), and the C track is pinned at round 1 (extract_c), so only AB
@@ -14,24 +15,27 @@ participate in the multilinear rounds — `final_c_eval` is an interpolation of
 `round1_c` at the URM fold-point `z`. Requires `jax_enable_x64` and `zorch` on
 PYTHONPATH.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from typing import Any
 
-import numpy as np
 import frx
 import frx.numpy as fnp
-
-from flock_zorch import ghash, sumcheck
-from flock_zorch.zerocheck import _urm
-from flock_zorch.ghash import _lanes_to_ghash, _ghash_to_lanes
-from flock_zorch.challenger import Challenger
-from flock_zorch.zerocheck._fold import (
-    _lagrange_weights, _interpolate_at_z_on_lambda, _fold_at_z,
-)
+import numpy as np
 from zorch.round import ProveChain, Round
 from zorch.sumcheck.domain import fold
+
+from flock_zorch import ghash, sumcheck
+from flock_zorch.challenger import Challenger
+from flock_zorch.ghash import _ghash_to_lanes, _lanes_to_ghash
+from flock_zorch.zerocheck import _urm
+from flock_zorch.zerocheck._fold import (
+    _fold_at_z,
+    _interpolate_at_z_on_lambda,
+    _lagrange_weights,
+)
 
 K_SKIP = 6
 N_INNER = 7  # 3 small + 4 medium fixed-constant inner dims
@@ -51,9 +55,9 @@ class ZerocheckProof:
     final_a_eval: Any
     final_b_eval: Any
     final_c_eval: Any
-    z: Any                # claim cross-check
-    mlv_challenges: Any   # claim cross-check
-    r_rest: Any           # claim cross-check
+    z: Any  # claim cross-check
+    mlv_challenges: Any  # claim cross-check
+    r_rest: Any  # claim cross-check
 
 
 @dataclass(frozen=True)
@@ -67,21 +71,24 @@ class _ZerocheckCarry:
     a_bits: Any
     b_bits: Any
     c_bits: Any
-    r: Any = None                    # ← _SetupRound
-    a_rows: Any = None               # ← _UrmRound (reused by _MultilinearRound)
-    b_rows: Any = None               # ← _UrmRound
-    round1_ab: Any = None            # ← _UrmRound
-    round1_c: Any = None             # ← _UrmRound
-    z: Any = None                    # ← _UrmRound
-    final_c_eval: Any = None         # ← _UrmRound
-    multilinear_rounds: Any = None   # ← _MultilinearRound
-    final_a_eval: Any = None         # ← _MultilinearRound
-    final_b_eval: Any = None         # ← _MultilinearRound
-    mlv_challenges: Any = None       # ← _MultilinearRound
+    r: Any = None  # ← _SetupRound
+    a_rows: Any = None  # ← _UrmRound (reused by _MultilinearRound)
+    b_rows: Any = None  # ← _UrmRound
+    round1_ab: Any = None  # ← _UrmRound
+    round1_c: Any = None  # ← _UrmRound
+    z: Any = None  # ← _UrmRound
+    final_c_eval: Any = None  # ← _UrmRound
+    multilinear_rounds: Any = None  # ← _MultilinearRound
+    final_a_eval: Any = None  # ← _MultilinearRound
+    final_b_eval: Any = None  # ← _MultilinearRound
+    mlv_challenges: Any = None  # ← _MultilinearRound
 
 
 def small_challenges() -> np.ndarray:
-    """[φ₈(0xF7), φ₈(0x53), φ₈(0xB5)] (flock `small_challenges_ghash`). uint64 [3, 2]."""
+    """[φ₈(0xF7), φ₈(0x53), φ₈(0xB5)] (flock `small_challenges_ghash`).
+
+    uint64 [3, 2].
+    """
     return _urm.PHI_8_TABLE[[0xF7, 0x53, 0xB5]]
 
 
@@ -92,12 +99,17 @@ def medium_challenges() -> np.ndarray:
     Inverted scalar-wise: `** -1` on a ghash *array* takes numpy's ufunc path,
     which rejects the -1 exponent; zk_dtypes' host inverse is scalar-only."""
     gamma = _lanes_to_ghash(np.array([[1 << e, 0] for e in (1, 2, 4, 8)], np.uint64))
-    one_plus = _lanes_to_ghash(np.array([[1 ^ (1 << e), 0] for e in (1, 2, 4, 8)], np.uint64))
+    one_plus = _lanes_to_ghash(
+        np.array([[1 ^ (1 << e), 0] for e in (1, 2, 4, 8)], np.uint64)
+    )
     return _ghash_to_lanes(
-        np.array([g * gp1 ** -1 for g, gp1 in zip(gamma, one_plus)], ghash._GHASH_HOST))
+        np.array([g * gp1**-1 for g, gp1 in zip(gamma, one_plus)], ghash._GHASH_HOST)
+    )
 
 
-_SMALL_G = ghash.to_ghash(fnp.asarray(small_challenges()))    # [3] ghash — fixed inner challenges
+_SMALL_G = ghash.to_ghash(
+    fnp.asarray(small_challenges())
+)  # [3] ghash — fixed inner challenges
 _MEDIUM_G = ghash.to_ghash(fnp.asarray(medium_challenges()))  # [4] ghash
 
 
@@ -114,8 +126,7 @@ def _mlv_round(a_g, b_g, eq_g, r0_g, t):
     m1, minf = sumcheck.round_pair_eq(a_g, b_g, eq_g, r0_g)
     t = t.observe_scalar(m1).observe_scalar(minf)
     t, rho = t.sample_scalar()
-    return fold(a_g, rho, msb=False), fold(b_g, rho, msb=False), \
-        t, m1, minf, rho
+    return fold(a_g, rho, msb=False), fold(b_g, rho, msb=False), t, m1, minf, rho
 
 
 @frx.jit
@@ -159,18 +170,28 @@ class _UrmRound(Round):
         a_rows = _urm.witness_to_rows(carry.a_bits, m, k_skip)
         b_rows = _urm.witness_to_rows(carry.b_bits, m, k_skip)
         c_rows = _urm.witness_to_rows(carry.c_bits, m, k_skip)
-        round1_ab, round1_c = _urm.round1_rows(a_rows, b_rows, c_rows, m, k_skip, carry.r)
-        transcript.observe_f128(round1_ab)     # native ghash, no host round trip
+        round1_ab, round1_c = _urm.round1_rows(
+            a_rows, b_rows, c_rows, m, k_skip, carry.r
+        )
+        transcript.observe_f128(round1_ab)  # native ghash, no host round trip
         transcript.observe_f128(round1_c)
         z = transcript.sample_f128()
         # c-claim: interpolate round1_c at z.
         final_c_eval = _interpolate_at_z_on_lambda(round1_c, k_skip, z)
-        is_packed = lambda x: (getattr(x, "ndim", 0) == 2 and x.shape[-1] == 2
-                               and x.dtype == np.uint64)
+        is_packed = lambda x: (
+            getattr(x, "ndim", 0) == 2 and x.shape[-1] == 2 and x.dtype == np.uint64
+        )
         a_fold = carry.a_bits if is_packed(carry.a_bits) else a_rows
         b_fold = carry.b_bits if is_packed(carry.b_bits) else b_rows
-        carry = replace(carry, a_rows=a_fold, b_rows=b_fold, round1_ab=round1_ab,
-                        round1_c=round1_c, z=z, final_c_eval=final_c_eval)
+        carry = replace(
+            carry,
+            a_rows=a_fold,
+            b_rows=b_fold,
+            round1_ab=round1_ab,
+            round1_c=round1_c,
+            z=z,
+            final_c_eval=final_c_eval,
+        )
         return carry, transcript, (round1_ab, round1_c)
 
 
@@ -197,11 +218,12 @@ class _MultilinearRound(Round):
         t = transcript._t
         # All rounds' eq suffix tables in one program (round i reads
         # eq(r[k_skip+1+i:])); r[0] of every round's message is fixed to one.
-        eq_tables = _EQ_TABLES(r_g[k_skip + 1:])
+        eq_tables = _EQ_TABLES(r_g[k_skip + 1 :])
         rounds, rhos = [], []
         for i in range(n_mlv):
             a_g, b_g, t, m1, minf, rho = _mlv_round(
-                a_g, b_g, eq_tables[i], sumcheck.eq._ONE_G, t)
+                a_g, b_g, eq_tables[i], sumcheck.eq._ONE_G, t
+            )
             rounds.append((m1, minf))
             rhos.append(rho)
         final_a, final_b = a_g[0], b_g[0]
@@ -209,9 +231,13 @@ class _MultilinearRound(Round):
 
         final_a_eval = final_a
         final_b_eval = final_b
-        carry = replace(carry, multilinear_rounds=rounds, final_a_eval=final_a_eval,
-                        final_b_eval=final_b_eval,
-                        mlv_challenges=fnp.stack(rhos))       # native ghash open-point coords
+        carry = replace(
+            carry,
+            multilinear_rounds=rounds,
+            final_a_eval=final_a_eval,
+            final_b_eval=final_b_eval,
+            mlv_challenges=fnp.stack(rhos),
+        )  # native ghash open-point coords
         return carry, transcript, (rounds, final_a_eval, final_b_eval)
 
 
@@ -219,12 +245,19 @@ def zerocheck_chain(m: int, k_skip: int) -> ProveChain:
     """The zerocheck sub-chain: setup → round-1 URM → multilinear sumcheck. One
     definition for the stage wiring (cf. prover.prove_fast / sp1-zorch
     prove_shard_chain)."""
-    return ProveChain([_SetupRound(m, k_skip), _UrmRound(m, k_skip),
-                       _MultilinearRound(m, k_skip)])
+    return ProveChain(
+        [_SetupRound(m, k_skip), _UrmRound(m, k_skip), _MultilinearRound(m, k_skip)]
+    )
 
 
-def prove_packed(a_bits, b_bits, c_bits, m: int, domain: bytes | None = None,
-                 ch: Challenger | None = None) -> ZerocheckProof:
+def prove_packed(
+    a_bits,
+    b_bits,
+    c_bits,
+    m: int,
+    domain: bytes | None = None,
+    ch: Challenger | None = None,
+) -> ZerocheckProof:
     """Returns a `ZerocheckProof` (proof fields + the claim's z / mlv_challenges /
     r_rest, the latter for the oracle's localization cross-checks).
 
@@ -235,9 +268,11 @@ def prove_packed(a_bits, b_bits, c_bits, m: int, domain: bytes | None = None,
     k_skip = K_SKIP
     assert m >= k_skip + N_INNER, f"m must be >= {k_skip + N_INNER}"
     if ch is None:
+        assert domain is not None, "pass either a domain or a Challenger"
         ch = Challenger(domain)
     carry, _ch, _msgs = zerocheck_chain(m, k_skip)(
-        _ZerocheckCarry(a_bits, b_bits, c_bits), ch)
+        _ZerocheckCarry(a_bits, b_bits, c_bits), ch
+    )
     return ZerocheckProof(
         round1_ab=carry.round1_ab,
         round1_c=carry.round1_c,
@@ -247,5 +282,7 @@ def prove_packed(a_bits, b_bits, c_bits, m: int, domain: bytes | None = None,
         final_c_eval=carry.final_c_eval,
         z=carry.z,
         mlv_challenges=carry.mlv_challenges,
-        r_rest=carry.r[k_skip:],   # native ghash: the c-open point coords; byte-gate lanes-converts
+        r_rest=carry.r[
+            k_skip:
+        ],  # native ghash: the c-open point coords; byte-gate lanes-converts
     )

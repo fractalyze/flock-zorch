@@ -26,8 +26,10 @@ def _report(name: str, ok: bool) -> bool:
 
 def _check_roundtrip(m: int) -> bool:
     w = _rand_bits(m, 1 << m)
-    return _report(f"pack↔unpack roundtrip (m={m})",
-                   np.array_equal(_unpack_flat(pack_witness(w, m)), w))
+    return _report(
+        f"pack↔unpack roundtrip (m={m})",
+        np.array_equal(_unpack_flat(pack_witness(w, m)), w),
+    )
 
 
 def _check_lsb_first() -> bool:
@@ -35,8 +37,9 @@ def _check_lsb_first() -> bool:
     w = np.zeros(128, np.uint8)
     w[0] = w[3] = w[64] = 1
     lane = pack_witness(w, 7)
-    return _report("LSB-first lo/hi split",
-                   int(lane[0, 0]) == 0b1001 and int(lane[0, 1]) == 1)
+    return _report(
+        "LSB-first lo/hi split", int(lane[0, 0]) == 0b1001 and int(lane[0, 1]) == 1
+    )
 
 
 def _check_wrong_length_raises() -> bool:
@@ -49,7 +52,8 @@ def _check_wrong_length_raises() -> bool:
 
 def _check_lincheck_layout(m: int, k_log: int) -> bool:
     # Read the lincheck bytes exactly as partial_fold_packed_z ingests them:
-    # reshape (n_bytes, k); bit r of byte[byte_idx, i_inner] == z[i_inner + (8·byte_idx + r)·k].
+    # reshape (n_bytes, k); bit r of byte[byte_idx, i_inner] ==
+    # z[i_inner + (8·byte_idx + r)·k].
     w = _rand_bits(m * 100 + k_log, 1 << m)
     zlc = pack_z_lincheck_from_packed(pack_witness(w, m), m, k_log)
     k = 1 << k_log

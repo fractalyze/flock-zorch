@@ -10,15 +10,14 @@ extra hashes, cheaper trace; Merkle is <1% of PCS commit).
 
 The octopus multi-proof stays flock-side: the proof layout is flock's assembly.
 """
+
 from __future__ import annotations
 
 import frx
 import frx.numpy as fnp
 import numpy as np
-
 from zorch.commit.merkle import MerkleTree
-
-from zorch.hash.sha256 import INITIAL_STATE, sha256_chain, U32
+from zorch.hash.sha256 import INITIAL_STATE, U32, sha256_chain
 
 
 def _pad_device(msg, length: int):
@@ -33,9 +32,16 @@ def _pad_device(msg, length: int):
     padded = padded.at[:, :length].set(msg)
     padded = padded.at[:, length].set(fnp.uint8(0x80))
     for i in range(8):  # 8-byte big-endian bit length at the tail (static bytes)
-        padded = padded.at[:, total - 8 + i].set(fnp.uint8((bitlen >> (8 * (7 - i))) & 0xFF))
+        padded = padded.at[:, total - 8 + i].set(
+            fnp.uint8((bitlen >> (8 * (7 - i))) & 0xFF)
+        )
     words = padded.reshape(b, nblocks, 16, 4).astype(fnp.uint32)
-    return (words[..., 0] << U32(24)) | (words[..., 1] << U32(16)) | (words[..., 2] << U32(8)) | words[..., 3]
+    return (
+        (words[..., 0] << U32(24))
+        | (words[..., 1] << U32(16))
+        | (words[..., 2] << U32(8))
+        | words[..., 3]
+    )
 
 
 def _digest(msgs, length: int):
@@ -50,6 +56,7 @@ class _Sha256LeafHasher:
     leaf dtype and a single `_Sha256MerkleTree` serves both. Batched hashing runs
     through `_Sha256MerkleTree._hash_leaves`; `hash` is the single-row form the
     inherited reconstruct/verify path calls."""
+
     out = 32
 
     def as_bytes(self, matrix):
@@ -73,12 +80,15 @@ class _GhashSha256LeafHasher(_Sha256LeafHasher):
     device ghash→integer direction (ghash→uint64 returns zeros, zorch#399)."""
 
     def as_bytes(self, matrix):
-        return frx.lax.bitcast_convert_type(matrix, fnp.uint8).reshape(matrix.shape[0], -1)
+        return frx.lax.bitcast_convert_type(matrix, fnp.uint8).reshape(
+            matrix.shape[0], -1
+        )
 
 
 class _Sha256Compressor:
     """`compressor` seam: 2-to-1 `SHA256(left ‖ right)` (64-byte preimage) over
     32-byte digests."""
+
     arity = 2
     chunk = 32
 
@@ -157,9 +167,11 @@ def paths_to_multi_proof(paths: np.ndarray, num_leaves: int, positions) -> np.nd
     paths = np.asarray(paths)
     proof = []
     for level, groups in enumerate(_octopus_levels(positions, num_leaves)):
-        node_to_qi = {}
+        node_to_qi: dict[int, int] = {}
         for qi, leaf in enumerate(positions):
-            node_to_qi.setdefault(leaf >> level, qi)  # any query passing through this node
+            node_to_qi.setdefault(
+                leaf >> level, qi
+            )  # any query passing through this node
         for p, paired in groups:
             if not paired:
                 proof.append(paths[node_to_qi[p], level])  # digest of node p^1

@@ -28,7 +28,9 @@ def pack_witness(z_bits, m: int) -> np.ndarray:
     if z.size != 1 << m:
         raise ValueError(f"z length must be 2^m = {1 << m}, got {z.size}")
     if m < LOG_PACKING:
-        raise ValueError(f"witness too small to pack: m={m} < LOG_PACKING={LOG_PACKING}")
+        raise ValueError(
+            f"witness too small to pack: m={m} < LOG_PACKING={LOG_PACKING}"
+        )
     # [e, half, r] = z[e·128 + half·64 + r]; bit r of each half weighted by 2^r.
     halves = z.reshape(1 << (m - LOG_PACKING), 2, 64).astype(np.uint64)
     weights = np.uint64(1) << np.arange(64, dtype=np.uint64)
@@ -44,7 +46,8 @@ def pack_z_lincheck_from_packed(z_packed, m: int, k_log: int) -> bytes:
     n_total = 1 << m
     if zp.shape[0] != n_total // PACKING_WIDTH:
         raise ValueError(
-            f"z_packed must be [2^(m-7), 2] = [{n_total // PACKING_WIDTH}, 2], got {zp.shape}"
+            f"z_packed must be [2^(m-7), 2] = "
+            f"[{n_total // PACKING_WIDTH}, 2], got {zp.shape}"
         )
     k = 1 << k_log
     # n_total and k are powers of two, so n_total ≥ 8·k gives a power-of-two

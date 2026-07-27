@@ -7,6 +7,7 @@ circuit missing either member is rejected — so a future circuit that forgets
 `fold_alpha_batched` or `const_pin` fails here instead of at a `prove` call site.
 The fold's math is pinned by the byte-match oracle gates, not here.
 """
+
 from __future__ import annotations
 
 import sys
@@ -35,7 +36,7 @@ def _check(name, obj, want, results):
 
 
 def main() -> int:
-    results = []
+    results: list[tuple[str, bool]] = []
     # The three real circuits conform (CscCircuit takes empty sparse rows here —
     # construction only, no fold is run).
     _check("CscCircuit", CscCircuit([], [], 8, const_pin=None), True, results)

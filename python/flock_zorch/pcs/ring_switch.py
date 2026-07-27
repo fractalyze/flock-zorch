@@ -13,14 +13,15 @@ little-endian storage of `binary_field_ghash` (same GHASH basis, verified
 `2*2 = 4`), so the boundary is a direct bitcast, never `astype`.
 Requires `jax_enable_x64`.
 """
+
 from __future__ import annotations
 
 import frx
 import frx.numpy as fnp
+from zorch.pcs.ring_switch import bit_slice_evals, rs_eq_ind, tensor_algebra_transpose
 
 from flock_zorch import fs, ghash, sumcheck
 from flock_zorch.challenger import Challenger
-from zorch.pcs.ring_switch import bit_slice_evals, rs_eq_ind, tensor_algebra_transpose
 
 LOG_PACKING = ghash.LOG_PACKING
 LABEL = b"flock-ring-switch-v0"
@@ -43,14 +44,14 @@ def _reduce_one(t, packed, x_outer):
     claim [ghash]); the caller turns eq_r_dprime into rs_eq_ind (with or without a
     gamma scale)."""
     t = fs.observe_label(t, LABEL)
-    suffix = x_outer[1:]                                       # ghash coords, length L
+    suffix = x_outer[1:]  # ghash coords, length L
     suffix_tensor = sumcheck.build_eq(suffix)
-    s_hat_v = bit_slice_evals(packed, suffix_tensor)      # (128,) ghash
-    t = fs.observe_slice(t, s_hat_v)                  # observe device ghash directly
-    t, r_dprime = fs.sample_slice(t, LOG_PACKING)     # [7] ghash, kept native
-    eq_r_dprime = sumcheck.build_eq(r_dprime)          # [128] ghash, for the gamma combine
+    s_hat_v = bit_slice_evals(packed, suffix_tensor)  # (128,) ghash
+    t = fs.observe_slice(t, s_hat_v)  # observe device ghash directly
+    t, r_dprime = fs.sample_slice(t, LOG_PACKING)  # [7] ghash, kept native
+    eq_r_dprime = sumcheck.build_eq(r_dprime)  # [128] ghash, for the gamma combine
     claim = _inner_product(tensor_algebra_transpose(s_hat_v), eq_r_dprime)
-    return t, s_hat_v, suffix_tensor, eq_r_dprime, claim       # claim native ghash
+    return t, s_hat_v, suffix_tensor, eq_r_dprime, claim  # claim native ghash
 
 
 def prove_batched(packed_witness, x_outers, ch: Challenger):
@@ -66,13 +67,15 @@ def prove_batched(packed_witness, x_outers, ch: Challenger):
     works = []
     for x_outer in x_outers:
         ch._t, *work = _reduce_one(ch._t, packed, x_outer)
-        works.append(work)                                    # [s_hat_v, suffix_tensor, eq_r_dprime, claim]
+        works.append(work)  # [s_hat_v, suffix_tensor, eq_r_dprime, claim]
     gammas = [ch.sample_f128() for _ in range(len(x_outers))]
 
     s_hat_vs, rs_eq_inds, sumcheck_claims = [], [], []
     for (s_hat_v, suffix_tensor, eq_r_dprime, claim), g in zip(works, gammas):
         scaled = g * eq_r_dprime  # gamma baked into eq
-        rs_eq_inds.append(rs_eq_ind(suffix_tensor, scaled))   # ghash [2^L], device-resident
+        rs_eq_inds.append(
+            rs_eq_ind(suffix_tensor, scaled)
+        )  # ghash [2^L], device-resident
         s_hat_vs.append(s_hat_v)
         sumcheck_claims.append(claim)
     return s_hat_vs, rs_eq_inds, sumcheck_claims, gammas

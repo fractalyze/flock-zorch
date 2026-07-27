@@ -7,6 +7,7 @@ alone. Every hop here is one compiled executable; inputs are scalar- or
 static-shaped, so each compiles once per distinct shape (labels compile once
 per literal) and is cached for the process.
 """
+
 from __future__ import annotations
 
 import functools

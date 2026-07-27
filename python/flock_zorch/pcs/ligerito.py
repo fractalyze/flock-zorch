@@ -26,18 +26,17 @@ basis are the full-index bit-reversals of flock's `w` / `b`, under which
 zorch's folds, commits, and induces reproduce flock's bytes exactly (gate:
 `testing/ligerito_oracle_test.py`).
 """
+
 from __future__ import annotations
 
 import functools
 from dataclasses import dataclass
 
-from frx.tree_util import register_dataclass
-
 import frx
 import frx.numpy as fnp
 import numpy as np
 from frx import Array, lax
-
+from frx.tree_util import register_dataclass
 from zorch.coding.reed_solomon import ReedSolomon
 from zorch.pcs.ligerito.choreography import LigeritoChoreography
 from zorch.pcs.ligerito.config import LigeritoConfig
@@ -45,7 +44,7 @@ from zorch.pcs.ligerito.prover import LigeritoProver, LigeritoProverData
 from zorch.pcs.ligerito.verifier import LigeritoVerifier
 from zorch.sha256_field_transcript import Sha256FieldTranscript
 
-from flock_zorch import ghash, fs
+from flock_zorch import fs, ghash
 from flock_zorch.hash import merkle
 
 # `open_with_basis` only traces as one jitted program if every node on its in/out
@@ -124,8 +123,8 @@ def _sample_distinct_positions(inner, block_len: int, count: int):
         return inner, out, fnp.where(hit, n, n + fnp.int32(1))
 
     inner, out, _ = lax.while_loop(
-        lambda c: c[2] < count, body,
-        (inner, fnp.zeros(count, fnp.int32), fnp.int32(0)))
+        lambda c: c[2] < count, body, (inner, fnp.zeros(count, fnp.int32), fnp.int32(0))
+    )
     return inner, fnp.sort(out)
 
 
@@ -281,7 +280,8 @@ def _flock_proof_dict(
         return {
             "opened_rows": rows,
             "merkle_proof": merkle.paths_to_multi_proof(
-                paths, 1 << len(opening.path), p.component_positions[j]),
+                paths, 1 << len(opening.path), p.component_positions[j]
+            ),
         }
 
     # each round message is the (u0, u2) F128 pair
@@ -308,7 +308,10 @@ def _flock_proof_dict(
         "initial_proof": level(0),
         "recursive_roots": [np.asarray(r) for r in p.recursive_roots],
         "recursive_proofs": [level(j) for j in range(1, num_levels - 1)],
-        "final_proof": {**level(num_levels - 1), "yr": _lohi(_bitrev(p.final_residual))},
+        "final_proof": {
+            **level(num_levels - 1),
+            "yr": _lohi(_bitrev(p.final_residual)),
+        },
         "sumcheck_transcript": sumcheck_transcript,
         "grinding_nonces": query_nonces,
         "ood_values": [_lohi(y).reshape(2) for y in p.ood_values],
@@ -365,14 +368,21 @@ def verify_flock_ligerito(cfg: dict, root, b_combined, target, proof, ch) -> Arr
     log_n = b_combined.shape[0].bit_length() - 1
     config, chor = flock_ligerito_config(cfg, log_n)
     verifier = LigeritoVerifier(_make_ghash_code, merkle.GHASH_TREE, config, chor)
-    ok, t = verifier.verify_with_basis(root, _bitrev(b_combined), target, proof,
-                                       FlockTranscript(ch._t))
+    ok, t = verifier.verify_with_basis(
+        root, _bitrev(b_combined), target, proof, FlockTranscript(ch._t)
+    )
     ch._t = t.inner
     return ok
 
 
-def prove_flock_ligerito(cfg: dict, pdata: LigeritoProverData, b_combined, target, ch,
-                         return_proof: bool = False):
+def prove_flock_ligerito(
+    cfg: dict,
+    pdata: LigeritoProverData,
+    b_combined,
+    target,
+    ch,
+    return_proof: bool = False,
+):
     """Drive `zorch.pcs.ligerito` over flock's shared challenger and assemble a
     flock `LigeritoProof` dict — byte-identical to the retired in-tree
     `ligerito.recursive_prover_with_basis`.
@@ -387,7 +397,8 @@ def prove_flock_ligerito(cfg: dict, pdata: LigeritoProverData, b_combined, targe
     prover, config, chor = _flock_ligerito_prover(cfg, log_n)
 
     proof, t_open = _open_jitted(
-        prover, pdata, b_combined, target, FlockTranscript(ch._t))
+        prover, pdata, b_combined, target, FlockTranscript(ch._t)
+    )
     ch._t = t_open.inner
     wire = _flock_proof_dict(proof, np.asarray(pdata.initial.root), config, chor)
     return (wire, proof) if return_proof else wire

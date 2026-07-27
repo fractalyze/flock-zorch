@@ -96,9 +96,9 @@ def _smi(query: str, gpu: str | None = None) -> str:
     if gpu is not None:
         cmd += ["-i", gpu]
     cmd += [f"--query-{query}", "--format=csv,noheader,nounits"]
-    return subprocess.run(cmd,
-                          capture_output=True, text=True, timeout=15,
-                          check=True).stdout.strip()
+    return subprocess.run(
+        cmd, capture_output=True, text=True, timeout=15, check=True
+    ).stdout.strip()
 
 
 def gpu_provenance() -> tuple[str, int]:
@@ -118,9 +118,13 @@ def gpu_provenance() -> tuple[str, int]:
         # One row per GPU. Aggregate rather than taking row 0: frx's device 0
         # need not be nvidia-smi's, and watching the wrong card silently is
         # worse than being occasionally too conservative.
-        rows = [r.split(",") for r in
-                _smi("gpu=memory.used,memory.total,utilization.gpu", gpu).splitlines()
-                if r.strip()]
+        rows = [
+            r.split(",")
+            for r in _smi(
+                "gpu=memory.used,memory.total,utilization.gpu", gpu
+            ).splitlines()
+            if r.strip()
+        ]
         used = sum(int(r[0]) for r in rows)
         total = sum(int(r[1]) for r in rows)
         util = max(int(r[2]) for r in rows)
@@ -129,10 +133,15 @@ def gpu_provenance() -> tuple[str, int]:
 
     try:
         own = os.getpid()
-        others = [p for p in (int(ln.split(",")[0])
-                              for ln in _smi("compute-apps=pid,used_memory",
-                                             gpu).splitlines() if ln.strip())
-                  if p != own]
+        others = [
+            p
+            for p in (
+                int(ln.split(",")[0])
+                for ln in _smi("compute-apps=pid,used_memory", gpu).splitlines()
+                if ln.strip()
+            )
+            if p != own
+        ]
     except Exception:
         return f"{used}/{total} MiB, util {util}% (compute-app list unavailable)", -1
 
@@ -142,14 +151,17 @@ def gpu_provenance() -> tuple[str, int]:
 
 # ------------------------------------------------------------------- circuits
 
+
 def _csc(g):
     meta = g["meta"]
-    return lincheck.CscCircuit(g["a0_rows"], g["b0_rows"], 1 << meta["k_log"],
-                               const_pin=meta["const_pin"])
+    return lincheck.CscCircuit(
+        g["a0_rows"], g["b0_rows"], 1 << meta["k_log"], const_pin=meta["const_pin"]
+    )
 
 
 def _keccak3_circuit(_g):
     from flock_zorch.lincheck.keccak3 import Keccak3LincheckCircuit
+
     return Keccak3LincheckCircuit()
 
 
@@ -157,7 +169,9 @@ def _keccak3_circuit(_g):
 # dump example, loader, unpacker — follows from the name by the repo's own
 # naming, so there is one place per circuit to get wrong.
 CIRCUITS: dict[str, Callable] = {
-    "blake3": _csc, "sha2": _csc, "keccak3": _keccak3_circuit,
+    "blake3": _csc,
+    "sha2": _csc,
+    "keccak3": _keccak3_circuit,
 }
 
 
@@ -178,6 +192,7 @@ class Circuit:
         """Hashes packed into one 2^k_log block."""
         if self.name == "keccak3":
             from flock_zorch.lincheck.keccak3 import N_SUB
+
             return N_SUB  # 3 independent Keccak-f[1600] permutations per block
         return 1
 
@@ -187,7 +202,8 @@ class Circuit:
     @property
     def _oracle(self):
         return importlib.import_module(
-            f"flock_zorch.testing.{self.name}_ligerito_oracle_test")
+            f"flock_zorch.testing.{self.name}_ligerito_oracle_test"
+        )
 
     def ingest(self, golden: str | None):
         """Load a golden through the gate's own loader, so the bench and the byte
@@ -206,6 +222,7 @@ class Circuit:
 
 # -------------------------------------------------------------------- timing
 
+
 def make_prove(circ: Circuit, g, unpacked: bool):
     """Returns a `prove(times) -> result` running one full prove.
 
@@ -221,8 +238,11 @@ def make_prove(circ: Circuit, g, unpacked: bool):
     circuit = circ.build(g)
 
     if unpacked:
-        witness = (unpack_bits(g["a"], m), unpack_bits(g["b"], m),
-                   unpack_bits(g["z"], m))
+        witness = (
+            unpack_bits(g["a"], m),
+            unpack_bits(g["b"], m),
+            unpack_bits(g["z"], m),
+        )
     else:
         # Packed F128 — witness_to_rows unpacks on device (8x less host transfer).
         witness = (g["a"], g["b"], g["z"])
@@ -249,8 +269,9 @@ def make_prove(circ: Circuit, g, unpacked: bool):
 
         def _lincheck(zc):
             x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, ir)
-            lc = lincheck.prove(zlc, None, None, x_ab, m, k_log, k_skip,
-                                ch=ch, circuit=circuit)
+            lc = lincheck.prove(
+                zlc, None, None, x_ab, m, k_log, k_skip, ch=ch, circuit=circuit
+            )
             return x_ab, lc
 
         def _open(zc, x_ab, lc):
@@ -259,8 +280,10 @@ def make_prove(circ: Circuit, g, unpacked: bool):
             return prover.open_batch_ligerito(cfg, z, pdata, [ab, cc], ch)
 
         pdata, ch = phase("commit", _commit)
-        zc = phase("zerocheck",
-                   lambda: zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch))
+        zc = phase(
+            "zerocheck",
+            lambda: zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch),
+        )
         x_ab, lc = phase("lincheck", lambda: _lincheck(zc))
         return phase("open", lambda: _open(zc, x_ab, lc))
 
@@ -268,6 +291,7 @@ def make_prove(circ: Circuit, g, unpacked: bool):
 
 
 # ---------------------------------------------------------------------- main
+
 
 def bench(circ: Circuit, args) -> None:
     """Measure one circuit and print its row. Scoped to a function so the golden
@@ -284,53 +308,84 @@ def bench(circ: Circuit, args) -> None:
     wall, parts = best_of(timed_prove, args.runs)
     total = sum(parts.values())
 
-    print(f"{circ.name:>8} {meta['m']:>3} {n_hash:>8} " +
-          " ".join(f"{parts[p]:>9.2f}ms" for p in PHASES) +
-          f" {total:>7.1f}ms {wall:>7.1f}ms {n_hash * 1e3 / wall:>10.0f}")
+    print(
+        f"{circ.name:>8} {meta['m']:>3} {n_hash:>8} "
+        + " ".join(f"{parts[p]:>9.2f}ms" for p in PHASES)
+        + f" {total:>7.1f}ms {wall:>7.1f}ms {n_hash * 1e3 / wall:>10.0f}"
+    )
     print("  " + "  ".join(f"{p} {100 * parts[p] / total:.0f}%" for p in PHASES))
     if args.cpu_ms:
-        print(f"  {args.cpu_ms / wall:.2f}x vs same-instance flock CPU {args.cpu_ms:.0f}ms")
+        print(
+            f"  {args.cpu_ms / wall:.2f}x vs same-instance flock CPU "
+            f"{args.cpu_ms:.0f}ms"
+        )
     if abs(total - wall) / wall > 0.10:
-        print(f"  NOTE {wall - total:+.1f}ms ({100 * (wall - total) / wall:+.0f}%) of the "
-              "prove is outside every phase — the split under-counts; instrumentation bug.")
+        print(
+            f"  NOTE {wall - total:+.1f}ms "
+            f"({100 * (wall - total) / wall:+.0f}%) of the prove is outside every "
+            "phase — the split under-counts; instrumentation bug."
+        )
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("circuits", nargs="*", default=["blake3"], choices=list(CIRCUITS))
-    ap.add_argument("--golden", help="golden filename under artifacts/, for m-variant "
-                                     "dumps (single circuit only)")
+    ap.add_argument(
+        "--golden",
+        help="golden filename under artifacts/, for m-variant "
+        "dumps (single circuit only)",
+    )
     ap.add_argument("--runs", type=int, default=3, help="timed iterations, best-of")
-    ap.add_argument("--cpu-ms", type=float, help="flock CPU ms for the same instance "
-                                                 "(from bench_<circuit>_cpu), to print a "
-                                                 "speedup; single circuit only")
-    ap.add_argument("--unpacked", action="store_true",
-                    help="send witness as uint8 bits (8x host transfer) not packed F128")
-    ap.add_argument("--allow-contended", action="store_true",
-                    help="measure even with another compute process on the card")
+    ap.add_argument(
+        "--cpu-ms",
+        type=float,
+        help="flock CPU ms for the same instance "
+        "(from bench_<circuit>_cpu), to print a "
+        "speedup; single circuit only",
+    )
+    ap.add_argument(
+        "--unpacked",
+        action="store_true",
+        help="send witness as uint8 bits (8x host transfer) not packed F128",
+    )
+    ap.add_argument(
+        "--allow-contended",
+        action="store_true",
+        help="measure even with another compute process on the card",
+    )
     args = ap.parse_args()
 
     if len(args.circuits) > 1:
         for flag, val in (("--golden", args.golden), ("--cpu-ms", args.cpu_ms)):
             if val is not None:
-                ap.error(f"{flag} describes one instance; pass a single circuit with it")
+                ap.error(
+                    f"{flag} describes one instance; pass a single circuit with it"
+                )
 
     card, others = gpu_provenance()
     if others > 0 and not args.allow_contended:
-        print(f"REFUSING to measure: {others} other compute process(es) on the card "
-              f"({card}).\nA neighbour saturating the SMs inflates a warm prove by "
-              "~28x on this box. Wait for the card, or pass --allow-contended for "
-              "ratio-only work.", file=sys.stderr)
+        print(
+            f"REFUSING to measure: {others} other compute process(es) on the card "
+            f"({card}).\nA neighbour saturating the SMs inflates a warm prove by "
+            "~28x on this box. Wait for the card, or pass --allow-contended for "
+            "ratio-only work.",
+            file=sys.stderr,
+        )
         return 2
 
     print(f"device {frx.devices()[0]} | gpu: {card}")
-    print(f"witness form: {'uint8 bits' if args.unpacked else 'packed F128'} "
-          f"| best-of-{args.runs} within this process\n")
+    print(
+        f"witness form: {'uint8 bits' if args.unpacked else 'packed F128'} "
+        f"| best-of-{args.runs} within this process\n"
+    )
 
-    hdr = (f"{'circuit':>8} {'m':>3} {'hashes':>8} " +
-           " ".join(f"{p:>10}" for p in PHASES) +
-           f" {'sum':>9} {'wall':>9} {'hash/s':>10}")
+    hdr = (
+        f"{'circuit':>8} {'m':>3} {'hashes':>8} "
+        + " ".join(f"{p:>10}" for p in PHASES)
+        + f" {'sum':>9} {'wall':>9} {'hash/s':>10}"
+    )
     print(hdr)
     print("-" * len(hdr))
 

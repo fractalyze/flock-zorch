@@ -64,6 +64,23 @@ on a `zk-dtypes` too old for the binary-field dtypes.
 
 ## Setup
 
+Install the git hooks with both stages named. Plain `pre-commit install` wires
+only the `pre-commit` stage, which leaves the commit-message linter inactive —
+a malformed commit message then sails through to CI:
+
+```sh
+pre-commit install --install-hooks --hook-type pre-commit --hook-type commit-msg
+```
+
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org):
+a valid type, a lowercase summary with no trailing period, a header of at most
+80 characters, and a body on everything but `docs`. The scope is the scheme the
+change lives in — `hash`, `lincheck`, `pcs`, `sumcheck`, `zerocheck` — or one of
+`verifier`, `ghash`, `prover`, `challenger`, `fs`, `release` for the modules
+directly under the package. A change spanning several of them takes no scope.
+The same linter runs in CI over every commit in a pull request and over the PR
+title.
+
 No submodules and nothing to clone by hand — both pinned deps are fetched by the
 build:
 

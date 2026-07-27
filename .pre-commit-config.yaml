@@ -1,0 +1,51 @@
+repos:
+    # Runs at the commit-msg stage, so `pre-commit install` alone does not wire
+    # it up — see README for the install command that covers both stages.
+  - repo: https://github.com/fractalyze/fractal-lint
+    # Match the version the Commit Lint CI job runs, so a message that passes
+    # locally also passes CI.
+    rev: v0.8.0
+    hooks:
+      - id: fractal-commit-lint
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: debug-statements
+      - id: requirements-txt-fixer
+        exclude: requirements_lock_.*\.txt
+
+  - repo: https://github.com/psf/black
+    rev: 24.1.1
+    hooks:
+      - id: black
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.10
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix, --select=E501, --select=I, --select=F401]
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v2.1.0
+    hooks:
+      - id: mypy
+        # Checks the whole python/ tree rather than just the changed files, so
+        # cross-module inference stays consistent. zorch arrives via bazel and
+        # the frx stubs do not parse, so both are ignored in pyproject.
+        pass_filenames: false
+        additional_dependencies: [numpy]
+
+  - repo: https://github.com/keith/pre-commit-buildifier
+    rev: 8.0.1
+    hooks:
+      - id: buildifier
+      - id: buildifier-lint
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.7
+    hooks:
+      - id: actionlint

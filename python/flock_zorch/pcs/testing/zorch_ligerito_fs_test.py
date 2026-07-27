@@ -13,28 +13,27 @@ Two layers, both CPU, no golden:
      yet a byte-match of flock's proof (the commit/induce basis convention is
      the remaining T4 delta, tracked on #32).
 """
+
 import sys
 
-import numpy as np
 import frx
+import numpy as np
 
 frx.config.update("jax_enable_x64", True)
 frx.config.update("jax_platforms", "cpu")
 
 import frx.numpy as fnp  # noqa: E402
 from frx import lax  # noqa: E402
-
 from zorch.coding.reed_solomon import ReedSolomon  # noqa: E402
 from zorch.pcs.ligerito.config import LigeritoConfig  # noqa: E402
 from zorch.pcs.ligerito.prover import LigeritoProver  # noqa: E402
 from zorch.pcs.ligerito.verifier import LigeritoVerifier  # noqa: E402
 from zorch.poly.multilinear import eval_mle  # noqa: E402
 
-from flock_zorch.hash import merkle  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
+from flock_zorch.hash import merkle  # noqa: E402
 from flock_zorch.pcs.ligerito import (  # noqa: E402
     FlockChoreography,
-    FlockTranscript,
     flock_ligerito_config,
     flock_transcript,
 )
@@ -64,8 +63,12 @@ def _state_eq(a, b) -> bool:
     sa, sb = a.state, b.state
     return all(
         np.array_equal(np.asarray(x), np.asarray(y))
-        for x, y in ((sa.h, sb.h), (sa.pending, sb.pending),
-                     (sa.pending_len, sb.pending_len), (sa.total_len, sb.total_len))
+        for x, y in (
+            (sa.h, sb.h),
+            (sa.pending, sb.pending),
+            (sa.pending_len, sb.pending_len),
+            (sa.total_len, sb.total_len),
+        )
     )
 
 
@@ -160,9 +163,14 @@ def test_distinct_queries_lockstep():
 
 def test_config_mapping():
     cfg = dict(
-        initial_k=6, recursive_ks=[4, 3], log_inv_rates=[1, 2, 4],
-        queries=[148, 100, 60], grinding_bits=[2, 1, 0],
-        fold_grinding_bits=[3, 2, 0], ood_samples=[0, 1, 1], recursive_steps=2,
+        initial_k=6,
+        recursive_ks=[4, 3],
+        log_inv_rates=[1, 2, 4],
+        queries=[148, 100, 60],
+        grinding_bits=[2, 1, 0],
+        fold_grinding_bits=[3, 2, 0],
+        ood_samples=[0, 1, 1],
+        recursive_steps=2,
     )
     config, chor = flock_ligerito_config(cfg, log_n=15)
     check(

@@ -10,8 +10,8 @@ had (the proof-level gates only drive identity or procedural circuits); the
 fold's byte-identity to flock rides those proof gates."""
 from __future__ import annotations
 
-import numpy as np
 import frx
+import numpy as np
 
 frx.config.update("jax_enable_x64", True)
 
@@ -32,7 +32,9 @@ def _rand_rows(rng, n_rows: int, k: int, max_nnz: int) -> list[list[int]]:
     ]
 
 
-def _ref_matvec_lanes(rows: list[list[int]], eq_lanes: np.ndarray, k: int) -> np.ndarray:
+def _ref_matvec_lanes(
+    rows: list[list[int]], eq_lanes: np.ndarray, k: int
+) -> np.ndarray:
     """out[c] = XOR_{r: M[r,c]=1} eq[r], as a naive host scatter over lanes."""
     out = np.zeros((k, 2), np.uint64)
     for r, cols in enumerate(rows):
@@ -49,16 +51,19 @@ class CscFoldTest(parameterized.TestCase):
         alpha = ghash.to_ghash(_rand_lanes(rng, 1)[0])  # (2,) lanes -> ghash scalar
 
         got = CscCircuit(a_rows, b_rows, k).fold_alpha_batched(
-            alpha, ghash.to_ghash(eq_lanes))
-        want = (alpha * ghash.to_ghash(_ref_matvec_lanes(a_rows, eq_lanes, k))
-                + ghash.to_ghash(_ref_matvec_lanes(b_rows, eq_lanes, k)))
+            alpha, ghash.to_ghash(eq_lanes)
+        )
+        want = alpha * ghash.to_ghash(
+            _ref_matvec_lanes(a_rows, eq_lanes, k)
+        ) + ghash.to_ghash(_ref_matvec_lanes(b_rows, eq_lanes, k))
         np.testing.assert_array_equal(ghash.to_lanes(got), ghash.to_lanes(want))
 
     @parameterized.parameters((16, 3, 0), (64, 4, 1), (256, 6, 2))
     def test_random_sparse(self, k: int, max_nnz: int, seed: int):
         rng = np.random.default_rng(seed)
         self._assert_fold_matches(
-            _rand_rows(rng, k, k, max_nnz), _rand_rows(rng, k, k, max_nnz), k, seed)
+            _rand_rows(rng, k, k, max_nnz), _rand_rows(rng, k, k, max_nnz), k, seed
+        )
 
     def test_skewed_column(self):
         # Every A row hits column 0 (the const_pin shape the seg-scan exists for)
