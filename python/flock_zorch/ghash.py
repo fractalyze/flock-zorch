@@ -76,5 +76,3 @@ def _ghash_to_lanes(g) -> np.ndarray:
     """Host `binary_field_ghash [...]` -> `uint64 [..., 2]`. Inverse of `_lanes_to_ghash`."""
     g = np.asarray(g)
     return g.reshape(-1).view(np.uint64).reshape(*g.shape, 2)
-
-

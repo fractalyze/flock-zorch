@@ -38,10 +38,9 @@ py_library(
     name = "test_support",
     # Glob, not a list: every shared testing helper must land here or the
     # py_tests fail at import, and an explicit list makes that easy to forget.
-    srcs = glob([
-        "flock_zorch/testing/__init__.py",
-        "flock_zorch/testing/_*.py",
-    ]),
+    # The pattern already covers __init__.py, which is why naming it as well
+    # would duplicate the label.
+    srcs = glob(["flock_zorch/testing/_*.py"]),
     imports = ["."],
     visibility = ["//visibility:public"],
     deps = [

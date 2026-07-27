@@ -1,0 +1,72 @@
+# Commit-scope policy for flock-zorch.
+#
+# A scope is the directory the change lives in, named with the
+# `python/flock_zorch/` root stripped — hash, lincheck, pcs, sumcheck,
+# zerocheck. It must be the deepest directory containing every touched file.
+#
+# The modules directly under the package are the orchestration layer and change
+# together with the schemes below them, so a fair share of commits legitimately
+# span both and take no scope at all — `perf: ...`. That is why a scope is not
+# required.
+
+roots = ["python/flock_zorch"]
+require_scope = false
+
+# Cross-cutting paths that would otherwise drag a scoped change up to nothing.
+# These are path prefixes, not basenames.
+exempt_paths = [
+  "README.md",
+  "CLAUDE.md",
+  "LICENSE",
+  ".github",
+  ".gitignore",
+  ".bazelrc",
+  ".pre-commit-config.yaml",
+  ".fractal-commit-lint.toml",
+  ".cargo",
+  "artifacts",
+  "pyproject.toml",
+  "requirements.in",
+  "requirements_lock_3_11.txt",
+  "MODULE.bazel",
+  "MODULE.bazel.lock",
+  "BUILD.bazel",
+  "Cargo.toml",
+  "Cargo.lock",
+  # Bazel targets for the Python tree are declared centrally rather than per
+  # package, so nearly every change touches this one file.
+  "python/BUILD.bazel",
+  "python/pyproject.toml",
+  # The Rust crate and the harnesses that drive it to dump goldens. A Python
+  # change that refreshes a bench alongside keeps the Python scope.
+  "src",
+  "examples",
+  "scripts",
+  # Cross-scheme oracle tests byte-compare a whole serialized proof, so they
+  # belong to no single scheme and travel with whichever one changed.
+  "python/flock_zorch/testing",
+]
+
+[dictionary]
+# A scheme's own tests sit beside it and share its scope, so one commit can
+# carry both: lincheck/testing/x_test.py derives to `lincheck`.
+testing = ""
+
+[scopes]
+# The verification path is split across the schemes rather than living in one
+# directory.
+verifier = [
+  "python/flock_zorch/verifier.py",
+  "python/flock_zorch/zerocheck/verifier.py",
+  "python/flock_zorch/lincheck/verifier.py",
+  "python/flock_zorch/zerocheck/testing/zerocheck_verify_test.py",
+  "python/flock_zorch/lincheck/testing/lincheck_verify_test.py",
+]
+
+# Modules directly under the package sit above any directory, so derivation
+# yields nothing for them.
+ghash = ["python/flock_zorch/ghash.py"]
+prover = ["python/flock_zorch/prover.py"]
+challenger = ["python/flock_zorch/challenger.py"]
+fs = ["python/flock_zorch/fs.py"]
+release = ["python/flock_zorch/__init__.py"]
