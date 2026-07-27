@@ -2,6 +2,8 @@
 
 Overview, setup, the reproduction path, and the benchmark all live in
 [`README.md`](README.md) — start there.
+How the protocol is modelled — claims, roles, and what the tooling misses — is
+[`docs/conventions.md`](docs/conventions.md).
 
 ## Non-negotiables
 

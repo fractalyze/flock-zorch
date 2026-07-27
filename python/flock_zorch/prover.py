@@ -1,5 +1,6 @@
 """flock's fused R1CS prover (`prover::prove` / `prove_fast_core`), authored in
-frx — byte-identical to flock-core. A sequence of stages threading ONE
+frx — byte-identical to flock-core. Two claim reductions bracketed by the
+Ligerito PCS, threading ONE
 shared SHA-256 challenger with device-resident state (no per-phase host
 re-transfer): commit+bind → zerocheck → lincheck → batched PCS open (see
 `prove_fast`).
@@ -11,14 +12,14 @@ re-transfer). Gated by `testing/e2e_ligerito_oracle_test.py` against flock
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any
 
 import frx
 import frx.numpy as fnp
 import numpy as np
 from frx import Array
-from zorch.round import prove_rounds
+from zorch.stage import ProveResult, ProverStage, TrivialClaim
 
 from flock_zorch import ghash, lincheck, zerocheck
 from flock_zorch.challenger import Challenger  # noqa: F401  (re-exported for callers)
@@ -148,114 +149,236 @@ def open_batch_mixed_ligerito(
     return BatchOpenProof(ring_switches=s_hat_vs, ligerito=lig, ligerito_obj=lig_obj)
 
 
-@dataclass(frozen=True)
-class _ProveCarry:
-    """State threaded between prove_fast's stages — only what a later stage reads
-    from an earlier one. Static config (shapes, rates) lives on the stage
-    instances, per zorch's `Round`-interface convention (cf. sp1-zorch ShardCarry).
-    The `None` fields are the per-stage outputs, written via `replace`."""
+@dataclass(frozen=True, kw_only=True)
+class R1csClaim:
+    """The committed witness ẑ satisfies the R1CS instance: A·ẑ ∘ B·ẑ = C·ẑ.
 
-    z_packed: Array  # witness ẑ, device-resident across stages
-    statement_digest: bytes  # R1CS instance digest (bound by _CommitStage)
-    z_lincheck: bytes  # lincheck witness bytes
+    The root statement a flock proof discharges. It carries the instance digest,
+    which is what the transcript binds and what pins *which* R1CS is being
+    claimed; the matrix shapes are fixed by the circuit and configure the roles.
+    """
+
+    statement_digest: bytes
+
+
+@dataclass(frozen=True, kw_only=True)
+class R1csWitness:
+    """The assignment ẑ that satisfies the R1CS claim, in the two forms the
+    reductions consume: packed bits for the zerocheck and PCS, bytes plus the
+    dense A/B blocks for the lincheck."""
+
+    z_packed: Array  # witness ẑ, device-resident across the reductions
+    z_lincheck: bytes
     a0: Array  # lincheck A matrix (dense)
     b0: Array  # lincheck B matrix (dense)
-    pdata: Any = None  # ← _CommitStage: the Ligerito commit; read by _PcsOpenStage
-    zc: zerocheck.ZerocheckProof | None = (
-        None  # ← _ZerocheckStage; read by lincheck + open + assembly
-    )
-    lc_claim: lincheck.LincheckClaim | None = (
-        None  # ← _LincheckStage; read by open + assembly
-    )
 
 
-class _CommitStage:
-    """Commit ẑ through the Ligerito commit (`commit_flock_ligerito`), then bind the
-    transcript to the statement (flock `bind_statement`): the trace-commit Stage
-    (commit + preamble absorb). Message = the root."""
+@dataclass(frozen=True, kw_only=True)
+class ZerocheckOutputClaim:
+    """â, b̂ and ĉ evaluate to the zerocheck's final values at the challenge
+    point it drew.
+
+    What the R1CS zerocheck leaves for the lincheck: the Hadamard constraint has
+    come down to evaluation claims on the three witness images, which the
+    lincheck then ties back to ẑ through A and B.
+
+    ``z`` / ``mlv_challenges`` / ``r_rest`` are the claim's own data —
+    ``ZerocheckProof`` carries copies of them, labelled there as cross-checks
+    for the oracle, because the wire format predates this split.
+    """
+
+    z: Any
+    mlv_challenges: Any
+    r_rest: Any
+    c_value: Any
+
+
+@dataclass(frozen=True, kw_only=True)
+class BatchOpeningClaim:
+    """ẑ opens to the ab and c claim values at the two batched points.
+
+    What the lincheck leaves for the PCS: two evaluation claims on the committed
+    witness, which the batched Ligerito open discharges.
+    """
+
+    ab_point: Array
+    c_point: Array
+    ab_value: Any
+    c_value: Any
+
+
+@dataclass(frozen=True, kw_only=True)
+class LigeritoCommitData:
+    """What the Ligerito PCS retains between its commit and open halves.
+
+    Not prover-only: the root is bound into the transcript by
+    ``bind_statement`` and the opened columns and Merkle paths ride the proof.
+    """
+
+    root: Any
+    pdata: Any
+
+
+class FlockLigeritoPcs:
+    """The Ligerito commitment scheme: commit ẑ, open it at the batched points.
+
+    Two halves of one role, held apart by Fiat-Shamir — the commitment must bind
+    the transcript before the zerocheck draws a challenge, and the open needs
+    the points the lincheck produces. ``LigeritoCommitData`` names what crosses
+    between them.
+
+    Discharges the batched opening claim into the trivial claim: the open is
+    terminal, so a flock proof is a complete argument rather than one link in a
+    chain.
+    """
 
     def __init__(self, cfg):
         self._cfg = cfg
 
-    def __call__(self, carry, transcript):
-        root, pdata = zorch_ligerito.commit_flock_ligerito(self._cfg, carry.z_packed)
-        bind_statement(transcript, carry.statement_digest, root)
-        return replace(carry, pdata=pdata), transcript, root
+    def commit(self, witness: R1csWitness) -> LigeritoCommitData:
+        root, pdata = zorch_ligerito.commit_flock_ligerito(self._cfg, witness.z_packed)
+        return LigeritoCommitData(root=root, pdata=pdata)
+
+    def prove(
+        self,
+        claim: BatchOpeningClaim,
+        witness: tuple[R1csWitness, LigeritoCommitData],
+        transcript,
+    ) -> ProveResult[TrivialClaim, BatchOpenProof]:
+        r1cs_witness, commit_data = witness
+        proof = open_batch_ligerito(
+            self._cfg,
+            r1cs_witness.z_packed,
+            commit_data.pdata,
+            [claim.ab_point, claim.c_point],
+            transcript,
+        )
+        return ProveResult(TrivialClaim(), proof, transcript)
 
 
-class _ZerocheckStage:
-    """R1CS zerocheck on the identity witness (a = b = c = ẑ). Message = the
-    zerocheck proof/claim dict, also threaded onto the carry for later stages."""
+class ZerocheckProver(
+    ProverStage[R1csClaim, R1csWitness, ZerocheckOutputClaim, zerocheck.ZerocheckProof]
+):
+    """Reduce the R1CS Hadamard constraint to evaluation claims on â, b̂, ĉ.
+
+    Runs on the identity witness (a = b = c = ẑ), which is what makes the
+    identity R1CS gate meaningful.
+    """
 
     def __init__(self, m):
         self._m = m
 
-    def __call__(self, carry, transcript):
+    def prove(
+        self, claim: R1csClaim, witness: R1csWitness, transcript
+    ) -> ProveResult[ZerocheckOutputClaim, zerocheck.ZerocheckProof]:
         zc = zerocheck.prove_packed(
-            carry.z_packed, carry.z_packed, carry.z_packed, self._m, ch=transcript
+            witness.z_packed,
+            witness.z_packed,
+            witness.z_packed,
+            self._m,
+            ch=transcript,
         )
-        return replace(carry, zc=zc), transcript, zc
+        return ProveResult(
+            ZerocheckOutputClaim(
+                z=zc.z,
+                mlv_challenges=zc.mlv_challenges,
+                r_rest=zc.r_rest,
+                c_value=zc.final_c_eval,
+            ),
+            zc,
+            transcript,
+        )
 
 
-class _LincheckStage:
-    """Lincheck reducing a = A·z, b = B·z to the ab evaluation claim at the
-    zerocheck challenge point. Message = (rounds, z_partial); writes the ab claim
-    onto the carry."""
+class LincheckProver(
+    ProverStage[ZerocheckOutputClaim, R1csWitness, BatchOpeningClaim, Any]
+):
+    """Reduce a = A·ẑ and b = B·ẑ to a single ab evaluation claim on ẑ, and pair
+    it with the zerocheck's c claim for the batched open."""
 
     def __init__(self, m, k_log, k_skip, circuit=None):
         self._m, self._k_log, self._k_skip, self._circuit = m, k_log, k_skip, circuit
 
-    def __call__(self, carry, transcript):
-        if carry.zc is None:
-            raise ValueError(
-                "lincheck needs the zerocheck output on the carry; "
-                "sequence a _ZerocheckStage before this stage"
-            )
+    def prove(
+        self, claim: ZerocheckOutputClaim, witness: R1csWitness, transcript
+    ) -> ProveResult[BatchOpeningClaim, Any]:
         inner_rest = self._k_log - self._k_skip
-        zc = carry.zc
-        x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, inner_rest)
+        x_outer = claim.mlv_challenges[inner_rest:]
         lp = lincheck.prove(
-            carry.z_lincheck,
-            carry.a0,
-            carry.b0,
-            x_ab,
+            witness.z_lincheck,
+            witness.a0,
+            witness.b0,
+            lincheck.AbClaimPoint(
+                z_skip=claim.z,
+                x_inner_rest=claim.mlv_challenges[:inner_rest],
+                x_outer=x_outer,
+            ),
             self._m,
             self._k_log,
             self._k_skip,
             ch=transcript,
             circuit=self._circuit,
         )
-        return replace(carry, lc_claim=lp.claim), transcript, (lp.rounds, lp.z_partial)
-
-
-class _PcsOpenStage:
-    """Batched dual-claim PCS open of the ab + c claims — the final stage. ab
-    point = lincheck r_inner_rest ++ zerocheck x_outer; c point = the zerocheck
-    r_rest. Message = the BatchOpeningProof dict."""
-
-    def __init__(self, cfg, k_log, k_skip):
-        self._cfg, self._k_log, self._k_skip = cfg, k_log, k_skip
-
-    def __call__(self, carry, transcript):
-        if carry.zc is None or carry.lc_claim is None or carry.pdata is None:
-            raise ValueError(
-                "the PCS open needs the Ligerito commit plus the "
-                "zerocheck and lincheck outputs on the carry; sequence "
-                "the commit, zerocheck, and lincheck Stages before it"
-            )
-        inner_rest = self._k_log - self._k_skip
-        zc, lc_claim = carry.zc, carry.lc_claim
-        x_outer = zc.mlv_challenges[inner_rest:]
-        ab_full = fnp.concatenate([lc_claim.r_inner_rest, x_outer], axis=0)
-        # c_full split-then-rejoined (not just zc.r_rest) to mirror Rust's
+        if lp.claim is None:
+            # `LincheckProof.claim` is optional only to keep the historical
+            # `rounds, z_partial, claim` unpacking working; a prove that reached
+            # here without one cannot state what it reduced to.
+            raise ValueError("lincheck produced no claim to open against")
+        # c_full is split-then-rejoined (not just r_rest) to mirror Rust's
         # QuirkyPoint / quirky_x_outer_full.
-        c_full = fnp.concatenate(
-            [zc.r_rest[:inner_rest], zc.r_rest[inner_rest:]], axis=0
+        return ProveResult(
+            BatchOpeningClaim(
+                ab_point=fnp.concatenate([lp.claim.r_inner_rest, x_outer], axis=0),
+                c_point=fnp.concatenate(
+                    [claim.r_rest[:inner_rest], claim.r_rest[inner_rest:]], axis=0
+                ),
+                ab_value=lp.claim.w,
+                c_value=claim.c_value,
+            ),
+            (lp.rounds, lp.z_partial),
+            transcript,
         )
-        pcs_open_proof = open_batch_ligerito(
-            self._cfg, carry.z_packed, carry.pdata, [ab_full, c_full], transcript
+
+
+class FlockProver(ProverStage[R1csClaim, R1csWitness, TrivialClaim, ProveFastResult]):
+    """flock's R1CS prover: the Ligerito commit, then two reductions, then the
+    batched open.
+
+    A composite role, so the wiring has one definition and `prove_fast` and the
+    oracle gates cannot drift on it. The zerocheck and lincheck each reduce the
+    previous claim; the PCS brackets them, binding ẑ up front and discharging
+    the final opening claim at the end, with `LigeritoCommitData` held here in
+    between because it belongs to neither claim.
+    """
+
+    def __init__(self, cfg, m, k_log, k_skip, circuit=None):
+        self.pcs = FlockLigeritoPcs(cfg)
+        self.zerocheck = ZerocheckProver(m)
+        self.lincheck = LincheckProver(m, k_log, k_skip, circuit)
+
+    def prove(
+        self, claim: R1csClaim, witness: R1csWitness, transcript
+    ) -> ProveResult[TrivialClaim, ProveFastResult]:
+        commit_data = self.pcs.commit(witness)
+        # A shared function both roles call between the PCS halves: it only
+        # absorbs, so it owns no proof section of its own.
+        bind_statement(transcript, claim.statement_digest, commit_data.root)
+        zc = self.zerocheck.prove(claim, witness, transcript)
+        lc = self.lincheck.prove(zc.reduced_claim, witness, zc.transcript)
+        opening = self.pcs.prove(
+            lc.reduced_claim, (witness, commit_data), lc.transcript
         )
-        return carry, transcript, pcs_open_proof
+        return ProveResult(
+            TrivialClaim(),
+            ProveFastResult(
+                zerocheck=zc.reduction_proof,
+                lincheck=lc.reduction_proof,
+                pcs_open=opening.reduction_proof,
+                claim_ab_value=lc.reduced_claim.ab_value,
+                claim_c_value=lc.reduced_claim.c_value,
+            ),
+            opening.transcript,
+        )
 
 
 def prove_fast(
@@ -272,39 +395,15 @@ def prove_fast(
     domain: bytes = b"flock-test-v0",
 ) -> ProveFastResult:
     """Fused single-call R1CS prover on the Ligerito PCS, byte-identical to flock
-    `prover::prove_fast_ligerito`. A sequence of stages threading one
-    shared challenger + a `_ProveCarry` (no per-phase host re-transfer): Ligerito
-    commit+bind → zerocheck → lincheck → batched dual-claim Ligerito open. `cfg` is
-    the flock Ligerito config; `circuit` a `LincheckCircuit` for real hash R1CS
-    (None uses the dense a0/b0 path — the identity gate). a = A·z, b = B·z; for the
-    identity R1CS a = b = c = z. Returns the proof + claims."""
-    ch = Challenger(domain)
-    carry = _ProveCarry(
-        z_packed=z_packed,
-        statement_digest=statement_digest,
-        z_lincheck=z_lincheck,
-        a0=a0,
-        b0=b0,
-    )
-    carry, _ch, msgs = prove_rounds(
-        [
-            _CommitStage(cfg),
-            _ZerocheckStage(m),
-            _LincheckStage(m, k_log, k_skip, circuit),
-            _PcsOpenStage(cfg, k_log, k_skip),
-        ],
-        carry,
-        ch,
-    )
-    _root, zc, (lc_rounds, lc_zp), pcs_open_proof = msgs
-    # _LincheckStage always sets the claim before _PcsOpenStage consumes it, so
-    # the optional carry field is populated by the time the chain returns.
-    assert carry.lc_claim is not None
-
-    return ProveFastResult(
-        zerocheck=zc,
-        lincheck=(lc_rounds, lc_zp),
-        pcs_open=pcs_open_proof,
-        claim_ab_value=carry.lc_claim.w,
-        claim_c_value=zc.final_c_eval,
-    )
+    `prover::prove_fast_ligerito`. Drives `FlockProver` — the Ligerito commit and
+    statement bind, then the zerocheck and lincheck reductions, then the batched
+    dual-claim Ligerito open — threading one shared challenger (no per-phase host
+    re-transfer). `cfg` is the flock Ligerito config; `circuit` a
+    `LincheckCircuit` for real hash R1CS (None uses the dense a0/b0 path — the
+    identity gate). a = A·z, b = B·z; for the identity R1CS a = b = c = z."""
+    prover = FlockProver(cfg, m, k_log, k_skip, circuit)
+    return prover.prove(
+        R1csClaim(statement_digest=statement_digest),
+        R1csWitness(z_packed=z_packed, z_lincheck=z_lincheck, a0=a0, b0=b0),
+        Challenger(domain),
+    ).reduction_proof
