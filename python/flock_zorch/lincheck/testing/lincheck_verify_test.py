@@ -35,26 +35,24 @@ def _prove(m: int, k_log: int, k_skip: int):
     eye = np.eye(1 << k_log, dtype=np.uint64)
 
     chp = Challenger(DOMAIN)
-    zc = zerocheck.prove_packed(z_bits, z_bits, z_bits, m, ch=chp)
+    zc_proof, zc = zerocheck.prove_packed(z_bits, z_bits, z_bits, m, ch=chp)
     x_ab = AbClaimPoint.from_zerocheck(zc, k_log - k_skip)
     lp = lincheck.prove(z_lincheck, eye, eye, x_ab, m, k_log, k_skip, ch=chp)
-    return zc, x_ab, lp, eye
+    return zc_proof, zc, x_ab, lp, eye
 
 
-def _verify(m, k_log, k_skip, zc, x_ab, lp, eye):
+def _verify(m, k_log, k_skip, zc_proof, zc, x_ab, lp, eye):
     chv = Challenger(DOMAIN)
-    zcv.verify(m, zc, chv)
-    return lcv.verify(
-        m, k_log, k_skip, eye, eye, x_ab, zc.final_a_eval, zc.final_b_eval, lp, chv
-    )
+    zcv.verify(m, zc_proof, chv)
+    return lcv.verify(m, k_log, k_skip, eye, eye, x_ab, zc.a_eval, zc.b_eval, lp, chv)
 
 
 class LincheckVerifyTest(parameterized.TestCase):
 
     @parameterized.parameters((13, 8, 6), (14, 9, 6))
     def test_accept_and_claim_reconstruction(self, m: int, k_log: int, k_skip: int):
-        zc, x_ab, lp, eye = _prove(m, k_log, k_skip)
-        claim, _, ok = _verify(m, k_log, k_skip, zc, x_ab, lp, eye)
+        zc_proof, zc, x_ab, lp, eye = _prove(m, k_log, k_skip)
+        claim, _, ok = _verify(m, k_log, k_skip, zc_proof, zc, x_ab, lp, eye)
         self.assertTrue(bool(ok))
         for name, got, want in (
             ("w", claim.w, lp.claim.w),
@@ -65,11 +63,11 @@ class LincheckVerifyTest(parameterized.TestCase):
 
     @parameterized.parameters((13, 8, 6), (14, 9, 6))
     def test_tampered_z_partial_rejected(self, m: int, k_log: int, k_skip: int):
-        zc, x_ab, lp, eye = _prove(m, k_log, k_skip)
+        zc_proof, zc, x_ab, lp, eye = _prove(m, k_log, k_skip)
         zp = _lanes(lp.z_partial).copy()
         zp[0, 0] ^= np.uint64(1)
         bad = lp._replace(z_partial=ghash.to_ghash(frx.numpy.asarray(zp)))
-        _, _, ok_bad = _verify(m, k_log, k_skip, zc, x_ab, bad, eye)
+        _, _, ok_bad = _verify(m, k_log, k_skip, zc_proof, zc, x_ab, bad, eye)
         self.assertFalse(bool(ok_bad))
 
 

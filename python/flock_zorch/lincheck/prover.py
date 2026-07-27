@@ -32,7 +32,8 @@ from flock_zorch.challenger import Challenger
 from flock_zorch.lincheck._csc_fold import _csc_segments, _flatten_nz, _seg_xor_fold
 from flock_zorch.sumcheck import build_eq
 from flock_zorch.sumcheck.inf_product import prove_inf_product
-from flock_zorch.zerocheck import ZerocheckProof, _lagrange_weights
+from flock_zorch.zerocheck import _lagrange_weights
+from flock_zorch.zerocheck.types import ZerocheckClaim
 
 U64 = fnp.uint64
 _GHASH = fnp.binary_field_ghash
@@ -157,8 +158,8 @@ class AbClaimPoint:
     x_outer: Any
 
     @classmethod
-    def from_zerocheck(cls, zc: ZerocheckProof, inner_rest: int) -> "AbClaimPoint":
-        """The â/b̂ point derived from a zerocheck proof: z_skip is the URM
+    def from_zerocheck(cls, zc: ZerocheckClaim, inner_rest: int) -> "AbClaimPoint":
+        """The â/b̂ point derived from the zerocheck's claim: z_skip is the URM
         fold-point, and the multilinear challenges split into inner/outer at
         `inner_rest`."""
         return cls(
@@ -192,10 +193,10 @@ class LincheckProof(NamedTuple):
 
 @dataclass(frozen=True)
 class _LincheckCarry:
-    """State threaded between lincheck's stage Rounds — inputs plus only what a
-    later stage reads from an earlier one. Static config (m, k_log, k_skip) lives
-    on the Round instances (cf. zerocheck._ZerocheckCarry). None fields are
-    per-stage outputs set via replace; not pytree-registered (no @jit boundary)."""
+    """State threaded between the lincheck's steps — inputs plus only what a later
+    step reads from an earlier one. Static config (m, k_log, k_skip) lives on the
+    step instances (cf. zerocheck._ZerocheckCarry); the `None` fields are per-step
+    outputs set via `replace`. Not pytree-registered (no @jit boundary)."""
 
     z_packed_bytes: Any
     a_dense: Any

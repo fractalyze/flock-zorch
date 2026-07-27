@@ -36,6 +36,7 @@ from flock_zorch.zerocheck._fold import (
     _interpolate_at_z_on_lambda,
     _lagrange_weights,
 )
+from flock_zorch.zerocheck.types import ZerocheckClaim
 
 K_SKIP = 6
 N_INNER = 7  # 3 small + 4 medium fixed-constant inner dims
@@ -44,10 +45,12 @@ LABEL = b"flock-zerocheck-v0"
 
 @dataclass(frozen=True)
 class ZerocheckProof:
-    """flock's ZerocheckProof — the round-1 URM messages, the multilinear-round
-    (G(1), G(∞)) pairs, and the final a/b/c evaluations. `z`, `mlv_challenges`,
-    and `r_rest` are the claim cross-checks the oracle localizes against, not wire
-    fields."""
+    """flock's ZerocheckProof: the wire fields alone — the round-1 URM messages,
+    the multilinear-round (G(1), G(∞)) pairs, and the final a/b/c evaluations.
+
+    The evaluation point the proof is about lives on `ZerocheckClaim`, which
+    `prove_packed` returns alongside this; holding a second copy here is what let
+    the two disagree."""
 
     round1_ab: Any
     round1_c: Any
@@ -55,23 +58,20 @@ class ZerocheckProof:
     final_a_eval: Any
     final_b_eval: Any
     final_c_eval: Any
-    z: Any  # claim cross-check
-    mlv_challenges: Any  # claim cross-check
-    r_rest: Any  # claim cross-check
 
 
 @dataclass(frozen=True)
 class _ZerocheckCarry:
-    """State threaded between zerocheck's stage Rounds — only what a later stage
-    reads from an earlier one. Static config (m, k_skip) lives on the Round
-    instances (cf. prover._ProveCarry). None fields are per-stage outputs set via
-    replace. Not pytree-registered: the chain never crosses a @jit boundary (the
-    per-round field ops jit internally via _jit_round_fold)."""
+    """State threaded between the zerocheck's steps — only what a later step
+    reads from an earlier one. Static config (m, k_skip) lives on the step
+    instances; the `None` fields are per-step outputs set via `replace`. Not
+    pytree-registered: the sequence never crosses a @jit boundary (the per-round
+    field ops jit internally via _jit_round_fold)."""
 
     a_bits: Any
     b_bits: Any
     c_bits: Any
-    r: Any = None  # ← _SetupRound
+    r: Any = None  # ← sample_challenge_coords, seeded by prove_packed
     a_rows: Any = None  # ← _UrmRound (reused by _MultilinearRound)
     b_rows: Any = None  # ← _UrmRound
     round1_ab: Any = None  # ← _UrmRound
@@ -137,21 +137,21 @@ def _observe_finals(t, final_a, final_b):
 _EQ_TABLES = frx.jit(sumcheck.build_eq_suffix_tables)
 
 
-class _SetupRound:
-    """Sample the challenge vector r and fix the inner-7 constants (small ++
-    medium). No proof message — writes r onto the carry."""
+def sample_challenge_coords(transcript, m: int, k_skip: int):
+    """Draw the zerocheck's challenge coordinates: ``k_skip`` skip challenges,
+    then ``m - k_skip - N_INNER`` outer ones, with the fixed inner-7 constants
+    sitting between them.
 
-    def __init__(self, m: int, k_skip: int):
-        self._m, self._k_skip = m, k_skip
-
-    def __call__(self, carry, transcript):
-        m, k_skip = self._m, self._k_skip
-        transcript.observe_label(LABEL)
-        # r = r_skip ++ small ++ medium ++ r_outer, assembled on the dtype.
-        r_skip = transcript.sample_f128(k_skip)
-        r_outer = transcript.sample_f128(m - k_skip - N_INNER)
-        r = fnp.concatenate([r_skip, _SMALL_G, _MEDIUM_G, r_outer])
-        return replace(carry, r=r), transcript, None
+    A shared function both roles call, not a step: it only advances the
+    transcript and owns no proof section. Both sides need the same schedule but
+    keep different slices of it — the prover the whole vector ``r``, the verifier
+    only ``r[k_skip:]`` — and writing the draw once is what stops those two from
+    drifting apart.
+    """
+    transcript.observe_label(LABEL)
+    r_skip = transcript.sample_f128(k_skip)
+    r_outer = transcript.sample_f128(m - k_skip - N_INNER)
+    return r_skip, r_outer
 
 
 class _UrmRound:
@@ -242,10 +242,11 @@ class _MultilinearRound:
 
 
 def zerocheck_steps(m: int, k_skip: int) -> list:
-    """The zerocheck sub-sequence: setup → round-1 URM → multilinear sumcheck.
-    One definition for the wiring (cf. prover.prove_fast). Drive with
-    ``zorch.round.prove_rounds``."""
-    return [_SetupRound(m, k_skip), _UrmRound(m, k_skip), _MultilinearRound(m, k_skip)]
+    """The zerocheck sub-sequence: round-1 URM → multilinear sumcheck. One
+    definition for the wiring (cf. prover.prove_fast). Drive with
+    ``zorch.round.prove_rounds``, after ``sample_challenge_coords`` has drawn the
+    challenge vector."""
+    return [_UrmRound(m, k_skip), _MultilinearRound(m, k_skip)]
 
 
 def prove_packed(
@@ -255,11 +256,11 @@ def prove_packed(
     m: int,
     domain: bytes | None = None,
     ch: Challenger | None = None,
-) -> ZerocheckProof:
-    """Returns a `ZerocheckProof` (proof fields + the claim's z / mlv_challenges /
-    r_rest, the latter for the oracle's localization cross-checks).
+) -> tuple[ZerocheckProof, ZerocheckClaim]:
+    """Returns the wire `ZerocheckProof` and the `ZerocheckClaim` it discharges
+    into — the evaluation point and the â/b̂/ĉ evals bound at it.
 
-    A `zerocheck_steps` sequence (setup → URM → multilinear) threading one
+    A `zerocheck_steps` sequence (URM → multilinear) threading one
     `Challenger`; pass a shared `ch` (the e2e challenger carrying commit/bind state)
     to thread Fiat-Shamir through the fused prover, else a fresh Challenger(domain)
     is made."""
@@ -268,19 +269,27 @@ def prove_packed(
     if ch is None:
         assert domain is not None, "pass either a domain or a Challenger"
         ch = Challenger(domain)
+    r_skip, r_outer = sample_challenge_coords(ch, m, k_skip)
+    # r = r_skip ++ small ++ medium ++ r_outer, assembled on the dtype.
+    r = fnp.concatenate([r_skip, _SMALL_G, _MEDIUM_G, r_outer])
     carry, _ch, _msgs = prove_rounds(
-        zerocheck_steps(m, k_skip), _ZerocheckCarry(a_bits, b_bits, c_bits), ch
+        zerocheck_steps(m, k_skip), _ZerocheckCarry(a_bits, b_bits, c_bits, r=r), ch
     )
-    return ZerocheckProof(
+    proof = ZerocheckProof(
         round1_ab=carry.round1_ab,
         round1_c=carry.round1_c,
         multilinear_rounds=carry.multilinear_rounds,
         final_a_eval=carry.final_a_eval,
         final_b_eval=carry.final_b_eval,
         final_c_eval=carry.final_c_eval,
+    )
+    claim = ZerocheckClaim(
         z=carry.z,
         mlv_challenges=carry.mlv_challenges,
-        r_rest=carry.r[
-            k_skip:
-        ],  # native ghash: the c-open point coords; byte-gate lanes-converts
+        # native ghash: the c-open point coords; the byte gate lanes-converts.
+        r_rest=carry.r[k_skip:],
+        a_eval=carry.final_a_eval,
+        b_eval=carry.final_b_eval,
+        c_eval=carry.final_c_eval,
     )
+    return proof, claim

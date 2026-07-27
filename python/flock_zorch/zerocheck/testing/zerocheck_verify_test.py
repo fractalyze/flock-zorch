@@ -49,21 +49,24 @@ class ZerocheckVerifyTest(parameterized.TestCase):
 
     @parameterized.parameters(13, 14, 16)
     def test_accept_and_claim_reconstruction(self, m: int):
-        proof = _proof(m)
+        proof, want_claim = _proof(m)
         claim, _, ok = verifier.verify(m, proof, Challenger(DOMAIN))
         self.assertTrue(bool(ok))
+        # Both roles state the same claim: the verifier re-derives from the wire
+        # proof what the prover produced alongside it.
         for name, got, want in (
-            ("z", claim.z, proof.z),
-            ("mlv_challenges", claim.mlv_challenges, proof.mlv_challenges),
-            ("r_rest", claim.r_rest, proof.r_rest),
-            ("a_eval", claim.a_eval, proof.final_a_eval),
-            ("c_eval", claim.c_eval, proof.final_c_eval),
+            ("z", claim.z, want_claim.z),
+            ("mlv_challenges", claim.mlv_challenges, want_claim.mlv_challenges),
+            ("r_rest", claim.r_rest, want_claim.r_rest),
+            ("a_eval", claim.a_eval, want_claim.a_eval),
+            ("b_eval", claim.b_eval, want_claim.b_eval),
+            ("c_eval", claim.c_eval, want_claim.c_eval),
         ):
             np.testing.assert_array_equal(_lanes(got), _lanes(want), err_msg=name)
 
     @parameterized.parameters(13, 14, 16)
     def test_tamper_rejected(self, m: int):
-        proof = _proof(m)
+        proof, _claim = _proof(m)
         # Corrupt the final â eval — the sumcheck identity must now fail. Tamper in
         # lane form, then hand the verifier its native-ghash contract shape.
         lanes = _lanes(proof.final_a_eval).copy().reshape(2)

@@ -17,14 +17,17 @@ what is flock-zorch's.
 
 A `*Claim` docstring opens with a sentence that could be true or false. Read
 down `python/flock_zorch/prover.py`, the composition states itself as a chain of
-reductions: `R1csClaim` (ẑ satisfies A·ẑ ∘ B·ẑ = C·ẑ) → `ZerocheckOutputClaim`
+reductions: `R1csClaim` (ẑ satisfies A·ẑ ∘ B·ẑ = C·ẑ) → `ZerocheckClaim`
 (â, b̂, ĉ evaluate to these values at the challenge point) → `BatchOpeningClaim`
 (ẑ opens to the ab and c values at these two points) → nothing left to prove.
 
-**Recorded deviation.** `ZerocheckProof` still carries `z`, `mlv_challenges` and
-`r_rest`, which are claim data rather than wire fields — its own docstring
-labels them "claim cross-check". They stay because the oracle gates localize
-against them; `ZerocheckOutputClaim` is the authoritative copy.
+`ZerocheckProof` holds the wire fields alone. The evaluation point it is about
+is `ZerocheckClaim`, which `prove_packed` returns alongside it and the verifier
+re-derives from the proof — one type, produced by both roles, living in
+`zerocheck/types.py` so neither role has to import the other. It previously
+carried a second copy of `z` / `mlv_challenges` / `r_rest`, which is what let
+the two disagree; the zerocheck verify test now compares the two roles' claims
+against each other rather than a claim against a proof.
 
 ## 2. The claim carries what varies per instance; the roles carry what does not
 
@@ -56,9 +59,19 @@ rounds in zorch's sense; the driver simply happens to be the right shape for a
 carry-threading sequence. `InfProductRound` *is* a genuine round — one repeated
 sumcheck transition.
 
-**Known gap.** `_SetupRound` emits `None` as its message and only samples a
-challenge onto the carry, which by rule 4 makes it a shared function rather than
-a step. Collapsing it into the zerocheck body is unfinished work.
+`_CombRound` is the near-miss worth knowing about: it emits no proof message,
+which is the shared-function signature, but it is *not* one. Its verifier dual
+covers only the dense path — the Python verifier takes no `circuit` at all — so
+the prover's `CscCircuit` branch, including the `const_pin` +β draw, has no
+counterpart to share with. It stays a step, and the asymmetry is a scope limit
+of the Python verifier rather than a naming problem.
+
+`sample_challenge_coords` is the worked example of the rule: it draws the
+zerocheck's challenge coordinates, emits no proof message, and owns no proof
+section, so it is a function both roles call rather than a step in either
+sequence. Each role keeps a different slice of the draw — the prover the whole
+vector, the verifier only the tail — which is exactly the shape that invites two
+copies of one Fiat-Shamir schedule, and exactly why it is written once.
 
 ## 5. The PCS's commit and open are two halves of one role
 

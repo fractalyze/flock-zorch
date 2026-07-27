@@ -97,17 +97,19 @@ def run():
         unpack_bits(g["b"], m),
         unpack_bits(g["z"], m),
     )
-    zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch)
+    zc_proof, zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch)
     results.append(
         (
             "zerocheck round1_ab",
-            np.array_equal(ghash.to_lanes(zc.round1_ab), g["zc"]["r1ab"]),
+            np.array_equal(ghash.to_lanes(zc_proof.round1_ab), g["zc"]["r1ab"]),
         )
     )
     results.append(
         (
             "zerocheck final_c",
-            np.array_equal(ghash.to_lanes(zc.final_c_eval).reshape(2), g["zc"]["fc"]),
+            np.array_equal(
+                ghash.to_lanes(zc_proof.final_c_eval).reshape(2), g["zc"]["fc"]
+            ),
         )
     )
 

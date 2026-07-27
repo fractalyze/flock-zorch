@@ -10,3 +10,4 @@ from flock_zorch.zerocheck.prover import (
     # rather than an unused import.
     _lagrange_weights as _lagrange_weights,
 )
+from flock_zorch.zerocheck.types import ZerocheckClaim as ZerocheckClaim

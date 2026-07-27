@@ -26,6 +26,7 @@ from flock_zorch.challenger import Challenger  # noqa: F401  (re-exported for ca
 from flock_zorch.pcs import ligerito as zorch_ligerito
 from flock_zorch.pcs import ring_switch
 from flock_zorch.sumcheck import build_eq
+from flock_zorch.zerocheck.types import ZerocheckClaim
 
 
 @dataclass(frozen=True)
@@ -174,26 +175,6 @@ class R1csWitness:
 
 
 @dataclass(frozen=True, kw_only=True)
-class ZerocheckOutputClaim:
-    """â, b̂ and ĉ evaluate to the zerocheck's final values at the challenge
-    point it drew.
-
-    What the R1CS zerocheck leaves for the lincheck: the Hadamard constraint has
-    come down to evaluation claims on the three witness images, which the
-    lincheck then ties back to ẑ through A and B.
-
-    ``z`` / ``mlv_challenges`` / ``r_rest`` are the claim's own data —
-    ``ZerocheckProof`` carries copies of them, labelled there as cross-checks
-    for the oracle, because the wire format predates this split.
-    """
-
-    z: Any
-    mlv_challenges: Any
-    r_rest: Any
-    c_value: Any
-
-
-@dataclass(frozen=True, kw_only=True)
 class BatchOpeningClaim:
     """ẑ opens to the ab and c claim values at the two batched points.
 
@@ -257,7 +238,7 @@ class FlockLigeritoPcs:
 
 
 class ZerocheckProver(
-    ProverStage[R1csClaim, R1csWitness, ZerocheckOutputClaim, zerocheck.ZerocheckProof]
+    ProverStage[R1csClaim, R1csWitness, ZerocheckClaim, zerocheck.ZerocheckProof]
 ):
     """Reduce the R1CS Hadamard constraint to evaluation claims on â, b̂, ĉ.
 
@@ -270,29 +251,18 @@ class ZerocheckProver(
 
     def prove(
         self, claim: R1csClaim, witness: R1csWitness, transcript
-    ) -> ProveResult[ZerocheckOutputClaim, zerocheck.ZerocheckProof]:
-        zc = zerocheck.prove_packed(
+    ) -> ProveResult[ZerocheckClaim, zerocheck.ZerocheckProof]:
+        proof, reduced = zerocheck.prove_packed(
             witness.z_packed,
             witness.z_packed,
             witness.z_packed,
             self._m,
             ch=transcript,
         )
-        return ProveResult(
-            ZerocheckOutputClaim(
-                z=zc.z,
-                mlv_challenges=zc.mlv_challenges,
-                r_rest=zc.r_rest,
-                c_value=zc.final_c_eval,
-            ),
-            zc,
-            transcript,
-        )
+        return ProveResult(reduced, proof, transcript)
 
 
-class LincheckProver(
-    ProverStage[ZerocheckOutputClaim, R1csWitness, BatchOpeningClaim, Any]
-):
+class LincheckProver(ProverStage[ZerocheckClaim, R1csWitness, BatchOpeningClaim, Any]):
     """Reduce a = A·ẑ and b = B·ẑ to a single ab evaluation claim on ẑ, and pair
     it with the zerocheck's c claim for the batched open."""
 
@@ -300,7 +270,7 @@ class LincheckProver(
         self._m, self._k_log, self._k_skip, self._circuit = m, k_log, k_skip, circuit
 
     def prove(
-        self, claim: ZerocheckOutputClaim, witness: R1csWitness, transcript
+        self, claim: ZerocheckClaim, witness: R1csWitness, transcript
     ) -> ProveResult[BatchOpeningClaim, Any]:
         inner_rest = self._k_log - self._k_skip
         x_outer = claim.mlv_challenges[inner_rest:]
@@ -333,7 +303,7 @@ class LincheckProver(
                     [claim.r_rest[:inner_rest], claim.r_rest[inner_rest:]], axis=0
                 ),
                 ab_value=lp.claim.w,
-                c_value=claim.c_value,
+                c_value=claim.c_eval,
             ),
             (lp.rounds, lp.z_partial),
             transcript,
