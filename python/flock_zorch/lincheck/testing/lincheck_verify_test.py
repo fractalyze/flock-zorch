@@ -16,8 +16,8 @@ from absl.testing import absltest, parameterized  # noqa: E402
 from flock_zorch import ghash, lincheck, zerocheck  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 from flock_zorch.lincheck import verifier as lcv  # noqa: E402
-from flock_zorch.lincheck.prover import AbClaimPoint  # noqa: E402
 from flock_zorch.pcs.pack import pack_witness, pack_z_lincheck_from_packed  # noqa: E402
+from flock_zorch.types import AbClaimPoint
 from flock_zorch.zerocheck import verifier as zcv  # noqa: E402
 
 DOMAIN = b"flock-lc-verify-test"

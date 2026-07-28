@@ -15,12 +15,8 @@ from zorch.round import verify_rounds
 from zorch.sumcheck.domain import fold
 
 from flock_zorch import ghash
-from flock_zorch.lincheck.prover import (
-    LABEL,
-    LincheckClaim,
-    build_quirky_eq_table,
-    fold_alpha_batched,
-)
+from flock_zorch.lincheck.prover import LABEL, build_quirky_eq_table, fold_alpha_batched
+from flock_zorch.types import LincheckClaim
 from flock_zorch.zerocheck import _lagrange_weights
 
 _EMPTY_G = ghash.to_ghash(fnp.zeros((0, 2), fnp.uint64))

@@ -31,35 +31,17 @@ from zorch.sumcheck.domain import fold
 from flock_zorch import ghash, sumcheck
 from flock_zorch.challenger import Challenger
 from flock_zorch.ghash import _ghash_to_lanes, _lanes_to_ghash
-from flock_zorch.types import R1csClaim, R1csWitness
+from flock_zorch.types import R1csClaim, R1csWitness, ZerocheckClaim, ZerocheckProof
 from flock_zorch.zerocheck import _urm
 from flock_zorch.zerocheck._fold import (
     _fold_at_z,
     _interpolate_at_z_on_lambda,
     _lagrange_weights,
 )
-from flock_zorch.zerocheck.types import ZerocheckClaim
 
 K_SKIP = 6
 N_INNER = 7  # 3 small + 4 medium fixed-constant inner dims
 LABEL = b"flock-zerocheck-v0"
-
-
-@dataclass(frozen=True)
-class ZerocheckProof:
-    """flock's ZerocheckProof: the wire fields alone — the round-1 URM messages,
-    the multilinear-round (G(1), G(∞)) pairs, and the final a/b/c evaluations.
-
-    The evaluation point the proof is about lives on `ZerocheckClaim`, which
-    `prove_packed` returns alongside this; holding a second copy here is what let
-    the two disagree."""
-
-    round1_ab: Any
-    round1_c: Any
-    multilinear_rounds: Any
-    final_a_eval: Any
-    final_b_eval: Any
-    final_c_eval: Any
 
 
 @dataclass(frozen=True)

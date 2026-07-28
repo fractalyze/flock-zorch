@@ -15,6 +15,7 @@ from zorch.poly.univariate import compute_lagrange_basis
 from zorch.round import verify_rounds
 
 from flock_zorch import ghash
+from flock_zorch.types import ZerocheckClaim
 from flock_zorch.zerocheck import _urm
 from flock_zorch.zerocheck.prover import (
     _MEDIUM_G,
@@ -23,7 +24,6 @@ from flock_zorch.zerocheck.prover import (
     N_INNER,
     sample_challenge_coords,
 )
-from flock_zorch.zerocheck.types import ZerocheckClaim
 
 _ONE_G = ghash.to_ghash(fnp.array([1, 0], fnp.uint64))
 

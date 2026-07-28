@@ -12,9 +12,6 @@ re-transfer). Gated by `testing/e2e_ligerito_oracle_test.py` against flock
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
-
 import frx
 import frx.numpy as fnp
 import numpy as np
@@ -29,35 +26,13 @@ from flock_zorch.pcs import ring_switch
 from flock_zorch.sumcheck import build_eq
 from flock_zorch.types import (
     BatchOpeningClaim,
+    BatchOpenProof,
     LigeritoCommitData,
+    ProveFastResult,
     R1csClaim,
     R1csWitness,
 )
 from flock_zorch.zerocheck.prover import ZerocheckProver
-
-
-@dataclass(frozen=True)
-class BatchOpenProof:
-    """Batched dual-claim PCS open (flock BatchOpeningProof): the per-claim
-    ring-switch reductions plus the combined Ligerito low-degree open."""
-
-    ring_switches: Any
-    ligerito: Any = None
-    ligerito_obj: Any = (
-        None  # the zorch LigeritoProof (verify consumes this, not the wire dict)
-    )
-
-
-@dataclass(frozen=True)
-class ProveFastResult:
-    """flock's R1CS proof (`prover::prove`): the zerocheck and lincheck sub-proofs,
-    the batched PCS open, and the final ab/c claim values."""
-
-    zerocheck: Any
-    lincheck: Any
-    pcs_open: Any
-    claim_ab_value: Any
-    claim_c_value: Any
 
 
 @frx.jit

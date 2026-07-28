@@ -16,10 +16,10 @@ from zorch.pcs import ring_switch as zrs
 
 from flock_zorch import ghash, sumcheck
 from flock_zorch.lincheck import verifier as lincheck_verifier
-from flock_zorch.lincheck.prover import AbClaimPoint, LincheckProof
 from flock_zorch.pcs import ligerito as zorch_ligerito
 from flock_zorch.pcs import ring_switch
 from flock_zorch.prover import bind_statement
+from flock_zorch.types import AbClaimPoint, LincheckProof
 from flock_zorch.zerocheck import verifier as zerocheck_verifier
 
 

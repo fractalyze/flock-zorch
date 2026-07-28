@@ -9,12 +9,12 @@ deployable (`zorch.stage`), which a shared type module is what makes possible.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from frx import Array
 
 if TYPE_CHECKING:
-    from flock_zorch.pcs.ligerito import LigeritoConfig
+    pass
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -65,3 +65,115 @@ class LigeritoCommitData:
 
     root: Any
     pdata: Any
+
+
+@dataclass(frozen=True, kw_only=True)
+class ZerocheckClaim:
+    """â, b̂ and ĉ evaluate to `a_eval`, `b_eval`, `c_eval` at the point the
+    zerocheck drew — the skip scalar `z` together with the coordinate lists.
+
+    Keyword-only: the three evals, and the two coordinate lists, are each
+    interchangeable-looking, so a positional swap would type-check.
+    """
+
+    z: Any
+    mlv_challenges: Any
+    r_rest: Any
+    a_eval: Any
+    b_eval: Any
+    c_eval: Any
+
+
+@dataclass(frozen=True)
+class ZerocheckProof:
+    """flock's ZerocheckProof: the wire fields alone — the round-1 URM messages,
+    the multilinear-round (G(1), G(∞)) pairs, and the final a/b/c evaluations.
+
+    The evaluation point the proof is about lives on `ZerocheckClaim`, which
+    `prove_packed` returns alongside this; holding a second copy here is what let
+    the two disagree."""
+
+    round1_ab: Any
+    round1_c: Any
+    multilinear_rounds: Any
+    final_a_eval: Any
+    final_b_eval: Any
+    final_c_eval: Any
+
+
+@dataclass(frozen=True)
+class BatchOpenProof:
+    """Batched dual-claim PCS open (flock BatchOpeningProof): the per-claim
+    ring-switch reductions plus the combined Ligerito low-degree open."""
+
+    ring_switches: Any
+    ligerito: Any = None
+    ligerito_obj: Any = (
+        None  # the zorch LigeritoProof (verify consumes this, not the wire dict)
+    )
+
+
+@dataclass(frozen=True)
+class ProveFastResult:
+    """flock's R1CS proof (`prover::prove`): the zerocheck and lincheck sub-proofs,
+    the batched PCS open, and the final ab/c claim values."""
+
+    zerocheck: Any
+    lincheck: Any
+    pcs_open: Any
+    claim_ab_value: Any
+    claim_c_value: Any
+
+
+@dataclass(frozen=True)
+class AbClaimPoint:
+    """The â/b̂ evaluation point lincheck reduces — the zerocheck challenge split
+    (flock's QuirkyPoint): `z_skip` the URM fold-point, `x_inner_rest` the inner
+    multilinear challenges, `x_outer` the outer ones."""
+
+    z_skip: Any
+    x_inner_rest: Any
+    x_outer: Any
+
+    @classmethod
+    def from_zerocheck(cls, zc: ZerocheckClaim, inner_rest: int) -> "AbClaimPoint":
+        """The â/b̂ point derived from the zerocheck's claim: z_skip is the URM
+        fold-point, and the multilinear challenges split into inner/outer at
+        `inner_rest`."""
+        return cls(
+            z_skip=zc.z,
+            x_inner_rest=zc.mlv_challenges[:inner_rest],
+            x_outer=zc.mlv_challenges[inner_rest:],
+        )
+
+
+@dataclass(frozen=True)
+class LincheckClaim:
+    """The post-sumcheck claim (flock prove_padded_inner steps 6-9): the fresh
+    inner z_skip, the LSB-first inner-rest challenges, and the reduced value w."""
+
+    r_inner_skip: Any
+    r_inner_rest: Any
+    w: Any
+
+
+class LincheckProof(NamedTuple):
+    """flock's lincheck proof: the product-sumcheck `rounds` and the `z_partial`
+    message, plus the post-sumcheck `claim` (a `LincheckClaim`) the PCS open
+    consumes. A NamedTuple (not a dataclass) so the historical
+    `rounds, z_partial, claim = prove(...)` unpacking keeps working alongside
+    attribute access."""
+
+    rounds: Any
+    z_partial: Any
+    claim: "LincheckClaim | None" = None
+
+
+@dataclass(frozen=True)
+class PackedDirectClaim:
+    """A packed-direct PCS claim: a ẑ-evaluation `value` at `point` (its eq_ind is
+    `build_eq(point)`), combined into the batched open alongside the ring-switched
+    claims."""
+
+    point: Any
+    value: Any

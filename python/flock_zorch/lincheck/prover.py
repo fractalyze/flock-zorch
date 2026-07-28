@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import functools
 from dataclasses import dataclass, replace
-from typing import Any, NamedTuple, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 import frx
 import frx.numpy as fnp
@@ -33,9 +33,15 @@ from flock_zorch.challenger import Challenger
 from flock_zorch.lincheck._csc_fold import _csc_segments, _flatten_nz, _seg_xor_fold
 from flock_zorch.sumcheck import build_eq
 from flock_zorch.sumcheck.inf_product import prove_inf_product
-from flock_zorch.types import BatchOpeningClaim, R1csWitness
+from flock_zorch.types import (
+    AbClaimPoint,
+    BatchOpeningClaim,
+    LincheckClaim,
+    LincheckProof,
+    R1csWitness,
+    ZerocheckClaim,
+)
 from flock_zorch.zerocheck import _lagrange_weights
-from flock_zorch.zerocheck.types import ZerocheckClaim
 
 U64 = fnp.uint64
 _GHASH = fnp.binary_field_ghash
@@ -147,50 +153,6 @@ class LincheckCircuit(Protocol):
     const_pin: int | None
 
     def fold_alpha_batched(self, alpha: Any, eq_inner: Any) -> Any: ...
-
-
-@dataclass(frozen=True)
-class AbClaimPoint:
-    """The â/b̂ evaluation point lincheck reduces — the zerocheck challenge split
-    (flock's QuirkyPoint): `z_skip` the URM fold-point, `x_inner_rest` the inner
-    multilinear challenges, `x_outer` the outer ones."""
-
-    z_skip: Any
-    x_inner_rest: Any
-    x_outer: Any
-
-    @classmethod
-    def from_zerocheck(cls, zc: ZerocheckClaim, inner_rest: int) -> "AbClaimPoint":
-        """The â/b̂ point derived from the zerocheck's claim: z_skip is the URM
-        fold-point, and the multilinear challenges split into inner/outer at
-        `inner_rest`."""
-        return cls(
-            z_skip=zc.z,
-            x_inner_rest=zc.mlv_challenges[:inner_rest],
-            x_outer=zc.mlv_challenges[inner_rest:],
-        )
-
-
-@dataclass(frozen=True)
-class LincheckClaim:
-    """The post-sumcheck claim (flock prove_padded_inner steps 6-9): the fresh
-    inner z_skip, the LSB-first inner-rest challenges, and the reduced value w."""
-
-    r_inner_skip: Any
-    r_inner_rest: Any
-    w: Any
-
-
-class LincheckProof(NamedTuple):
-    """flock's lincheck proof: the product-sumcheck `rounds` and the `z_partial`
-    message, plus the post-sumcheck `claim` (a `LincheckClaim`) the PCS open
-    consumes. A NamedTuple (not a dataclass) so the historical
-    `rounds, z_partial, claim = prove(...)` unpacking keeps working alongside
-    attribute access."""
-
-    rounds: Any
-    z_partial: Any
-    claim: "LincheckClaim | None" = None
 
 
 @dataclass(frozen=True)
