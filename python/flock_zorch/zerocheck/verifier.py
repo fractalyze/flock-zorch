@@ -1,7 +1,7 @@
 # Copyright 2026 The Zorch Authors. SPDX-License-Identifier: Apache-2.0
 """Zerocheck verifier.
 
-Soundness is the AND of the rounds' `ok` flags (`VerifyChain`): a failed check
+Soundness is the AND of the steps' `ok` flags (`verify_rounds`): a failed check
 yields `ok=False`; only a malformed proof shape raises. Arithmetic is native
 `binary_field_ghash`; the per-variable loop is host Python (n_mlv ≤ ~20).
 """
@@ -12,11 +12,18 @@ from typing import Any
 
 import frx.numpy as fnp
 from zorch.poly.univariate import compute_lagrange_basis
-from zorch.round import Round, VerifyChain
+from zorch.round import verify_rounds
 
 from flock_zorch import ghash
+from flock_zorch.types import ZerocheckClaim
 from flock_zorch.zerocheck import _urm
-from flock_zorch.zerocheck.prover import _MEDIUM_G, _SMALL_G, K_SKIP, LABEL, N_INNER
+from flock_zorch.zerocheck.prover import (
+    _MEDIUM_G,
+    _SMALL_G,
+    K_SKIP,
+    N_INNER,
+    sample_challenge_coords,
+)
 
 _ONE_G = ghash.to_ghash(fnp.array([1, 0], fnp.uint64))
 
@@ -36,19 +43,6 @@ def _lagrange_at_z(nodes_g, values_g, zg):
 
 
 @dataclass(frozen=True)
-class ZerocheckClaim:
-    """flock `ZerocheckClaim`: the evaluation point (`z` skip-scalar + `mlv_challenges`
-    / `r_rest` coordinate lists) and the final â/b̂/ĉ evals bound at it."""
-
-    z: Any
-    mlv_challenges: Any
-    r_rest: Any
-    a_eval: Any
-    b_eval: Any
-    c_eval: Any
-
-
-@dataclass(frozen=True)
 class _VerifyCarry:
     """Threaded verifier state — the reconstructed claim, filled round by round."""
 
@@ -61,22 +55,7 @@ class _VerifyCarry:
     c_eval: Any = None
 
 
-class _SetupVerifyRound(Round):
-    """Re-derive r = skip challenges ++ the fixed inner-7 constants ++ outer
-    challenges. No message; always `ok`."""
-
-    def __init__(self, m: int, k_skip: int):
-        self._m, self._k_skip = m, k_skip
-
-    def __call__(self, carry, msg, transcript):
-        transcript.observe_label(LABEL)
-        transcript.sample_f128(self._k_skip)  # r_skip: advance FS, not a "rest" coord
-        r_outer = transcript.sample_f128(self._m - self._k_skip - N_INNER)
-        r_rest = fnp.concatenate([_SMALL_G, _MEDIUM_G, r_outer])  # r[k_skip:]
-        return replace(carry, r_rest=r_rest), transcript, True
-
-
-class _UrmVerifyRound(Round):
+class _UrmVerifyRound:
     """Reconstruct ĉ(z) and the AB running claim from round-1. Message =
     (round1_ab, round1_c, final_c_eval); `ok` iff the sent ĉ equals the
     re-derivation."""
@@ -84,7 +63,7 @@ class _UrmVerifyRound(Round):
     def __init__(self, m: int, k_skip: int):
         self._m, self._k_skip = m, k_skip
 
-    def __call__(self, carry, msg, transcript):
+    def __call__(self, carry, transcript, msg):
         ell = 1 << self._k_skip
         ab, c, final_c = msg[0], msg[1], msg[2]
         transcript.observe_f128(ab)
@@ -102,7 +81,7 @@ class _UrmVerifyRound(Round):
         return replace(carry, z=z, c_running=c_running, c_eval=final_c), transcript, ok
 
 
-class _MultilinearVerifyRound(Round):
+class _MultilinearVerifyRound:
     """Sumcheck consistency chain: reconstruct G(0) from the running claim, fold at
     ρ via the char-2 quadratic G(X)=G0·(1+X)+G1·X+G∞·X·(1+X), bind â/b̂. Message =
     (rounds, final_a, final_b); `ok` iff the final running claim equals â·b̂."""
@@ -110,7 +89,7 @@ class _MultilinearVerifyRound(Round):
     def __init__(self, m: int, k_skip: int):
         self._m, self._k_skip = m, k_skip
 
-    def __call__(self, carry, msg, transcript):
+    def __call__(self, carry, transcript, msg):
         rounds, final_a, final_b = msg
         c_running = carry.c_running
         rhos = []
@@ -135,18 +114,13 @@ class _MultilinearVerifyRound(Round):
         return carry, transcript, ok
 
 
-def zerocheck_verify_chain(m: int, k_skip: int) -> VerifyChain:
-    """setup → round-1 URM → multilinear sumcheck.
+def zerocheck_verify_steps(m: int, k_skip: int) -> list:
+    """round-1 URM → multilinear sumcheck.
 
-    The verify side of `zerocheck_chain`.
+    The verify side of `zerocheck_steps`, run after `sample_challenge_coords`
+    has replayed the challenge draw.
     """
-    return VerifyChain(
-        [
-            _SetupVerifyRound(m, k_skip),
-            _UrmVerifyRound(m, k_skip),
-            _MultilinearVerifyRound(m, k_skip),
-        ]
-    )
+    return [_UrmVerifyRound(m, k_skip), _MultilinearVerifyRound(m, k_skip)]
 
 
 def verify(m: int, proof, transcript):
@@ -162,13 +136,19 @@ def verify(m: int, proof, transcript):
     if len(proof.multilinear_rounds) != m - k_skip:
         raise ValueError(f"expected {m - k_skip} multilinear rounds")
 
+    # r_skip advances Fiat-Shamir but is not a "rest" coordinate, so only the
+    # tail r[k_skip:] is kept.
+    _r_skip, r_outer = sample_challenge_coords(transcript, m, k_skip)
+    r_rest = fnp.concatenate([_SMALL_G, _MEDIUM_G, r_outer])
     msgs = [
-        None,
         (proof.round1_ab, proof.round1_c, proof.final_c_eval),
         (proof.multilinear_rounds, proof.final_a_eval, proof.final_b_eval),
     ]
-    carry, transcript, ok = zerocheck_verify_chain(m, k_skip)(
-        _VerifyCarry(), msgs, transcript
+    carry, transcript, ok = verify_rounds(
+        zerocheck_verify_steps(m, k_skip),
+        _VerifyCarry(r_rest=r_rest),
+        msgs,
+        transcript,
     )
     claim = ZerocheckClaim(
         z=carry.z,

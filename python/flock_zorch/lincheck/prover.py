@@ -20,19 +20,28 @@ from __future__ import annotations
 
 import functools
 from dataclasses import dataclass, replace
-from typing import Any, NamedTuple, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 import frx
 import frx.numpy as fnp
 import numpy as np
-from zorch.round import ProveChain, Round
+from zorch.round import prove_rounds
+from zorch.stage import ProveResult, ProverStage
 
 from flock_zorch import ghash
 from flock_zorch.challenger import Challenger
 from flock_zorch.lincheck._csc_fold import _csc_segments, _flatten_nz, _seg_xor_fold
 from flock_zorch.sumcheck import build_eq
 from flock_zorch.sumcheck.inf_product import prove_inf_product
-from flock_zorch.zerocheck import ZerocheckProof, _lagrange_weights
+from flock_zorch.types import (
+    AbClaimPoint,
+    BatchOpeningClaim,
+    LincheckClaim,
+    LincheckProof,
+    R1csWitness,
+    ZerocheckClaim,
+)
+from flock_zorch.zerocheck import _lagrange_weights
 
 U64 = fnp.uint64
 _GHASH = fnp.binary_field_ghash
@@ -147,55 +156,11 @@ class LincheckCircuit(Protocol):
 
 
 @dataclass(frozen=True)
-class AbClaimPoint:
-    """The â/b̂ evaluation point lincheck reduces — the zerocheck challenge split
-    (flock's QuirkyPoint): `z_skip` the URM fold-point, `x_inner_rest` the inner
-    multilinear challenges, `x_outer` the outer ones."""
-
-    z_skip: Any
-    x_inner_rest: Any
-    x_outer: Any
-
-    @classmethod
-    def from_zerocheck(cls, zc: ZerocheckProof, inner_rest: int) -> "AbClaimPoint":
-        """The â/b̂ point derived from a zerocheck proof: z_skip is the URM
-        fold-point, and the multilinear challenges split into inner/outer at
-        `inner_rest`."""
-        return cls(
-            z_skip=zc.z,
-            x_inner_rest=zc.mlv_challenges[:inner_rest],
-            x_outer=zc.mlv_challenges[inner_rest:],
-        )
-
-
-@dataclass(frozen=True)
-class LincheckClaim:
-    """The post-sumcheck claim (flock prove_padded_inner steps 6-9): the fresh
-    inner z_skip, the LSB-first inner-rest challenges, and the reduced value w."""
-
-    r_inner_skip: Any
-    r_inner_rest: Any
-    w: Any
-
-
-class LincheckProof(NamedTuple):
-    """flock's lincheck proof: the product-sumcheck `rounds` and the `z_partial`
-    message, plus the post-sumcheck `claim` (a `LincheckClaim`) the PCS open
-    consumes. A NamedTuple (not a dataclass) so the historical
-    `rounds, z_partial, claim = prove(...)` unpacking keeps working alongside
-    attribute access."""
-
-    rounds: Any
-    z_partial: Any
-    claim: "LincheckClaim | None" = None
-
-
-@dataclass(frozen=True)
 class _LincheckCarry:
-    """State threaded between lincheck's stage Rounds — inputs plus only what a
-    later stage reads from an earlier one. Static config (m, k_log, k_skip) lives
-    on the Round instances (cf. zerocheck._ZerocheckCarry). None fields are
-    per-stage outputs set via replace; not pytree-registered (no @jit boundary)."""
+    """State threaded between the lincheck's steps — inputs plus only what a later
+    step reads from an earlier one. Static config (m, k_log, k_skip) lives on the
+    step instances (cf. zerocheck._ZerocheckCarry); the `None` fields are per-step
+    outputs set via `replace`. Not pytree-registered (no @jit boundary)."""
 
     z_packed_bytes: Any
     a_dense: Any
@@ -209,7 +174,7 @@ class _LincheckCarry:
     claim: Any = None  # ← _ClaimRound
 
 
-class _CombRound(Round):
+class _CombRound:
     """Sample α, build the quirky eq table, and fold the constraint matrices into
     comb = α·(A₀ᵀ·eq_inner) ⊕ (B₀ᵀ·eq_inner) — dense or via a `CscCircuit`, with the
     optional const_pin +β. No proof message — writes comb onto the carry."""
@@ -236,7 +201,7 @@ class _CombRound(Round):
         return replace(carry, comb=comb), transcript, None
 
 
-class _SumcheckRound(Round):
+class _SumcheckRound:
     """Partial-fold z at x_outer, then the (k_log − k_skip)-round product sumcheck
     binding the TOP bit. Message = (rounds, z_partial)."""
 
@@ -267,7 +232,7 @@ class _SumcheckRound(Round):
         return carry, transcript, (rounds, z_partial)
 
 
-class _ClaimRound(Round):
+class _ClaimRound:
     """Claim derivation (flock prove_padded_inner steps 6-9): observe z_partial,
     sample a fresh z_skip, then w = ⟨φ8-weights(r_inner_skip), z_partial⟩ and the
     LSB-first r_inner_rest. FS-bearing (one observe + one draw). Message = the
@@ -295,12 +260,11 @@ class _ClaimRound(Round):
         return replace(carry, claim=claim), transcript, claim
 
 
-def lincheck_chain(m: int, k_log: int, k_skip: int) -> ProveChain:
-    """The lincheck sub-chain: comb → product sumcheck → claim. One definition
-    for the stage wiring (cf. zerocheck.zerocheck_chain)."""
-    return ProveChain(
-        [_CombRound(k_skip), _SumcheckRound(m, k_log, k_skip), _ClaimRound(k_skip)]
-    )
+def lincheck_steps(m: int, k_log: int, k_skip: int) -> list:
+    """The lincheck sub-sequence: comb → product sumcheck → claim. One definition
+    for the wiring (cf. zerocheck.zerocheck_steps). Drive with
+    ``zorch.round.prove_rounds``."""
+    return [_CombRound(k_skip), _SumcheckRound(m, k_log, k_skip), _ClaimRound(k_skip)]
 
 
 def prove(
@@ -319,16 +283,66 @@ def prove(
     x_outer:[*,2]). Byte-identical to flock `prove_padded_capture_z_vec` — the
     claim-bearing entry point, the only one anything downstream consumes.
 
-    A `lincheck_chain` of stage `Round`s (comb → sumcheck → claim) threading one
+    A `lincheck_steps` sequence (comb → sumcheck → claim) threading one
     `Challenger`. `circuit`: a `CscCircuit` for real hash R1CS (sparse A₀/B₀ at
     large k, with an optional const_pin +β column); when None, the dense
     `a_dense`/`b_dense` path is used (small test R1CS). Returns a `LincheckProof`.
     Pass a shared `ch` to thread Fiat-Shamir; else a fresh Challenger(domain)."""
     if ch is None:
         ch = Challenger(domain)
-    carry, _ch, _msgs = lincheck_chain(m, k_log, k_skip)(
-        _LincheckCarry(z_packed_bytes, a_dense, b_dense, x_ab, circuit), ch
+    carry, _ch, _msgs = prove_rounds(
+        lincheck_steps(m, k_log, k_skip),
+        _LincheckCarry(z_packed_bytes, a_dense, b_dense, x_ab, circuit),
+        ch,
     )
     return LincheckProof(
         rounds=carry.rounds, z_partial=carry.z_partial, claim=carry.claim
     )
+
+
+class LincheckProver(ProverStage[ZerocheckClaim, R1csWitness, BatchOpeningClaim, Any]):
+    """Reduce a = A·ẑ and b = B·ẑ to a single ab evaluation claim on ẑ, and pair
+    it with the zerocheck's c claim for the batched open."""
+
+    def __init__(self, m, k_log, k_skip, circuit=None):
+        self._m, self._k_log, self._k_skip, self._circuit = m, k_log, k_skip, circuit
+
+    def prove(
+        self, claim: ZerocheckClaim, witness: R1csWitness, transcript
+    ) -> ProveResult[BatchOpeningClaim, Any]:
+        inner_rest = self._k_log - self._k_skip
+        x_outer = claim.mlv_challenges[inner_rest:]
+        lp = prove(
+            witness.z_lincheck,
+            witness.a0,
+            witness.b0,
+            AbClaimPoint(
+                z_skip=claim.z,
+                x_inner_rest=claim.mlv_challenges[:inner_rest],
+                x_outer=x_outer,
+            ),
+            self._m,
+            self._k_log,
+            self._k_skip,
+            ch=transcript,
+            circuit=self._circuit,
+        )
+        if lp.claim is None:
+            # `LincheckProof.claim` is optional only to keep the historical
+            # `rounds, z_partial, claim` unpacking working; a prove that reached
+            # here without one cannot state what it reduced to.
+            raise ValueError("lincheck produced no claim to open against")
+        # c_full is split-then-rejoined (not just r_rest) to mirror Rust's
+        # QuirkyPoint / quirky_x_outer_full.
+        return ProveResult(
+            BatchOpeningClaim(
+                ab_point=fnp.concatenate([lp.claim.r_inner_rest, x_outer], axis=0),
+                c_point=fnp.concatenate(
+                    [claim.r_rest[:inner_rest], claim.r_rest[inner_rest:]], axis=0
+                ),
+                ab_value=lp.claim.w,
+                c_value=claim.c_eval,
+            ),
+            (lp.rounds, lp.z_partial),
+            transcript,
+        )

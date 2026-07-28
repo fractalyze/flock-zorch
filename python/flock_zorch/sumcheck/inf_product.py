@@ -16,14 +16,13 @@ import functools
 
 import frx
 from zorch.prove import fold_rounds
-from zorch.round import Round
 from zorch.sumcheck.domain import compressed_domain, fold, summand_evals
 from zorch.sumcheck.prover import ProductSummand
 
 _PRODUCT2 = ProductSummand(2)._combine
 
 
-class InfProductRound(Round):
+class InfProductRound:
     """One round over the stacked `[2, N]` ghash (weight, values) state: the
     `(s(1), s(∞))` compressed message observed as two framed scalars, the TOP bit
     bound at the squeezed challenge, returning `(s(1), s(∞), r)` so the caller keeps

@@ -62,3 +62,40 @@ class Challenger:
     def grind_pow(self, bits: int) -> int:
         self._t, witness = fs.grind(self._t, bits)
         return int(witness)
+
+    # --- zorch `Transcript` seam ---------------------------------------------
+    #
+    # The wrapper already *is* a transcript; these name the surface zorch's
+    # composition roles are typed on, so a flock round can declare the seam it
+    # threads instead of being unrepresentable to the type checker. Each one
+    # delegates to the wrapped functional transcript and returns `self`, which
+    # is the wrapper's existing `&mut self` contract — callers already rely on
+    # mutation rather than on the returned value being a distinct object.
+
+    @property
+    def field(self):
+        return self._t.field
+
+    @property
+    def has_dedicated_fusion(self) -> bool:
+        return self._t.has_dedicated_fusion
+
+    def observe(self, values) -> "Challenger":
+        self._t = self._t.observe(values)
+        return self
+
+    def sample(self, n: int = 1) -> tuple["Challenger", object]:
+        self._t, out = self._t.sample(n)
+        return self, out
+
+    def observe_and_sample(self, values, n: int = 1) -> tuple["Challenger", object]:
+        self._t, out = self._t.observe_and_sample(values, n)
+        return self, out
+
+    def grind(self, pow_bits: int) -> tuple["Challenger", object]:
+        self._t, witness = self._t.grind(pow_bits)
+        return self, witness
+
+    def check_witness(self, witness, *, pow_bits: int) -> tuple["Challenger", object]:
+        self._t, ok = self._t.check_witness(witness, pow_bits=pow_bits)
+        return self, ok

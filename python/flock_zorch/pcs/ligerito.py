@@ -75,6 +75,13 @@ class FlockTranscript:
     inner: Sha256FieldTranscript
 
     @property
+    def field(self):
+        """The field one `sample` word is drawn from — GHASH, from the wrapped
+        transcript. Part of zorch's `Transcript` seam; without it this adapter
+        does not satisfy the protocol it exists to implement."""
+        return self.inner.field
+
+    @property
     def has_dedicated_fusion(self) -> bool:
         return self.inner.has_dedicated_fusion
 
@@ -96,6 +103,16 @@ class FlockTranscript:
         self, values: Array, n: int = 1
     ) -> tuple["FlockTranscript", Array]:
         return self.observe(values).sample(n)
+
+    def grind(self, pow_bits: int) -> tuple["FlockTranscript", Array]:
+        inner, witness = fs.grind(self.inner, pow_bits)
+        return FlockTranscript(inner), witness
+
+    def check_witness(
+        self, witness: Array, *, pow_bits: int
+    ) -> tuple["FlockTranscript", Array]:
+        inner, ok = fs.check_witness(self.inner, witness, pow_bits)
+        return FlockTranscript(inner), ok
 
 
 def flock_transcript(domain: bytes) -> FlockTranscript:
@@ -129,7 +146,7 @@ def _sample_distinct_positions(inner, block_len: int, count: int):
 
 
 @dataclass(frozen=True)
-class FlockChoreography(LigeritoChoreography):
+class FlockChoreography(LigeritoChoreography[FlockTranscript]):
     """flock `pcs::ligerito`'s Fiat-Shamir choreography over `FlockTranscript`.
 
     `fold_grinding_bits[level]` tapers per fold round (`max(bits - j, 0)`,

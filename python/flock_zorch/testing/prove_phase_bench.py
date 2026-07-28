@@ -282,7 +282,7 @@ def make_prove(circ: Circuit, g, unpacked: bool):
         pdata, ch = phase("commit", _commit)
         zc = phase(
             "zerocheck",
-            lambda: zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch),
+            lambda: zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch)[0],
         )
         x_ab, lc = phase("lincheck", lambda: _lincheck(zc))
         return phase("open", lambda: _open(zc, x_ab, lc))

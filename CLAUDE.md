@@ -2,6 +2,8 @@
 
 Overview, setup, the reproduction path, and the benchmark all live in
 [`README.md`](README.md) — start there.
+How the protocol is modelled — claims, roles, and what the tooling misses — is
+[`docs/conventions.md`](docs/conventions.md).
 
 ## Non-negotiables
 
@@ -17,8 +19,8 @@ The rules every change must respect:
   don't add one, add a python-native test (no golden) for primitive behavior.
   No behavior change ships without the proof gates green (GPU set included).
 - **Assemble zorch's blocks, never re-implement the scheme.** The prover is built
-  from zorch's scheme-agnostic spine (`Round`, Fiat-Shamir, `PCS`, fold,
-  zero-check). flock-zorch adds only the flock-specific pieces the byte-match
+  from zorch's scheme-agnostic spine (the `ProverRound` / `VerifierRound`
+  protocols and their drivers, Fiat-Shamir, `PCS`, fold, zero-check). flock-zorch adds only the flock-specific pieces the byte-match
   needs — the GHASH-basis field, the round-1 URM, the ∞-trick round loop, and
   F128↔bytes serialization — and re-derives nothing zorch already provides.
 - **frx and zorch pins move in lockstep.** Bumping zorch (the `MODULE.bazel`

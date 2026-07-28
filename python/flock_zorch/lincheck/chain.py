@@ -18,8 +18,6 @@ packed-direct PCS open consumes (the `ChainProof` assembly).
 """
 
 import functools
-from dataclasses import dataclass
-from typing import Any
 
 import frx
 import frx.numpy as fnp
@@ -28,17 +26,6 @@ import numpy as np
 from flock_zorch import ghash
 from flock_zorch.sumcheck import build_eq
 from flock_zorch.sumcheck.inf_product import prove_inf_product
-
-
-@dataclass(frozen=True)
-class PackedDirectClaim:
-    """A packed-direct PCS claim: a ẑ-evaluation `value` at `point` (its eq_ind is
-    `build_eq(point)`), combined into the batched open alongside the ring-switched
-    claims."""
-
-    point: Any
-    value: Any
-
 
 LOG_PACKING = ghash.LOG_PACKING  # 128 = 2^7 bits per packed F128 element
 

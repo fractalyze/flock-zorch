@@ -20,12 +20,17 @@ flock is an R1CS-over-GF(2¹²⁸) prover: two sumcheck PIOPs (zerocheck + linch
 over a Ligerito polynomial commitment, with a SHA-256 Fiat-Shamir
 transcript, targeting hash-circuit statements (Keccak-f[1600], Keccak3, SHA-256,
 BLAKE3). flock-zorch assembles that specific prover from zorch's scheme-agnostic
-blocks (`Round`, Fiat-Shamir, `Polynomial`, `PCS`, fold, zero-check) and adds
+blocks (the round protocols and drivers, Fiat-Shamir, `Polynomial`, `PCS`,
+fold, zero-check) and adds
 only the flock-specific pieces the byte-match needs (GHASH-basis field, the
 round-1 URM, the ∞-trick round loop, F128↔bytes serialization). The full prover
 `prover.prove_fast` produces the complete `R1csProof` — commit → bind →
 zerocheck → lincheck → batched dual-claim open, one shared challenger,
 device-resident — reproducing flock `prove`'s proof bit-for-bit.
+
+How the protocol is modelled — what a claim may state, which steps are roles
+rather than functions, and what the tooling does not cover — is
+[`docs/conventions.md`](docs/conventions.md).
 
 ## Installation
 
@@ -88,7 +93,7 @@ build:
 | dep | how |
 |---|---|
 | **flock** — the reference prover + byte-compare oracle | a cargo **git rev dep** (`flock-core` / `flock-prover` in [`Cargo.toml`](https://github.com/fractalyze/flock-zorch/blob/main/Cargo.toml)); `cargo build` fetches it at the pinned rev, and `examples/dump_*.rs` drive it to dump the golden fixtures |
-| **zorch** — the scheme-agnostic spine (`zorch.hash.sha256`, the device Fiat-Shamir transcript, the `Round`/`Bridge`/`Stage` chain roles, `pcs.ligerito`) | a bazel **`git_override`** in [`MODULE.bazel`](https://github.com/fractalyze/flock-zorch/blob/main/MODULE.bazel); bazel fetches it |
+| **zorch** — the scheme-agnostic spine (`zorch.hash.sha256`, the device Fiat-Shamir transcript, the `ProverRound`/`VerifierRound` protocols and their drivers, the `ProverStage`/`VerifierStage` claim-reduction roles, `pcs.ligerito`) | a bazel **`git_override`** in [`MODULE.bazel`](https://github.com/fractalyze/flock-zorch/blob/main/MODULE.bazel); bazel fetches it |
 
 **Prerequisites** — an NVIDIA GPU (CUDA; RTX 5090 / sm_120 reference), a Rust
 toolchain (`flock-core` is edition 2024), Python 3.11. For the GPU fast path, a **CUDA 13.3

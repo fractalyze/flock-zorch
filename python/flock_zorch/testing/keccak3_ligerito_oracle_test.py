@@ -91,17 +91,19 @@ def run():
     ch = Challenger(b"flock-keccak3-lig-v0")
     prover.bind_statement(ch, g["stmt"], root)
     a_bits, b_bits, c_bits = g["a"], g["b"], g["z"]
-    zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch)
+    zc_proof, zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch)
     results.append(
         (
             "zerocheck round1_ab",
-            np.array_equal(ghash.to_lanes(zc.round1_ab), g["zc"]["r1ab"]),
+            np.array_equal(ghash.to_lanes(zc_proof.round1_ab), g["zc"]["r1ab"]),
         )
     )
     results.append(
         (
             "zerocheck final_c",
-            np.array_equal(ghash.to_lanes(zc.final_c_eval).reshape(2), g["zc"]["fc"]),
+            np.array_equal(
+                ghash.to_lanes(zc_proof.final_c_eval).reshape(2), g["zc"]["fc"]
+            ),
         )
     )
 
