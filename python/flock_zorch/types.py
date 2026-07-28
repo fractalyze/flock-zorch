@@ -1,9 +1,7 @@
 # Copyright 2026 The flock-zorch Authors. SPDX-License-Identifier: Apache-2.0
 """The R1CS system's claims, witness and commitment data.
 
-Separate from `prover.py` so a verifier reads a claim without importing the
-prover that produced it. The two roles of a claim reduction are separately
-deployable (`zorch.stage`), which a shared type module is what makes possible.
+Both roles of a reduction read these, so neither imports the other to do it.
 """
 
 from __future__ import annotations
@@ -16,8 +14,6 @@ from frx import Array
 if TYPE_CHECKING:
     pass
 
-# --- Vocabulary: what a commitment carries. -------------------------------
-
 
 @dataclass(frozen=True, kw_only=True)
 class LigeritoCommitData:
@@ -29,9 +25,6 @@ class LigeritoCommitData:
 
     root: Any
     pdata: Any
-
-
-# --- The R1CS statement and the witness that satisfies it. ----------------
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -56,9 +49,6 @@ class R1csWitness:
     z_lincheck: bytes
     a0: Array  # lincheck A matrix (dense)
     b0: Array  # lincheck B matrix (dense)
-
-
-# --- Reduction 1: zerocheck. ----------------------------------------------
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -93,9 +83,6 @@ class ZerocheckProof:
     final_a_eval: Any
     final_b_eval: Any
     final_c_eval: Any
-
-
-# --- Reduction 2: lincheck. -----------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -152,9 +139,6 @@ class PackedDirectClaim:
     value: Any
 
 
-# --- Reduction 3: the batched Ligerito opening. ---------------------------
-
-
 @dataclass(frozen=True, kw_only=True)
 class BatchOpeningClaim:
     """ẑ opens to the ab and c claim values at the two batched points.
@@ -179,9 +163,6 @@ class BatchOpenProof:
     ligerito_obj: Any = (
         None  # the zorch LigeritoProof (verify consumes this, not the wire dict)
     )
-
-
-# --- The composite's result. ----------------------------------------------
 
 
 @dataclass(frozen=True)
