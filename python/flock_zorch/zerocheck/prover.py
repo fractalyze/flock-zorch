@@ -25,11 +25,13 @@ import frx
 import frx.numpy as fnp
 import numpy as np
 from zorch.round import prove_rounds
+from zorch.stage import ProveResult, ProverStage
 from zorch.sumcheck.domain import fold
 
 from flock_zorch import ghash, sumcheck
 from flock_zorch.challenger import Challenger
 from flock_zorch.ghash import _ghash_to_lanes, _lanes_to_ghash
+from flock_zorch.types import R1csClaim, R1csWitness
 from flock_zorch.zerocheck import _urm
 from flock_zorch.zerocheck._fold import (
     _fold_at_z,
@@ -293,3 +295,28 @@ def prove_packed(
         c_eval=carry.final_c_eval,
     )
     return proof, claim
+
+
+class ZerocheckProver(
+    ProverStage[R1csClaim, R1csWitness, ZerocheckClaim, ZerocheckProof]
+):
+    """Reduce the R1CS Hadamard constraint to evaluation claims on â, b̂, ĉ.
+
+    Runs on the identity witness (a = b = c = ẑ), which is what makes the
+    identity R1CS gate meaningful.
+    """
+
+    def __init__(self, m):
+        self._m = m
+
+    def prove(
+        self, claim: R1csClaim, witness: R1csWitness, transcript
+    ) -> ProveResult[ZerocheckClaim, ZerocheckProof]:
+        proof, reduced = prove_packed(
+            witness.z_packed,
+            witness.z_packed,
+            witness.z_packed,
+            self._m,
+            ch=transcript,
+        )
+        return ProveResult(reduced, proof, transcript)

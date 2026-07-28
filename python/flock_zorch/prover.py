@@ -21,12 +21,19 @@ import numpy as np
 from frx import Array
 from zorch.stage import ProveResult, ProverStage, TrivialClaim
 
-from flock_zorch import ghash, lincheck, zerocheck
+from flock_zorch import ghash
 from flock_zorch.challenger import Challenger  # noqa: F401  (re-exported for callers)
+from flock_zorch.lincheck.prover import LincheckProver
 from flock_zorch.pcs import ligerito as zorch_ligerito
 from flock_zorch.pcs import ring_switch
 from flock_zorch.sumcheck import build_eq
-from flock_zorch.zerocheck.types import ZerocheckClaim
+from flock_zorch.types import (
+    BatchOpeningClaim,
+    LigeritoCommitData,
+    R1csClaim,
+    R1csWitness,
+)
+from flock_zorch.zerocheck.prover import ZerocheckProver
 
 
 @dataclass(frozen=True)
@@ -150,56 +157,6 @@ def open_batch_mixed_ligerito(
     return BatchOpenProof(ring_switches=s_hat_vs, ligerito=lig, ligerito_obj=lig_obj)
 
 
-@dataclass(frozen=True, kw_only=True)
-class R1csClaim:
-    """The committed witness ẑ satisfies the R1CS instance: A·ẑ ∘ B·ẑ = C·ẑ.
-
-    The root statement a flock proof discharges. It carries the instance digest,
-    which is what the transcript binds and what pins *which* R1CS is being
-    claimed; the matrix shapes are fixed by the circuit and configure the roles.
-    """
-
-    statement_digest: bytes
-
-
-@dataclass(frozen=True, kw_only=True)
-class R1csWitness:
-    """The assignment ẑ that satisfies the R1CS claim, in the two forms the
-    reductions consume: packed bits for the zerocheck and PCS, bytes plus the
-    dense A/B blocks for the lincheck."""
-
-    z_packed: Array  # witness ẑ, device-resident across the reductions
-    z_lincheck: bytes
-    a0: Array  # lincheck A matrix (dense)
-    b0: Array  # lincheck B matrix (dense)
-
-
-@dataclass(frozen=True, kw_only=True)
-class BatchOpeningClaim:
-    """ẑ opens to the ab and c claim values at the two batched points.
-
-    What the lincheck leaves for the PCS: two evaluation claims on the committed
-    witness, which the batched Ligerito open discharges.
-    """
-
-    ab_point: Array
-    c_point: Array
-    ab_value: Any
-    c_value: Any
-
-
-@dataclass(frozen=True, kw_only=True)
-class LigeritoCommitData:
-    """What the Ligerito PCS retains between its commit and open halves.
-
-    Not prover-only: the root is bound into the transcript by
-    ``bind_statement`` and the opened columns and Merkle paths ride the proof.
-    """
-
-    root: Any
-    pdata: Any
-
-
 class FlockLigeritoPcs:
     """The Ligerito commitment scheme: commit ẑ, open it at the batched points.
 
@@ -235,79 +192,6 @@ class FlockLigeritoPcs:
             transcript,
         )
         return ProveResult(TrivialClaim(), proof, transcript)
-
-
-class ZerocheckProver(
-    ProverStage[R1csClaim, R1csWitness, ZerocheckClaim, zerocheck.ZerocheckProof]
-):
-    """Reduce the R1CS Hadamard constraint to evaluation claims on â, b̂, ĉ.
-
-    Runs on the identity witness (a = b = c = ẑ), which is what makes the
-    identity R1CS gate meaningful.
-    """
-
-    def __init__(self, m):
-        self._m = m
-
-    def prove(
-        self, claim: R1csClaim, witness: R1csWitness, transcript
-    ) -> ProveResult[ZerocheckClaim, zerocheck.ZerocheckProof]:
-        proof, reduced = zerocheck.prove_packed(
-            witness.z_packed,
-            witness.z_packed,
-            witness.z_packed,
-            self._m,
-            ch=transcript,
-        )
-        return ProveResult(reduced, proof, transcript)
-
-
-class LincheckProver(ProverStage[ZerocheckClaim, R1csWitness, BatchOpeningClaim, Any]):
-    """Reduce a = A·ẑ and b = B·ẑ to a single ab evaluation claim on ẑ, and pair
-    it with the zerocheck's c claim for the batched open."""
-
-    def __init__(self, m, k_log, k_skip, circuit=None):
-        self._m, self._k_log, self._k_skip, self._circuit = m, k_log, k_skip, circuit
-
-    def prove(
-        self, claim: ZerocheckClaim, witness: R1csWitness, transcript
-    ) -> ProveResult[BatchOpeningClaim, Any]:
-        inner_rest = self._k_log - self._k_skip
-        x_outer = claim.mlv_challenges[inner_rest:]
-        lp = lincheck.prove(
-            witness.z_lincheck,
-            witness.a0,
-            witness.b0,
-            lincheck.AbClaimPoint(
-                z_skip=claim.z,
-                x_inner_rest=claim.mlv_challenges[:inner_rest],
-                x_outer=x_outer,
-            ),
-            self._m,
-            self._k_log,
-            self._k_skip,
-            ch=transcript,
-            circuit=self._circuit,
-        )
-        if lp.claim is None:
-            # `LincheckProof.claim` is optional only to keep the historical
-            # `rounds, z_partial, claim` unpacking working; a prove that reached
-            # here without one cannot state what it reduced to.
-            raise ValueError("lincheck produced no claim to open against")
-        # c_full is split-then-rejoined (not just r_rest) to mirror Rust's
-        # QuirkyPoint / quirky_x_outer_full.
-        return ProveResult(
-            BatchOpeningClaim(
-                ab_point=fnp.concatenate([lp.claim.r_inner_rest, x_outer], axis=0),
-                c_point=fnp.concatenate(
-                    [claim.r_rest[:inner_rest], claim.r_rest[inner_rest:]], axis=0
-                ),
-                ab_value=lp.claim.w,
-                c_value=claim.c_eval,
-            ),
-            (lp.rounds, lp.z_partial),
-            transcript,
-        )
 
 
 class FlockProver(ProverStage[R1csClaim, R1csWitness, TrivialClaim, ProveFastResult]):

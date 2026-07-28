@@ -26,12 +26,14 @@ import frx
 import frx.numpy as fnp
 import numpy as np
 from zorch.round import prove_rounds
+from zorch.stage import ProveResult, ProverStage
 
 from flock_zorch import ghash
 from flock_zorch.challenger import Challenger
 from flock_zorch.lincheck._csc_fold import _csc_segments, _flatten_nz, _seg_xor_fold
 from flock_zorch.sumcheck import build_eq
 from flock_zorch.sumcheck.inf_product import prove_inf_product
+from flock_zorch.types import BatchOpeningClaim, R1csWitness
 from flock_zorch.zerocheck import _lagrange_weights
 from flock_zorch.zerocheck.types import ZerocheckClaim
 
@@ -334,3 +336,51 @@ def prove(
     return LincheckProof(
         rounds=carry.rounds, z_partial=carry.z_partial, claim=carry.claim
     )
+
+
+class LincheckProver(ProverStage[ZerocheckClaim, R1csWitness, BatchOpeningClaim, Any]):
+    """Reduce a = A·ẑ and b = B·ẑ to a single ab evaluation claim on ẑ, and pair
+    it with the zerocheck's c claim for the batched open."""
+
+    def __init__(self, m, k_log, k_skip, circuit=None):
+        self._m, self._k_log, self._k_skip, self._circuit = m, k_log, k_skip, circuit
+
+    def prove(
+        self, claim: ZerocheckClaim, witness: R1csWitness, transcript
+    ) -> ProveResult[BatchOpeningClaim, Any]:
+        inner_rest = self._k_log - self._k_skip
+        x_outer = claim.mlv_challenges[inner_rest:]
+        lp = prove(
+            witness.z_lincheck,
+            witness.a0,
+            witness.b0,
+            AbClaimPoint(
+                z_skip=claim.z,
+                x_inner_rest=claim.mlv_challenges[:inner_rest],
+                x_outer=x_outer,
+            ),
+            self._m,
+            self._k_log,
+            self._k_skip,
+            ch=transcript,
+            circuit=self._circuit,
+        )
+        if lp.claim is None:
+            # `LincheckProof.claim` is optional only to keep the historical
+            # `rounds, z_partial, claim` unpacking working; a prove that reached
+            # here without one cannot state what it reduced to.
+            raise ValueError("lincheck produced no claim to open against")
+        # c_full is split-then-rejoined (not just r_rest) to mirror Rust's
+        # QuirkyPoint / quirky_x_outer_full.
+        return ProveResult(
+            BatchOpeningClaim(
+                ab_point=fnp.concatenate([lp.claim.r_inner_rest, x_outer], axis=0),
+                c_point=fnp.concatenate(
+                    [claim.r_rest[:inner_rest], claim.r_rest[inner_rest:]], axis=0
+                ),
+                ab_value=lp.claim.w,
+                c_value=claim.c_eval,
+            ),
+            (lp.rounds, lp.z_partial),
+            transcript,
+        )
