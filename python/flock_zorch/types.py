@@ -16,6 +16,23 @@ from frx import Array
 if TYPE_CHECKING:
     pass
 
+# --- Vocabulary: what a commitment carries. -------------------------------
+
+
+@dataclass(frozen=True, kw_only=True)
+class LigeritoCommitData:
+    """What the Ligerito PCS retains between its commit and open halves.
+
+    Not prover-only: the root is bound into the transcript by
+    ``bind_statement`` and the opened columns and Merkle paths ride the proof.
+    """
+
+    root: Any
+    pdata: Any
+
+
+# --- The R1CS statement and the witness that satisfies it. ----------------
+
 
 @dataclass(frozen=True, kw_only=True)
 class R1csClaim:
@@ -41,30 +58,7 @@ class R1csWitness:
     b0: Array  # lincheck B matrix (dense)
 
 
-@dataclass(frozen=True, kw_only=True)
-class BatchOpeningClaim:
-    """ẑ opens to the ab and c claim values at the two batched points.
-
-    What the lincheck leaves for the PCS: two evaluation claims on the committed
-    witness, which the batched Ligerito open discharges.
-    """
-
-    ab_point: Array
-    c_point: Array
-    ab_value: Any
-    c_value: Any
-
-
-@dataclass(frozen=True, kw_only=True)
-class LigeritoCommitData:
-    """What the Ligerito PCS retains between its commit and open halves.
-
-    Not prover-only: the root is bound into the transcript by
-    ``bind_statement`` and the opened columns and Merkle paths ride the proof.
-    """
-
-    root: Any
-    pdata: Any
+# --- Reduction 1: zerocheck. ----------------------------------------------
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -101,28 +95,7 @@ class ZerocheckProof:
     final_c_eval: Any
 
 
-@dataclass(frozen=True)
-class BatchOpenProof:
-    """Batched dual-claim PCS open (flock BatchOpeningProof): the per-claim
-    ring-switch reductions plus the combined Ligerito low-degree open."""
-
-    ring_switches: Any
-    ligerito: Any = None
-    ligerito_obj: Any = (
-        None  # the zorch LigeritoProof (verify consumes this, not the wire dict)
-    )
-
-
-@dataclass(frozen=True)
-class ProveFastResult:
-    """flock's R1CS proof (`prover::prove`): the zerocheck and lincheck sub-proofs,
-    the batched PCS open, and the final ab/c claim values."""
-
-    zerocheck: Any
-    lincheck: Any
-    pcs_open: Any
-    claim_ab_value: Any
-    claim_c_value: Any
+# --- Reduction 2: lincheck. -----------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -177,3 +150,47 @@ class PackedDirectClaim:
 
     point: Any
     value: Any
+
+
+# --- Reduction 3: the batched Ligerito opening. ---------------------------
+
+
+@dataclass(frozen=True, kw_only=True)
+class BatchOpeningClaim:
+    """ẑ opens to the ab and c claim values at the two batched points.
+
+    What the lincheck leaves for the PCS: two evaluation claims on the committed
+    witness, which the batched Ligerito open discharges.
+    """
+
+    ab_point: Array
+    c_point: Array
+    ab_value: Any
+    c_value: Any
+
+
+@dataclass(frozen=True)
+class BatchOpenProof:
+    """Batched dual-claim PCS open (flock BatchOpeningProof): the per-claim
+    ring-switch reductions plus the combined Ligerito low-degree open."""
+
+    ring_switches: Any
+    ligerito: Any = None
+    ligerito_obj: Any = (
+        None  # the zorch LigeritoProof (verify consumes this, not the wire dict)
+    )
+
+
+# --- The composite's result. ----------------------------------------------
+
+
+@dataclass(frozen=True)
+class ProveFastResult:
+    """flock's R1CS proof (`prover::prove`): the zerocheck and lincheck sub-proofs,
+    the batched PCS open, and the final ab/c claim values."""
+
+    zerocheck: Any
+    lincheck: Any
+    pcs_open: Any
+    claim_ab_value: Any
+    claim_c_value: Any
