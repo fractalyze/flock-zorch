@@ -104,6 +104,16 @@ class FlockTranscript:
     ) -> tuple["FlockTranscript", Array]:
         return self.observe(values).sample(n)
 
+    def grind(self, pow_bits: int) -> tuple["FlockTranscript", Array]:
+        inner, witness = fs.grind(self.inner, pow_bits)
+        return FlockTranscript(inner), witness
+
+    def check_witness(
+        self, witness: Array, *, pow_bits: int
+    ) -> tuple["FlockTranscript", Array]:
+        inner, ok = fs.check_witness(self.inner, witness, pow_bits)
+        return FlockTranscript(inner), ok
+
 
 def flock_transcript(domain: bytes) -> FlockTranscript:
     """A fresh `FlockTranscript` seeded like flock's `FsChallenger`."""
@@ -136,7 +146,7 @@ def _sample_distinct_positions(inner, block_len: int, count: int):
 
 
 @dataclass(frozen=True)
-class FlockChoreography(LigeritoChoreography):
+class FlockChoreography(LigeritoChoreography[FlockTranscript]):
     """flock `pcs::ligerito`'s Fiat-Shamir choreography over `FlockTranscript`.
 
     `fold_grinding_bits[level]` tapers per fold round (`max(bits - j, 0)`,

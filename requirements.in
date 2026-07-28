@@ -8,6 +8,9 @@
 # itself arrives as a Bazel module (see MODULE.bazel), not a pip dep.
 absl-py
 numpy
+# PEP 696 TypeVar defaults, which `typing` gains only in 3.13. zorch subscripts
+# them in base-class position, so it is a runtime import, not TYPE_CHECKING-only.
+typing-extensions
 # Lockstep with the zorch git_override pin in MODULE.bazel. frx/frxlib are the
 # Fractalyze jax_fork rebrand; this MUST mirror zorch's own requirements.in and
 # stay on the same version so the GPU kernels are byte-identical. The stack

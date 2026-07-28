@@ -63,7 +63,7 @@ class Challenger:
         self._t, witness = fs.grind(self._t, bits)
         return int(witness)
 
-    # --- zorch `GrindingTranscript` seam -------------------------------------
+    # --- zorch `Transcript` seam ---------------------------------------------
     #
     # The wrapper already *is* a transcript; these name the surface zorch's
     # composition roles are typed on, so a flock round can declare the seam it
@@ -96,6 +96,6 @@ class Challenger:
         self._t, witness = self._t.grind(pow_bits)
         return self, witness
 
-    def check_witness(self, pow_bits: int, witness) -> tuple["Challenger", object]:
-        self._t, ok = self._t.check_witness(pow_bits, witness)
+    def check_witness(self, witness, *, pow_bits: int) -> tuple["Challenger", object]:
+        self._t, ok = self._t.check_witness(witness, pow_bits=pow_bits)
         return self, ok

@@ -54,7 +54,7 @@ def grind(t, bits):
 
 @functools.partial(frx.jit, static_argnums=(2,))
 def check_witness(t, witness, bits):
-    return t.check_witness(witness, bits)
+    return t.check_witness(witness, pow_bits=bits)
 
 
 @functools.partial(frx.jit, static_argnums=(1,))
