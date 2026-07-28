@@ -16,18 +16,6 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True, kw_only=True)
-class LigeritoCommitData:
-    """What the Ligerito PCS retains between its commit and open halves.
-
-    Not prover-only: the root is bound into the transcript by
-    ``bind_statement`` and the opened columns and Merkle paths ride the proof.
-    """
-
-    root: Any
-    pdata: Any
-
-
-@dataclass(frozen=True, kw_only=True)
 class R1csClaim:
     """The committed witness ẑ satisfies the R1CS instance: A·ẑ ∘ B·ẑ = C·ẑ.
 
@@ -49,6 +37,18 @@ class R1csWitness:
     z_lincheck: bytes
     a0: Array  # lincheck A matrix (dense)
     b0: Array  # lincheck B matrix (dense)
+
+
+@dataclass(frozen=True, kw_only=True)
+class LigeritoCommitData:
+    """What the Ligerito PCS retains between its commit and open halves.
+
+    Not prover-only: the root is bound into the transcript by
+    ``bind_statement`` and the opened columns and Merkle paths ride the proof.
+    """
+
+    root: Any
+    pdata: Any
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -108,6 +108,16 @@ class AbClaimPoint:
 
 
 @dataclass(frozen=True)
+class PackedDirectClaim:
+    """A packed-direct PCS claim: a ẑ-evaluation `value` at `point` (its eq_ind is
+    `build_eq(point)`), combined into the batched open alongside the ring-switched
+    claims."""
+
+    point: Any
+    value: Any
+
+
+@dataclass(frozen=True)
 class LincheckClaim:
     """The post-sumcheck claim (flock prove_padded_inner steps 6-9): the fresh
     inner z_skip, the LSB-first inner-rest challenges, and the reduced value w."""
@@ -127,16 +137,6 @@ class LincheckProof(NamedTuple):
     rounds: Any
     z_partial: Any
     claim: "LincheckClaim | None" = None
-
-
-@dataclass(frozen=True)
-class PackedDirectClaim:
-    """A packed-direct PCS claim: a ẑ-evaluation `value` at `point` (its eq_ind is
-    `build_eq(point)`), combined into the batched open alongside the ring-switched
-    claims."""
-
-    point: Any
-    value: Any
 
 
 @dataclass(frozen=True, kw_only=True)
