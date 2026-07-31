@@ -280,9 +280,12 @@ def make_prove(circ: Circuit, g, unpacked: bool):
             return prover.open_batch_ligerito(cfg, z, pdata, [ab, cc], ch)
 
         pdata, ch = phase("commit", _commit)
-        zc = phase(
+        # The claim, not the wire proof: `ZerocheckProof` holds wire fields
+        # only, and the point the lincheck and open reduce (`z`,
+        # `mlv_challenges`, `r_rest`) lives on `ZerocheckClaim`.
+        _zc_proof, zc = phase(
             "zerocheck",
-            lambda: zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch)[0],
+            lambda: zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch),
         )
         x_ab, lc = phase("lincheck", lambda: _lincheck(zc))
         return phase("open", lambda: _open(zc, x_ab, lc))

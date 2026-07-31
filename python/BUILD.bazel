@@ -113,6 +113,19 @@ py_test(
     ],
 )
 
+# Pure-host unit test (no golden): `await_all` blocks on the arrays inside a
+# non-pytree dataclass, so a phase's device work cannot be billed to the next.
+py_test(
+    name = "await_all_test",
+    size = "small",
+    srcs = ["flock_zorch/testing/await_all_test.py"],
+    deps = [
+        ":flock_zorch",
+        ":test_support",
+        requirement("absl-py"),
+    ],
+)
+
 # No golden: `CscCircuit.fold_alpha_batched` (device seg-scan) vs a naive host
 # XOR-scatter reference — the non-identity A₀/B₀ structure coverage.
 py_test(

@@ -6,15 +6,36 @@ best-of-n) lives in one place.
 """
 from __future__ import annotations
 
+import dataclasses
 import time
 
 import frx
 
 
+def deep_leaves(x):
+    """`tree_leaves(x)`, but descending into dataclasses that are not pytrees.
+
+    `tree_leaves` stops at a dataclass nobody registered as a pytree node and
+    yields the object ITSELF as one opaque leaf, so its arrays never reach
+    `block_until_ready`. flock's claims and proofs (`ZerocheckClaim`,
+    `ZerocheckProof`, ...) are exactly that shape, which made `await_all` a
+    silent no-op on them. Non-array leaves ride along as `tree_leaves` returns
+    them; `block_until_ready` passes anything it cannot block on through.
+    """
+    leaves = []
+    for leaf in frx.tree_util.tree_leaves(x):
+        if dataclasses.is_dataclass(leaf) and not isinstance(leaf, type):
+            fields = [getattr(leaf, f.name) for f in dataclasses.fields(leaf)]
+            leaves.extend(deep_leaves(fields))
+        else:
+            leaves.append(leaf)
+    return leaves
+
+
 def await_all(x):
     """Block until every frx leaf of `x` is materialized, so async dispatch
     cannot leak past a timing boundary."""
-    frx.block_until_ready(frx.tree_util.tree_leaves(x))
+    frx.block_until_ready(deep_leaves(x))
     return x
 
 
