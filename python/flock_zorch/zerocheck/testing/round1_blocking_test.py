@@ -23,7 +23,7 @@ frx.config.update("jax_enable_x64", True)
 import frx.numpy as fnp  # noqa: E402
 from absl.testing import absltest, parameterized  # noqa: E402
 
-from flock_zorch import ghash  # noqa: E402
+from flock_zorch import ghash, sumcheck  # noqa: E402
 from flock_zorch.zerocheck import _urm  # noqa: E402
 
 K_SKIP = 6
@@ -79,6 +79,39 @@ class Round1BlockingTest(parameterized.TestCase):
         # The threshold exists so an instance that already fits keeps its exact
         # program rather than becoming a scan of length 1. m<=28 is below it.
         self.assertGreaterEqual(_urm._ROUND1_BLOCK_ROWS, 1 << 22)
+
+
+class Round1CFoldFirstTest(absltest.TestCase):
+    """The C track folds first and extends once. Equal to extend-then-reduce by
+    linearity of the extend and the φ8 homomorphism — for ANY c rows, no
+    identity-C assumption — and exactly, since every reordered sum is XOR.
+
+    The reference below IS the retired per-row C path (extend → φ8 → clmul
+    eq-accumulate), rebuilt from the same primitives, so this pins the
+    commutation claim itself; the full-proof byte gates pin the wire."""
+
+    def test_fold_first_matches_extend_then_reduce(self) -> None:
+        a, b, c, r = _inputs(seed=11)
+        eqx = sumcheck.build_eq(r[K_SKIP:])[:, None]
+        c_l = _urm._to_u8(_urm._extend_rows(c, K_SKIP))
+        phi_c = _urm._PHI_DEV_G[c_l.astype(fnp.int32)]
+        ref = np.asarray(ghash.to_lanes(fnp.sum(eqx * phi_c, axis=0)))
+
+        _, got = _urm._round1_core(a, b, c, K_SKIP, r)
+        np.testing.assert_array_equal(ref, np.asarray(ghash.to_lanes(got)))
+
+    def test_ab_message_is_untouched_by_the_c_change(self) -> None:
+        # P^AB comes out of the same call; pin it against an independent
+        # recomputation so a C-side edit can never silently disturb AB.
+        a, b, c, r = _inputs(seed=13)
+        eqx = sumcheck.build_eq(r[K_SKIP:])[:, None]
+        a_l = _urm._extend_rows(a, K_SKIP)
+        b_l = _urm._extend_rows(b, K_SKIP)
+        ab = _urm._to_u8(a_l * b_l).astype(fnp.int32)
+        ref = np.asarray(ghash.to_lanes(fnp.sum(eqx * _urm._PHI_DEV_G[ab], axis=0)))
+
+        got, _ = _urm._round1_core(a, b, c, K_SKIP, r)
+        np.testing.assert_array_equal(ref, np.asarray(ghash.to_lanes(got)))
 
 
 if __name__ == "__main__":

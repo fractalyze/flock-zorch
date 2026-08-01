@@ -94,17 +94,37 @@ _ROUND1_BLOCK_ROWS = 1 << 22
 
 
 def _round1_partial(a, b, c, eqx, k_skip):
-    """One block's contribution to (P^AB, P^C): extend a/b/c S→Λ, a·b, φ8-embed
-    and eq-accumulate over this block's rows. Fused, so the large [rows, ell] φ8
-    intermediate is consumed in-fusion and never written to HBM (halves round1's
-    bandwidth vs a separate extend + accumulate)."""
+    """One block's contribution to (P^AB, folded-C): extend a/b S→Λ, a·b,
+    φ8-embed and eq-accumulate over this block's rows. Fused, so the large
+    [rows, ell] φ8 intermediate is consumed in-fusion and never written to HBM
+    (halves round1's bandwidth vs a separate extend + accumulate).
+
+    The C track is only FOLDED here — `Σ_x eq_x · c_x[s]`, a select-XOR since
+    the rows are bits — and its S→Λ extension happens once on the accumulated
+    result in `_round1_core` (`_extend_folded_c`). For C the two orders are
+    equal: the extend is linear and φ8 is a homomorphism, so
+    `Σ_x eq_x·φ8(LDE(c_x)) = LDE_F128(Σ_x eq_x·c_x)`. AB cannot reorder —
+    `a·b` is a product, formed pointwise on the extended domain — which is why
+    only C drops its per-row extend, φ8 gather and clmul accumulate."""
     a_l = _extend_rows(a, k_skip)
     b_l = _extend_rows(b, k_skip)
-    c_l = _to_u8(_extend_rows(c, k_skip))
     ab = _to_u8(a_l * b_l).astype(fnp.int32)
     phi_ab = _PHI_DEV_G[ab]
-    phi_c = _PHI_DEV_G[c_l.astype(fnp.int32)]
-    return fnp.sum(eqx * phi_ab, axis=0), fnp.sum(eqx * phi_c, axis=0)
+    c_sel = fnp.where(c.astype(bool), eqx, fnp.zeros((), fnp.binary_field_ghash))
+    return fnp.sum(eqx * phi_ab, axis=0), fnp.sum(c_sel, axis=0)
+
+
+def _extend_folded_c(v, k_skip: int):
+    """S→Λ extension of the folded C vector, in F128: `P^C(λ) = Σ_s v[s] ·
+    φ8(LDE(e_s)(λ))`. The `[ell, ell]` basis matrix is built by running the SAME
+    row extend the per-row path used on the identity — so the twiddle/coset
+    convention cannot drift from `_extend_rows` — and φ8-embedding it. A tiny
+    fixed-size contraction (64×64 clmuls at k_skip=6); XLA constant-folds the
+    basis."""
+    ell = 1 << k_skip
+    eye = fnp.asarray(np.eye(ell, dtype=np.uint8))
+    basis = _PHI_DEV_G[_to_u8(_extend_rows(eye, k_skip)).astype(fnp.int32)]
+    return fnp.sum(basis * v[:, None], axis=0)
 
 
 @functools.partial(frx.jit, static_argnums=(3,))
@@ -128,12 +148,19 @@ def _round1_core(a, b, c, k_skip, r):
 
     One block (N <= block rows) takes the unblocked path unchanged, so every
     instance that already fits keeps its exact program, not a scan of length 1.
+
+    The C track folds first and extends once (`_round1_partial` /
+    `_extend_folded_c`): its per-row S→Λ NTT passes, φ8 gather and clmul
+    accumulate are replaced by one select-XOR reduce plus a 64-point extension
+    of the reduced vector. Equal by linearity — valid for ANY c rows, not an
+    identity-C special case.
     """
     eqx = sumcheck.build_eq(r[k_skip:])[:, None]  # r is ghash [m]; [n_chunks, 1]
     n_rows, ell = a.shape
     n_blocks = n_rows // _ROUND1_BLOCK_ROWS
     if n_blocks <= 1:
-        return _round1_partial(a, b, c, eqx, k_skip)
+        p_ab, folded_c = _round1_partial(a, b, c, eqx, k_skip)
+        return p_ab, _extend_folded_c(folded_c, k_skip)
 
     rows = _ROUND1_BLOCK_ROWS
     blocked = lambda x, w: x.reshape(n_blocks, rows, w)  # noqa: E731
@@ -148,7 +175,7 @@ def _round1_core(a, b, c, k_skip, r):
         (zero, zero),
         (blocked(a, ell), blocked(b, ell), blocked(c, ell), blocked(eqx, 1)),
     )
-    return acc_ab, acc_c
+    return acc_ab, _extend_folded_c(acc_c, k_skip)
 
 
 @functools.partial(frx.jit, static_argnums=(1, 2))
