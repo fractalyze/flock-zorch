@@ -1,7 +1,10 @@
 //! CPU baseline for the GPU keccak3 LIGERITO prover (the headline keccak path):
 //! times flock's keccak3 prover (commit → zerocheck → walker lincheck → recursive
 //! Ligerito open) on the same states. Witness gen is done OUTSIDE the timed region
-//! (the GPU bench ingests the witness), matching bench_sha2_ligerito_cpu. x86 scalar.
+//! (the GPU bench ingests the witness), matching bench_sha2_ligerito_cpu.
+//! The prover consumes the four witness buffers by value, so each iteration
+//! re-materializes them; the clone sits above the clock because at these sizes it
+//! is 4*2^(m-3) bytes and would otherwise bill 20-35% of the prove to memcpy.
 //! Usage: `cargo run --release --example bench_keccak3_ligerito_cpu -- [n_keccaks ...]`
 use std::time::Instant;
 use flock_core::challenger::FsChallenger;
@@ -23,15 +26,18 @@ fn main() {
         }).collect();
         let (z, a, b, zlc) =
             keccak3::generate_witness_with_ab_packed_and_lincheck(&states, setup.n_blocks_log());
-        let run = || {
+        let run = |z, a, b, zlc| {
             let mut ch = FsChallenger::new(b"flock-keccak3-lig-v0");
             let _ = prove_fast_ligerito_from_witness(&setup.r1cs, &setup.pcs_params,
-                z.clone(), a.clone(), b.clone(), zlc.clone(), &KeccakLincheckCircuit, None, &mut ch);
+                z, a, b, zlc, &KeccakLincheckCircuit, None, &mut ch);
         };
-        run();
+        run(z.clone(), a.clone(), b.clone(), zlc.clone());
         let n = if setup.m() >= 26 { 3 } else { 5 };
         let mut best = f64::INFINITY;
-        for _ in 0..n { let t = Instant::now(); run(); best = best.min(t.elapsed().as_secs_f64() * 1e3); }
+        for _ in 0..n {
+            let (zc, ac, bc, lcc) = (z.clone(), a.clone(), b.clone(), zlc.clone());
+            let t = Instant::now(); run(zc, ac, bc, lcc);
+            best = best.min(t.elapsed().as_secs_f64() * 1e3); }
         println!("K3LIGCPU n_keccaks={nk} m={} Ligerito prove = {best:.2} ms", setup.m());
     }
 }

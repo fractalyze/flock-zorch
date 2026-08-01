@@ -3,26 +3,26 @@ name = "flock-zorch"
 version = "0.1.0"
 edition = "2021"
 description = "GPU port of succinctlabs/flock (R1CS-over-GF(2) PIOP) via the zorch/xla compiler stack"
+# flock-core calls `isolate_lowest_one`, stabilized after 1.93. Without this
+# floor an older toolchain fails deep inside the dependency with a bare E0658
+# and no way to act on it — the `#![feature]` it suggests belongs to flock.
+rust-version = "1.97"
 
 [dependencies]
 # The byte-compare baseline: unmodified upstream flock, pinned by git rev so its
 # types and reference arithmetic ARE the oracle. Cargo fetches it on build (no
 # submodule); bumping = edit the rev. flock-core is edition 2024 — cargo caps
 # lints on git deps, so its own lint config can't break our build.
-flock-core = { git = "https://github.com/succinctlabs/flock.git", rev = "73f7202" }
-# The SHA-256 hash R1CS circuit + witness generator (and the BaseFold `prove`
-# entry) live in flock-prover; used by `dump_sha2` to produce the real-R1CS
-# golden + the ingested witness/matrices for the GPU sha256 prover.
-flock-prover = { git = "https://github.com/succinctlabs/flock.git", rev = "73f7202" }
+flock-core = { git = "https://github.com/succinctlabs/flock.git", rev = "85fc0e7" }
+# The hash R1CS circuits + witness generators and the per-hash fused
+# `prove_fast` provers live in flock-prover; used by the `dump_*` examples to
+# produce the real-R1CS goldens + the ingested witness/matrices for the GPU
+# provers, and by the `bench_*_ligerito_cpu` examples as the CPU baseline.
+flock-prover = { git = "https://github.com/succinctlabs/flock.git", rev = "85fc0e7" }
 
-# Only for the CPU-baseline bench examples: hash leaves in parallel the way
-# flock's `merkle_tree` does (rayon par_iter over `hash_leaf`), so the SHA-256
-# CPU anchor is flock's honest best on this box, not a single thread.
-rayon = "1.10"
-
-# Match flock's bench profile (thin LTO + single codegen unit) so the CPU NTT
-# baseline in `cpu_vs_gpu.py` is flock's honest best on this hardware, not an
-# under-optimized build that would inflate the GPU speedup.
+# Match flock's bench profile (thin LTO + single codegen unit) so the CPU
+# baseline in the `bench_*_ligerito_cpu` examples is flock's honest best on this
+# hardware rather than an under-optimized build.
 [profile.release]
 lto = "thin"
 codegen-units = 1

@@ -77,8 +77,8 @@ py_test(
     ],
 )
 
-# Pure-host unit test (no golden): the octopus->per-query-path expander that
-# feeds the BaseFold verifier's zorch verify_openings reuse.
+# Pure-host unit test (no golden) for `merkle.paths_to_multi_proof`: it is
+# proof-format encoding, not field math, so it needs no GPU and no golden.
 py_test(
     name = "merkle_openings_test",
     size = "small",

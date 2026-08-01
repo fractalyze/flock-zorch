@@ -1,8 +1,8 @@
-//! CPU baseline for the fused R1CS prover: times flock's `prove` body (commit +
-//! bind + zerocheck + lincheck + batched open) on the SAME identity R1CS the GPU
-//! fused prover gates against, so e2e_fused_bench's speedup is apples-to-apples
-//! (not vs the blake3 prover). Replicates prove() via flock-core pub fns (matched
-//! release profile: thin-LTO + codegen-units=1 + target-cpu=native).
+//! CPU baseline for the fused R1CS prover: times commit + bind + zerocheck +
+//! lincheck + batched open on the SAME identity R1CS the GPU fused prover gates
+//! against, assembled from flock-core pub fns rather than calling
+//! `prove_fast_ligerito_from_witness`, so individual phases stay reachable
+//! (matched release profile: thin-LTO + codegen-units=1 + target-cpu=native).
 //!
 //! Usage: `cargo run --release --example bench_e2e_cpu -- [m ...]`
 
@@ -12,9 +12,9 @@ use std::time::Instant;
 use flock_core::challenger::FsChallenger;
 use flock_core::field::F128;
 use flock_core::lincheck::{self, pack_z_lincheck_from_packed, QuirkyPoint};
-use flock_core::pcs::{self, commit::PcsParams, pack::pack_witness};
+use flock_core::pcs::{self, commit::PcsParams, ligerito::prover_config_for, pack::pack_witness};
 use flock_core::proof::{bind_statement, ZClaim};
-use flock_core::r1cs::{BlockR1cs, SparseBinaryMatrix};
+use flock_core::r1cs::{BlockR1cs, SparseBinaryMatrix, WitnessLayout};
 use flock_core::zerocheck::{self, PaddingSpec};
 
 fn splitmix64(s: &mut u64) -> u64 {
@@ -57,8 +57,12 @@ fn prove_body(r1cs: &BlockR1cs, z_packed: &[F128], params: &PcsParams) {
     let xab = qf(&ab.point); let xc = qf(&c.point);
     let xr: Vec<&[F128]> = vec![&xab, &xc];
     let pre: Vec<Option<&[F128]>> = vec![None, Some(s_hat_v_c.as_slice())];
-    let _open = pcs::open_batch_padded_with_precomputed_s_hat_v(
-        z_packed, &prover_data, &commitment, &xr, &pre, &padding, &mut ch);
+    // No packed-direct claims here: both opens are ring-switched bit-MLE claims.
+    let lig_config = prover_config_for(r1cs.m - pcs::LOG_PACKING, params.log_batch_size, params.profile)
+        .expect("Ligerito default config");
+    let _open = pcs::open_batch_mixed_ligerito_with_precomputed_s_hat_v(
+        z_packed.to_vec(), &prover_data, &commitment, &xr, &pre, &[], &padding, &lig_config,
+        &mut ch);
 }
 
 fn main() {
@@ -68,8 +72,9 @@ fn main() {
     for m in ms {
         let r1cs = BlockR1cs { m, k_log, k_skip, useful_bits: ub,
             a_0: identity(1 << k_log), b_0: identity(1 << k_log), c_0: identity(1 << k_log),
-            const_pin: None, digest_cache: OnceLock::new(), csc_cache: OnceLock::new() };
-        let params = PcsParams { m, log_inv_rate: 1, log_batch_size: 5, profile: Default::default() };
+            const_pin: None, digest_cache: OnceLock::new(), csc_cache: OnceLock::new(),
+            layout: WitnessLayout::RowMajor };
+        let params = PcsParams { m, log_inv_rate: 1, log_batch_size: 6, profile: Default::default() };
         let mut s: u64 = 0x20_2406_27 ^ (m as u64).wrapping_mul(0x1000_0001);
         let z: Vec<bool> = (0..r1cs.n()).map(|_| splitmix64(&mut s) & 1 == 1).collect();
         let z_packed = pack_witness(&z, m);

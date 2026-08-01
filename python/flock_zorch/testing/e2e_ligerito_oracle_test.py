@@ -1,6 +1,5 @@
 """GPU fused R1CS prover (`prover.prove_fast`) on the LIGERITO PCS, byte gate vs
-flock `prover::prove_fast_ligerito` on the identity R1CS — the e2e gate after the
-BaseFold backend was removed.
+flock `prover::prove_fast_ligerito` on the identity R1CS — the e2e gate.
 
 Ingests dump_e2e_ligerito (identity R1CS + Ligerito config + full
 R1csProofLigerito), drives flock-zorch's fused `prove_fast` (Ligerito commit →

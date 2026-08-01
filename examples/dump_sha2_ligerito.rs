@@ -1,7 +1,7 @@
 //! Golden dumper for flock's SHA-256 R1CS prover with the LIGERITO PCS — the
-//! HEADLINE path (sha2_proof.rs uses Ligerito, not BaseFold). M7 of the port.
+//! HEADLINE path (sha2_proof.rs). M7 of the port.
 //!
-//! Same real sha2 R1CS + witness as dump_sha2.rs, but `prove_ligerito` → the
+//! Drives the same real sha2 R1CS + witness through `prove_ligerito` into the
 //! recursive Ligerito open. n_comp=128 → m=22 → the m22_fast config (initial_k=
 //! log_batch_size=6). Dumps the config + witness/matrices + zerocheck + lincheck
 //! + the BatchOpeningProofLigerito (ring_switches + full LigeritoProof).
@@ -77,7 +77,7 @@ fn main() {
     pfv(&mut b, &z_packed); pfv(&mut b, &a_packed); pfv(&mut b, &b_packed);
     pu(&mut b, z_lincheck.len()); b.extend_from_slice(&z_lincheck);
     prows_u(&mut b, &r1cs.a_0.rows); prows_u(&mut b, &r1cs.b_0.rows);
-    // zerocheck + lincheck (same as BaseFold prove up to the open)
+    // zerocheck + lincheck
     let zc = &proof.zerocheck;
     pfv(&mut b, &zc.round1_ab); pfv(&mut b, &zc.round1_c); ppair(&mut b, &zc.multilinear_rounds);
     pf(&mut b, &zc.final_a_eval); pf(&mut b, &zc.final_b_eval); pf(&mut b, &zc.final_c_eval);
