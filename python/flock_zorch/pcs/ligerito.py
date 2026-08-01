@@ -42,6 +42,7 @@ from zorch.pcs.ligerito.choreography import LigeritoChoreography
 from zorch.pcs.ligerito.config import LigeritoConfig
 from zorch.pcs.ligerito.prover import LigeritoProver, LigeritoProverData
 from zorch.pcs.ligerito.verifier import LigeritoVerifier
+from zorch.hash.sha256 import Sha256State
 from zorch.sha256_field_transcript import Sha256FieldTranscript
 
 from flock_zorch import fs, ghash
@@ -55,6 +56,8 @@ from flock_zorch.hash import merkle
 register_dataclass(LigeritoProverData, data_fields=["f", "initial"], meta_fields=[])
 
 FLOCK_LIGERITO_LABEL = b"flock-ligerito-basis-v0"
+
+
 @functools.partial(register_dataclass, data_fields=["inner"], meta_fields=[])
 @dataclass(frozen=True)
 class FlockTranscript:
@@ -118,13 +121,8 @@ def flock_transcript(domain: bytes) -> FlockTranscript:
     return FlockTranscript(Sha256FieldTranscript.new(domain, fnp.binary_field_ghash))
 
 
-@functools.partial(frx.jit, static_argnums=(1, 2))
-def _sample_distinct_positions(inner, block_len: int, count: int):
-    """flock's distinct-query rejection sampler; one squeeze per iteration, like
-    `fs.sample_chain`. Jitted on the static (block_len, count) for the EAGER
-    callers — the verifier's query phase and the FS oracle test — where an
-    un-jitted `while_loop` re-lowers its SHA-256 body on every call (~1100ms ->
-    ~7ms). On the prove path this inlines into the open's own jit."""
+def _sample_distinct_positions_impl(inner, block_len: int, count: int):
+    """Backend-neutral rejection sampler used by the CPU query-chain jit."""
     bl = fnp.uint64(block_len)
     idx = fnp.arange(count, dtype=fnp.int32)
 
@@ -143,6 +141,66 @@ def _sample_distinct_positions(inner, block_len: int, count: int):
         (inner, fnp.zeros(count, fnp.int32), fnp.int32(0)),
     )
     return inner, fnp.sort(out)
+
+
+@functools.lru_cache(maxsize=None)
+def _cpu_query_jit(block_len: int, count: int):
+    @frx.jit
+    def run(h, pending, counts):
+        inner = Sha256FieldTranscript(
+            Sha256State(h=h, pending=pending, counts=counts),
+            np.dtype(fnp.binary_field_ghash),
+        )
+        inner, positions = _sample_distinct_positions_impl(
+            inner, block_len, count
+        )
+        return inner.state.h, inner.state.pending, inner.state.counts, positions
+
+    return run
+
+
+def _sample_distinct_positions_host(h, pending, counts, *, block_len, count):
+    """Run the serial SHA chain on CPU and return NumPy callback leaves."""
+    cpu = frx.devices("cpu")[0]
+    args = tuple(frx.device_put(x, cpu) for x in (h, pending, counts))
+    return tuple(np.asarray(x) for x in _cpu_query_jit(block_len, count)(*args))
+
+
+@functools.partial(frx.jit, static_argnums=(1, 2), inline=True)
+def _sample_distinct_positions(inner, block_len: int, count: int):
+    """Sample Ligerito queries on CPU while the surrounding open stays on GPU.
+
+    The chain is 43--218 sequential SHA-256 scalar squeezes per level, so GPU
+    parallelism cannot help. One pure callback transfers the 104-byte stream
+    state to CPU and the updated state plus positions back; the five m=28
+    levels cost less than running a dedicated single-thread GPU chain.
+    """
+    h, pending, counts, positions = frx.pure_callback(
+        functools.partial(
+            _sample_distinct_positions_host,
+            block_len=block_len,
+            count=count,
+        ),
+        (
+            frx.ShapeDtypeStruct(inner.state.h.shape, inner.state.h.dtype),
+            frx.ShapeDtypeStruct(
+                inner.state.pending.shape, inner.state.pending.dtype
+            ),
+            frx.ShapeDtypeStruct(
+                inner.state.counts.shape, inner.state.counts.dtype
+            ),
+            frx.ShapeDtypeStruct((count,), fnp.int32),
+        ),
+        inner.state.h,
+        inner.state.pending,
+        inner.state.counts,
+    )
+    return (
+        Sha256FieldTranscript(
+            Sha256State(h=h, pending=pending, counts=counts), inner.dtype
+        ),
+        positions,
+    )
 
 
 @dataclass(frozen=True)
