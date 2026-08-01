@@ -50,9 +50,7 @@ class PrimitiveCensusTest(unittest.TestCase):
     def test_clmul_roofline_requires_issue_peak(self):
         roofline = census.Roofline(bytes_per_element=48, clmul_per_element=1)
         self.assertIsNone(census.roofline_ns_per_element(roofline, 1000, None))
-        self.assertAlmostEqual(
-            census.roofline_ns_per_element(roofline, 1000, 10), 0.1
-        )
+        self.assertAlmostEqual(census.roofline_ns_per_element(roofline, 1000, 10), 0.1)
 
     def test_ntt_roofline_counts_fused_passes(self):
         self.assertEqual(census._ntt_roofline(1 << 24), census.Roofline(96, 96))

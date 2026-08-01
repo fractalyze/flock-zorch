@@ -228,6 +228,12 @@ Standalone bitcasts are
 labelled `entry-boundary-copy`: the opcode itself simplifies to an alias, but
 XLA must copy a differently typed result at a non-donated jit boundary.
 
+The first complete RTX 5090 run and its same-box flock comparison are recorded
+in [`docs/primitive-census-2026-08-01.md`](docs/primitive-census-2026-08-01.md).
+It found that the apparent additive-NTT loss was the software GHASH multiply
+path: selecting CUDA 13.3 `ptxas` made the fixed-64 extend 77.96x faster and
+left no native-field opcode slower than its lane equivalent.
+
 Before recording multiply-bearing rows, confirm that the compiler emits
 `clmad` rather than the software GHASH multiply. Add
 `--xla_dump_to=/tmp/flock-census-xla` to `XLA_FLAGS`, run a one-point

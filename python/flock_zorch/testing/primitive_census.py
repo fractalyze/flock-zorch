@@ -29,7 +29,6 @@ from zorch.pcs.ring_switch import (  # noqa: E402
 
 from flock_zorch import ghash  # noqa: E402
 
-
 ArrayFn = Callable[..., Any]
 _GHASH = fnp.binary_field_ghash
 
@@ -71,7 +70,9 @@ class Census:
 class Operation:
     name: str
     roofline: Callable[[int], Roofline]
-    prepare: Callable[[int], tuple[ArrayFn, tuple[Any, ...], ArrayFn | None, tuple[Any, ...]]]
+    prepare: Callable[
+        [int], tuple[ArrayFn, tuple[Any, ...], ArrayFn | None, tuple[Any, ...]]
+    ]
 
 
 def _random_lanes(n: int, seed: int) -> Any:
@@ -119,9 +120,9 @@ def _xor_sum(n: int):
 
 def _select(n: int):
     a, b, a_l, b_l = _ghash_args(n)
-    mask = fnp.asarray(np.random.default_rng(3).integers(0, 2, n, dtype=np.uint8)).astype(
-        bool
-    )
+    mask = fnp.asarray(
+        np.random.default_rng(3).integers(0, 2, n, dtype=np.uint8)
+    ).astype(bool)
     return (
         lambda m, x, y: fnp.where(m, x, y),
         (mask, a, b),
@@ -182,9 +183,7 @@ def _additive_ntt_extend(n: int):
         # flock zerocheck's round-1 S -> Lambda extension: a growing batch of
         # fixed-size INTT_64 -> cosetNTT_64 transforms, not one length-n NTT.
         coeffs = frx.lax.ntt(x, ntt_type="INTT", ntt_length=64)
-        return frx.lax.ntt(
-            coeffs, ntt_type="NTT", ntt_length=64, coset=64
-        )
+        return frx.lax.ntt(coeffs, ntt_type="NTT", ntt_length=64, coset=64)
 
     return extend, (rows,), None, ()
 
@@ -247,7 +246,9 @@ OPERATIONS = (
     # Fermat inverse is 127 square + 126 multiply, at eight clmads apiece.
     Operation("batch_inverse", _constant_roofline(32, 253 * 8), _inverse),
     Operation(
-        "ring_switch_bit_slices", _constant_roofline(32, integer_count=512), _ring_switch
+        "ring_switch_bit_slices",
+        _constant_roofline(32, integer_count=512),
+        _ring_switch,
     ),
     Operation(
         "ring_switch_transpose",
@@ -415,11 +416,18 @@ def _load_counts(path: Path | None) -> dict[str, int]:
 
 
 def _print_table(results: list[Census]) -> None:
-    print("\nprimitive                    class                       ns/elem   roof%   lane×")
+    print(
+        "\nprimitive                    class                       "
+        "ns/elem   roof%   lane×"
+    )
     for result in results:
         point = result.points[-1]
-        roof = "--" if point.roofline_percent is None else f"{point.roofline_percent:6.1f}"
-        lane = "--" if point.native_over_lane is None else f"{point.native_over_lane:6.2f}"
+        roof = (
+            "--" if point.roofline_percent is None else f"{point.roofline_percent:6.1f}"
+        )
+        lane = (
+            "--" if point.native_over_lane is None else f"{point.native_over_lane:6.2f}"
+        )
         print(
             f"{result.primitive:28} {result.classification:26} "
             f"{point.ns_per_element:8.3f} {roof:>7} {lane:>7}"
@@ -428,7 +436,10 @@ def _print_table(results: list[Census]) -> None:
     if ranked:
         print("\nranked contribution (steady-state estimate)")
         for rank, result in enumerate(
-            sorted(ranked, key=lambda r: r.estimated_gap_ms_per_prove or 0, reverse=True), 1
+            sorted(
+                ranked, key=lambda r: r.estimated_gap_ms_per_prove or 0, reverse=True
+            ),
+            1,
         ):
             print(
                 f"{rank:2}. {result.primitive:28} "
@@ -443,12 +454,18 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-log", type=int, default=24)
     parser.add_argument("--iterations", type=int, default=10)
     parser.add_argument("--warmups", type=int, default=2)
-    parser.add_argument("--bandwidth-gbps", type=float, help="measured or vendor DRAM peak")
+    parser.add_argument(
+        "--bandwidth-gbps", type=float, help="measured or vendor DRAM peak"
+    )
     parser.add_argument("--clmul-gops", type=float, help="measured clmul issue peak")
-    parser.add_argument("--integer-gops", type=float, help="measured integer issue peak")
+    parser.add_argument(
+        "--integer-gops", type=float, help="measured integer issue peak"
+    )
     parser.add_argument("--collapse-ratio", type=float, default=2.0)
     parser.add_argument("--loser-ratio", type=float, default=2.0)
-    parser.add_argument("--op-counts", type=Path, help="JSON elements processed per prove")
+    parser.add_argument(
+        "--op-counts", type=Path, help="JSON elements processed per prove"
+    )
     parser.add_argument("--json", type=Path, help="write machine-readable results")
     parser.add_argument(
         "--only",
