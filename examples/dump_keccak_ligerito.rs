@@ -72,7 +72,7 @@ fn main() {
     b.extend_from_slice(&commitment.root);
     pfv(&mut b, &z_packed); pfv(&mut b, &a_packed); pfv(&mut b, &b_packed);
     pu(&mut b, z_lincheck.len()); b.extend_from_slice(&z_lincheck);
-    // zerocheck + lincheck (same as BaseFold prove up to the open)
+    // zerocheck + lincheck
     let zc = &proof.zerocheck;
     pfv(&mut b, &zc.round1_ab); pfv(&mut b, &zc.round1_c); ppair(&mut b, &zc.multilinear_rounds);
     pf(&mut b, &zc.final_a_eval); pf(&mut b, &zc.final_b_eval); pf(&mut b, &zc.final_c_eval);

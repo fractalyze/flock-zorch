@@ -345,8 +345,8 @@ def main() -> int:
         "--cpu-ms",
         type=float,
         help="flock CPU ms for the same instance "
-        "(from bench_<circuit>_cpu), to print a "
-        "speedup; single circuit only",
+        "(from bench_<circuit>_ligerito_cpu), to print "
+        "a ratio; single circuit only",
     )
     ap.add_argument(
         "--unpacked",
