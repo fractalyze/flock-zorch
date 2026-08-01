@@ -92,6 +92,23 @@ its poisoned software-GHASH baseline.
 The full `blake3_ligerito_oracle_test.py` proof comparison passed every
 serialized field against the flock fixture.
 
+That m=22 CPU anchor is the repository's pinned byte-identity oracle, which
+predates flock's x86 AVX-512 port.  A follow-up same-box comparison against
+current flock main `8790722` used `target-cpu=native` and timed its public
+`prove_fast_ligerito_from_witness` seam so witness construction was outside
+both CPU and GPU measurements:
+
+| m | compressions | current flock AVX-512 | latest-wheel GPU | GPU/CPU |
+|---:|---:|---:|---:|---:|
+| 26 | 4,096 | 26.13 ms | 45.4 ms | 0.58x |
+| 28 | 16,384 | 113.60 ms | 71.0 ms | 1.60x |
+| 31 | 131,072 | 754.27 ms | 394.2 ms | 1.91x |
+
+The GPU therefore does not beat current AVX-512 flock at m=26; it crosses
+between m=26 and m=28.  The GPU rows use published
+`frx` / `frxlib` / `frx-cuda12-{plugin,pjrt}`
+`0.10.1.dev20260801051831`, CUDA 13.3 `ptxas`, and warm best-of-three timing.
+
 ## Profiler limitation
 
 Nsight Compute 2026.2.1 is installed, but this host rejects hardware-counter

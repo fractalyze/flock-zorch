@@ -245,17 +245,12 @@ Before recording multiply-bearing rows, confirm that the compiler emits
 ## Benchmark
 
 Apple-to-apple: **unmodified flock CPU vs flock-zorch GPU on the same idle
-machine** (RTX 5090, Ryzen 9 9950X), same-instance both sides. The golden is
-dumped from flock-core, the CPU bench (`bench_*_cpu`, thin-LTO /
-`codegen-units=1` / `target-cpu=native` — flock's honest x86 best) proves it, and
-the GPU bench ingests the same golden. GPU uses the hardware `clmad` multiply;
-Timing is warm best-of-3 (JIT compile excluded), GPU verified idle. Except for
-rows marked ‡, measurements use zorch `650b1cf` and FRX
-`dev20260720085939` from 2026-07-21. Every
-instance is a real flock hash-circuit R1CS at flock's shipped size, swept over
-the witness size m to locate the GPU/CPU crossover. The CPU baseline is x86
-**scalar** (flock's NEON paths are aarch64-gated), so Apple silicon would shift
-the crossover right.
+machine** (RTX 5090, Ryzen 9 9950X), same-instance both sides. Every instance is
+a real flock hash-circuit R1CS at flock's shipped size, swept over witness size
+to locate the crossover. GPU uses hardware `clmad`; timing is warm best-of-3
+(JIT compile excluded), with the card verified idle. The historical Keccak3
+table uses zorch `650b1cf` and FRX `dev20260720085939` from 2026-07-21. The
+BLAKE3 table states its newer CPU/GPU stack and timing scope below.
 
 ### Keccak3 (Ligerito) — crossover ≈ m=24
 
@@ -278,28 +273,30 @@ from m=24 and reaches 16.58× at m=31.
 
 ### BLAKE3 (Ligerito)
 
+Re-baselined 2026-08-01 on the same 9950X/RTX 5090. CPU is current flock main
+`8790722` with `target-cpu=native` (AVX-512/VPCLMULQDQ), timing only
+`prove_fast_ligerito_from_witness` after witness construction. GPU is the
+latest published `frx` / `frxlib` / `frx-cuda12-{plugin,pjrt}` wheel set,
+`0.10.1.dev20260801051831`, also excluding witness construction. CUDA 13.3
+`ptxas` was selected through `CUDA_ROOT`; the exact m=28 run emitted PTX 9.3
+with `clmad`.
+
 | m   | n_comp | flock CPU (ms) | GPU (ms) | speedup    |
 | --- | ------ | -------------- | -------- | ---------- |
-| 26  | 4096   | 316.5          | 66.8     | **4.73×**  |
-| 28‡ | 16384  | 1,163.2        | 71.0     | **16.38×** |
-| 31† | 131072 | 10,724.9       | 621.1    | **17.27×** |
-
-‡ Re-measured 2026-08-01 with the latest published wheel set,
-`frx` / `frxlib` / `frx-cuda12-{plugin,pjrt}`
-`0.10.1.dev20260801051831`, and CUDA 13.3 `ptxas` selected through
-`CUDA_ROOT`. The exact run emitted PTX 9.3 with `clmad` and used the idle RTX
-5090; the older m=26/m=31 rows are retained as historical points and should not
-be used to interpolate this row.
+| 26  | 4096   | 26.13          | 45.4     | 0.58×      |
+| 28  | 16384  | 113.60         | 71.0     | **1.60×**  |
+| 31† | 131072 | 754.27         | 394.2    | **1.91×**  |
 
 BLAKE3 uses the generic sparse CSC lincheck rather than Keccak3's procedural
-walker. The same packed zerocheck path keeps its high-end curve nearly identical:
-the GPU proof grows 9.3× while the batch grows 32× from m=26 to m=31.
+walker. The latest GPU crosses the AVX-512 CPU between m=26 and m=28. Its proof
+time grows 8.7× while the batch grows 32× from m=26 to m=31.
 
 **Reading the numbers.** flock's prover is a sequential SHA-256 Fiat-Shamir
 chain; at small m the per-round data-parallel work (NTT / URM / recursive fold)
 is too small to amortize GPU launch overhead, so the CPU wins. The bulk work
-grows with m and the GPU overtakes at m≈24, and the advantage keeps growing
-above the crossover (16–17× by m=31). Reproduce any point with the
+grows with m and the GPU overtakes. The crossover and margin depend strongly on
+the CPU's SIMD path: current AVX-512 flock moves the BLAKE3 crossover between
+m=26 and m=28. Reproduce any point with the
 [SHA-256 recipe above](#one-benchmark-point-sha-256-m26) (swap `dump_sha2_ligerito` /
 `bench_sha2_ligerito_cpu` and the `sha2` argument for the `blake3` / `keccak3`
 variants).
