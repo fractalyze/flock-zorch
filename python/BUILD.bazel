@@ -154,6 +154,19 @@ py_test(
     ],
 )
 
+# No golden: round-1's row blocking is byte-exact at every block count — the
+# partition argument the m32 footprint fix (#179) rests on. Pure host.
+py_test(
+    name = "round1_blocking_test",
+    size = "small",
+    srcs = ["flock_zorch/zerocheck/testing/round1_blocking_test.py"],
+    deps = [
+        ":flock_zorch",
+        ":test_support",
+        requirement("absl-py"),
+    ],
+)
+
 # No golden: prove zerocheck+lincheck → verify both, claim reconstruction + tamper
 # rejection for the lincheck verifier. Software-mul, so it runs on CPU.
 py_test(
