@@ -16,7 +16,7 @@ use flock_core::lincheck::pack_z_lincheck_from_packed;
 use flock_core::pcs::commit::PcsParams;
 use flock_core::pcs::ligerito::{prover_config_for, LigeritoProfile};
 use flock_core::pcs::pack::pack_witness;
-use flock_core::r1cs::{BlockR1cs, SparseBinaryMatrix};
+use flock_core::r1cs::{BlockR1cs, SparseBinaryMatrix, WitnessLayout};
 use flock_prover::prover::prove_fast_ligerito_from_witness;
 
 fn splitmix64(s: &mut u64) -> u64 {
@@ -49,6 +49,9 @@ fn main() {
         m, k_log, k_skip, useful_bits,
         a_0: identity(1 << k_log), b_0: identity(1 << k_log), c_0: identity(1 << k_log),
         const_pin: None, digest_cache: OnceLock::new(), csc_cache: OnceLock::new(),
+        // The generic matrix-driven provers this golden exercises only accept
+        // row-major; batch-major is the opt-in per-hash `prove_fast` layout.
+        layout: WitnessLayout::RowMajor,
     };
     let pcs_params = PcsParams {
         m, log_inv_rate: 1, log_batch_size: 6, profile: LigeritoProfile::Fast,
