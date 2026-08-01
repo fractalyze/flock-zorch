@@ -1,12 +1,23 @@
 //! CPU baseline for the GPU BLAKE3 Ligerito prover on the same real R1CS.
 //! Witness generation stays outside the timed region, matching the GPU bench.
+//!
+//! Uses `prove_fast_ligerito_from_witness`, flock's fused per-hash prover and the
+//! one its own throughput table is measured with. The generic matrix-driven
+//! `prove_ligerito` yields a byte-identical proof (flock's
+//! `prove_ligerito_generic_matches_prove_fast` pins that) but is several times
+//! slower, so timing it would understate flock.
+//!
+//! The prover consumes the four witness buffers by value, so each iteration has
+//! to re-materialize them; the clone is hoisted above the clock because at these
+//! sizes it is 4*2^(m-3) bytes and would otherwise bill 20-35% of the reported
+//! prove to memcpy.
+//!
 //! Usage: `cargo run --release --example bench_blake3_ligerito_cpu -- [n_comp ...]`
 
 use std::time::Instant;
 
 use flock_core::challenger::FsChallenger;
-use flock_core::pcs::pack::pack_witness;
-use flock_prover::prover::prove_ligerito;
+use flock_prover::prover::prove_fast_ligerito_from_witness;
 use flock_prover::r1cs_hashes::blake3;
 
 fn splitmix64(s: &mut u64) -> u64 {
@@ -46,18 +57,30 @@ fn main() {
                 )
             })
             .collect();
-        let z = blake3::generate_witness(&blocks, setup.n_blocks_log());
-        let z_packed = pack_witness(&z, r1cs.m);
-        let run = || {
+        let (z, a, b, zlc) =
+            blake3::generate_witness_with_ab_packed_and_lincheck(&blocks, setup.n_blocks_log());
+        let lc_circuit = r1cs.csc_lincheck_circuit();
+        let run = |z, a, b, zlc| {
             let mut ch = FsChallenger::new(b"flock-blake3-lig-v0");
-            let _ = prove_ligerito(r1cs, z_packed.clone(), &setup.pcs_params, &mut ch);
+            let _ = prove_fast_ligerito_from_witness(
+                r1cs,
+                &setup.pcs_params,
+                z,
+                a,
+                b,
+                zlc,
+                lc_circuit,
+                None,
+                &mut ch,
+            );
         };
-        run();
+        run(z.clone(), a.clone(), b.clone(), zlc.clone());
         let n = if r1cs.m >= 26 { 3 } else { 5 };
         let mut best = f64::INFINITY;
         for _ in 0..n {
+            let (zc, ac, bc, lcc) = (z.clone(), a.clone(), b.clone(), zlc.clone());
             let t = Instant::now();
-            run();
+            run(zc, ac, bc, lcc);
             best = best.min(t.elapsed().as_secs_f64() * 1e3);
         }
         println!(
