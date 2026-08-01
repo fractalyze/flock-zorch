@@ -55,8 +55,6 @@ from flock_zorch.hash import merkle
 register_dataclass(LigeritoProverData, data_fields=["f", "initial"], meta_fields=[])
 
 FLOCK_LIGERITO_LABEL = b"flock-ligerito-basis-v0"
-
-
 @functools.partial(register_dataclass, data_fields=["inner"], meta_fields=[])
 @dataclass(frozen=True)
 class FlockTranscript:
@@ -133,14 +131,16 @@ def _sample_distinct_positions(inner, block_len: int, count: int):
     def body(carry):
         inner, out, n = carry
         inner, g = inner.sample_scalar()
-        lo = ghash.from_ghash(g).reshape(2)[0]  # low uint64 limb = flock's v.lo
+        lo = ghash.from_ghash(g).reshape(2)[0]
         pos = (lo % bl).astype(fnp.int32)
-        hit = fnp.any((idx < n) & (out == pos))  # already drawn this level?
+        hit = fnp.any((idx < n) & (out == pos))
         out = fnp.where(hit, out, out.at[n].set(pos))
         return inner, out, fnp.where(hit, n, n + fnp.int32(1))
 
     inner, out, _ = lax.while_loop(
-        lambda c: c[2] < count, body, (inner, fnp.zeros(count, fnp.int32), fnp.int32(0))
+        lambda c: c[2] < count,
+        body,
+        (inner, fnp.zeros(count, fnp.int32), fnp.int32(0)),
     )
     return inner, fnp.sort(out)
 
@@ -279,7 +279,7 @@ def _make_ghash_code(message_len: int, log_inv_rate: int) -> ReedSolomon:
 
 
 def _flock_proof_dict(
-    p, initial_root: np.ndarray, config: LigeritoConfig, chor: FlockChoreography
+    p, initial_root: Array, config: LigeritoConfig, chor: FlockChoreography
 ) -> dict:
     """zorch `LigeritoProof` -> flock's `recursive_prover_with_basis` dict.
 
@@ -288,6 +288,12 @@ def _flock_proof_dict(
     from each `Opening.path` + `component_positions` via `merkle.paths_to_multi_proof`,
     and the schedule-order `pow_witnesses` are split back into flock's fold / query
     nonce lists."""
+    # One coordinated transfer for the whole proof.  Calling np.asarray/int on
+    # each message, path level, and query position serialized hundreds of tiny
+    # D2H copies and stream synchronizations after the GPU open had finished.
+    # Wire assembly below is host work, so materialize the registered proof
+    # pytree and root together once, then never touch a device value again.
+    p, initial_root = frx.device_get((p, initial_root))
     num_levels = config.num_levels
 
     def level(j) -> dict:
@@ -347,7 +353,7 @@ def _flock_ligerito_prover(cfg: dict, log_n: int):
     return prover, config, chor
 
 
-def commit_flock_ligerito(cfg: dict, z_packed) -> tuple[np.ndarray, LigeritoProverData]:
+def commit_flock_ligerito(cfg: dict, z_packed) -> tuple[Array, LigeritoProverData]:
     """L0 commit for the flock ligerito open. Committing through zorch's own
     `LigeritoProver.commit` (rather than flock's `pcs_commit.commit`) yields the
     `LigeritoProverData` the open consumes directly — the commit→open prover-data
@@ -359,7 +365,7 @@ def commit_flock_ligerito(cfg: dict, z_packed) -> tuple[np.ndarray, LigeritoProv
     log_n = z.shape[0].bit_length() - 1
     prover, _config, _chor = _flock_ligerito_prover(cfg, log_n)
     root, pdata = prover.commit([_bitrev(ghash.to_ghash(z))])
-    return np.asarray(root), pdata
+    return root, pdata
 
 
 @functools.partial(frx.jit, static_argnums=(0,))
@@ -417,5 +423,5 @@ def prove_flock_ligerito(
         prover, pdata, b_combined, target, FlockTranscript(ch._t)
     )
     ch._t = t_open.inner
-    wire = _flock_proof_dict(proof, np.asarray(pdata.initial.root), config, chor)
+    wire = _flock_proof_dict(proof, pdata.initial.root, config, chor)
     return (wire, proof) if return_proof else wire
