@@ -34,9 +34,11 @@ already syncs regardless: commit ends by pulling the root to host.) `Sum` versus
 overlap: a gap there means work escaped every phase.
 
 Run:
-    export CUDA_ROOT="$HOME/.local/cuda13-merged"
-    export FRX_PLATFORMS=cuda XLA_PYTHON_CLIENT_PREALLOCATE=false
-    export PATH="$HOME/.local/cuda13/bin:$PATH"
+    export CUDA_ROOT=/usr/local/cuda
+    export FRX_PLATFORMS=cuda,cpu FRX_ENABLE_X64=1
+    export XLA_PYTHON_CLIENT_PREALLOCATE=false
+    unset JAX_PLATFORMS JAX_ENABLE_X64
+    export PATH="$CUDA_ROOT/bin:$PATH"
     PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \\
         python/flock_zorch/testing/prove_phase_bench.py [circuit ...] [options]
 """

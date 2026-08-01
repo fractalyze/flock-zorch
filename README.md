@@ -97,7 +97,8 @@ build:
 
 **Prerequisites** — an NVIDIA GPU (CUDA; RTX 5090 / sm_120 reference), a Rust
 toolchain (`flock-core` is edition 2024), Python 3.11. For the GPU fast path, a **CUDA 13.3
-`ptxas`** at `~/.local/cuda13/bin`: with it on `PATH` the pinned frx wheel's
+`ptxas`** (the reference machine uses `/usr/local/cuda/bin/ptxas`): with it on
+`PATH` the pinned frx wheel's
 compiler emits the hardware `clmad` GF(2¹²⁸) multiply; without it, the software
 `binary_field_ghash` multiply — same output, just slower.
 
@@ -164,11 +165,13 @@ CUDA wheels aren't hermetic). Run them on the venv, resolving the same
 git_override'd zorch via `scripts/zorch_pythonpath.sh`:
 
 ```bash
-export JAX_PLATFORMS=cuda
+export FRX_PLATFORMS=cuda,cpu              # GPU prover + CPU SHA query chains
+export FRX_ENABLE_X64=1                    # required by packed F128 witnesses
+unset JAX_PLATFORMS JAX_ENABLE_X64         # avoid overriding the frx settings
 export XLA_PYTHON_CLIENT_PREALLOCATE=false   # don't grab ~75% of VRAM up front
 export PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"
-export CUDA_ROOT="$HOME/.local/cuda13-merged" # makes PJRT prefer CUDA 13.3 ptxas
-export PATH="$HOME/.local/cuda13/bin:$PATH"  # CUDA 13.3 ptxas -> compiler emits clmad
+export CUDA_ROOT=/usr/local/cuda            # CUDA 13.3 on the reference machine
+export PATH="$CUDA_ROOT/bin:$PATH"           # ptxas 13.3 -> compiler emits clmad
 VENV=.venv/bin/python
 scripts/dump_goldens.sh all                  # + the real hash circuits
 $VENV python/flock_zorch/testing/e2e_ligerito_oracle_test.py    # fused prove (identity R1CS)
@@ -187,10 +190,12 @@ rebuilds it from the pinned flock.
 VENV=.venv/bin/python                                                                    # the venv from Setup
 cargo run --release --example dump_sha2_ligerito -- 2048 artifacts/sha2_ligerito_golden.bin  # real R1CS, m=26
 cargo build --release --example bench_sha2_ligerito_cpu                                   # CPU anchor
-export JAX_PLATFORMS=cuda XLA_PYTHON_CLIENT_PREALLOCATE=false
+export FRX_PLATFORMS=cuda,cpu FRX_ENABLE_X64=1
+export XLA_PYTHON_CLIENT_PREALLOCATE=false
+unset JAX_PLATFORMS JAX_ENABLE_X64
 export PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"
-export CUDA_ROOT="$HOME/.local/cuda13-merged" # required for the hardware clmad path
-export PATH="$HOME/.local/cuda13/bin:$PATH"
+export CUDA_ROOT=/usr/local/cuda             # required for the hardware clmad path
+export PATH="$CUDA_ROOT/bin:$PATH"
 CPU=$(target/release/examples/bench_sha2_ligerito_cpu 2048 | grep -oE '[0-9.]+ ms' | head -1)
 $VENV python/flock_zorch/testing/prove_phase_bench.py sha2 --cpu-ms "${CPU%% ms}"         # GPU vs CPU
 ```
@@ -232,33 +237,57 @@ from m=24 and reaches 16.58× at m=31.
 
 ### BLAKE3 (Ligerito)
 
-Re-baselined 2026-08-01 on the same 9950X/RTX 5090. CPU is current flock main
+Re-baselined 2026-08-02 on the same 9950X/RTX 5090. CPU is current flock main
 `8790722` with `target-cpu=native` (AVX-512/VPCLMULQDQ), timing only
 `prove_fast_ligerito_from_witness` after witness construction. GPU is the
-latest published `frx` / `frxlib` / `frx-cuda12-{plugin,pjrt}` wheel set,
-`0.10.1.dev20260801051831`, also excluding witness construction. CUDA 13.3
-`ptxas` was selected through `CUDA_ROOT`; the exact m=28 run emitted PTX 9.3
-with `clmad`.
+latest published `frx` / `frxlib` wheel set,
+`0.10.1.dev20260801051831`, with a locally built PJRT from
+[XLA #397](https://github.com/fractalyze/xla/pull/397), also excluding witness
+construction. CUDA 13.3 `ptxas` 13.3.73 was selected through `CUDA_ROOT`; the
+compiler emitted PTX 9.3 with `clmad` for the RTX 5090 (sm_120, driver
+610.43.02).
 
 | m   | n_comp | flock CPU (ms) | GPU (ms) | speedup    |
 | --- | ------ | -------------- | -------- | ---------- |
-| 26  | 4096   | 26.13          | 45.4     | 0.58×      |
-| 28  | 16384  | 113.60         | 71.0     | **1.60×**  |
-| 31† | 131072 | 754.27         | 394.2    | **1.91×**  |
+| 26  | 4096   | 26.13          | 21.0     | **1.25×**  |
+| 28  | 16384  | 113.60         | 38.3     | **2.96×**  |
+| 31† | 131072 | 754.27         | 244.3    | **3.09×**  |
 
 BLAKE3 uses the generic sparse CSC lincheck rather than Keccak3's procedural
-walker. The latest GPU crosses the AVX-512 CPU between m=26 and m=28. Its proof
-time grows 8.7× while the batch grows 32× from m=26 to m=31.
+walker. Serial Ligerito SHA-256 query chains run on CPU callbacks; the large
+array work remains on GPU. At m=31 zerocheck is 124.6 ms (51% of the proof),
+including the custom URM region that consumes the packed witness without
+materializing the three LDE matrices. The phase-accounted points reach 195,410,
+427,282, and 536,417 hashes/s at m=26, m=28, and m=31 respectively.
+
+A separate full-device-JIT probe at m=28 takes 23.425 ms (699,436 hashes/s).
+It returns the device proof object directly, skips host proof serialization,
+and removes the benchmark's per-phase synchronization, so it is useful as an
+optimization bound but is not an apples-to-apples table row. The best observed
+version of that same probe was 22.204 ms (737,876 hashes/s).
+
+Reproduce all three GPU points with the shared goldens (m=31 needs the async
+allocator to avoid BFC fragmentation):
+
+```bash
+export FLOCK_ZORCH_ARTIFACTS=/home/baz/Workspace/flock-zorch/artifacts
+export FRX_PLATFORMS=cuda,cpu FRX_ENABLE_X64=1
+export XLA_PYTHON_CLIENT_PREALLOCATE=false
+unset JAX_PLATFORMS JAX_ENABLE_X64
+export CUDA_ROOT=/usr/local/cuda PATH="$CUDA_ROOT/bin:$PATH"
+export PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"
+VENV=.venv/bin/python
+$VENV python/flock_zorch/testing/prove_phase_bench.py blake3 --golden blake3_m26_ligerito_golden.bin --cpu-ms 26.13
+$VENV python/flock_zorch/testing/prove_phase_bench.py blake3 --golden blake3_m28_ligerito_golden.bin --cpu-ms 113.60
+XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async $VENV python/flock_zorch/testing/prove_phase_bench.py blake3 --golden blake3_m31_ligerito_golden.bin --cpu-ms 754.27
+```
 
 **Reading the numbers.** flock's prover is a sequential SHA-256 Fiat-Shamir
-chain; at small m the per-round data-parallel work (NTT / URM / recursive fold)
-is too small to amortize GPU launch overhead, so the CPU wins. The bulk work
-grows with m and the GPU overtakes. The crossover and margin depend strongly on
-the CPU's SIMD path: current AVX-512 flock moves the BLAKE3 crossover between
-m=26 and m=28. Reproduce any point with the
-[SHA-256 recipe above](#one-benchmark-point-sha-256-m26) (swap `dump_sha2_ligerito` /
-`bench_sha2_ligerito_cpu` and the `sha2` argument for the `blake3` / `keccak3`
-variants).
+chain, but those short serial chains are faster on CPU even after callback
+overhead. GPU wins all three measured BLAKE3 sizes because the NTT / URM /
+recursive-fold work is large enough to amortize dispatch; current AVX-512 flock
+keeps the m=26 margin to 1.20×. The m=31 throughput dip is a zerocheck scaling
+problem, not a hash-chain crossover.
 
 ## Acknowledgments
 

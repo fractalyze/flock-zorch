@@ -113,6 +113,23 @@ class Round1CFoldFirstTest(absltest.TestCase):
         got, _ = _urm._round1_core(a, b, c, K_SKIP, r)
         np.testing.assert_array_equal(ref, np.asarray(ghash.to_lanes(got)))
 
+    def test_packed_witness_matches_unpacked_exactly(self) -> None:
+        a, b, c, r = _inputs(seed=17)
+        ref = [
+            np.asarray(ghash.to_lanes(x)) for x in _urm._round1_core(a, b, c, K_SKIP, r)
+        ]
+
+        def pack(x):
+            raw = np.packbits(np.asarray(x), axis=None, bitorder="little")
+            return fnp.asarray(raw.view(np.uint64).reshape(-1, 2))
+
+        got = [
+            np.asarray(ghash.to_lanes(x))
+            for x in _urm._round1_core(pack(a), pack(b), pack(c), K_SKIP, r)
+        ]
+        for name, x, y in zip(("P_AB", "P_C"), ref, got):
+            np.testing.assert_array_equal(x, y, err_msg=f"packed {name} differs")
+
 
 if __name__ == "__main__":
     absltest.main()
