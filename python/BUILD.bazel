@@ -126,6 +126,25 @@ py_test(
     ],
 )
 
+# No golden: validates the primitive census's roofline arithmetic, size-curve
+# classification, and contribution-count input without running a benchmark.
+py_test(
+    name = "primitive_census_test",
+    size = "small",
+    srcs = [
+        "flock_zorch/testing/primitive_census.py",
+        "flock_zorch/testing/primitive_census_test.py",
+    ],
+    main = "flock_zorch/testing/primitive_census_test.py",
+    deps = [
+        ":flock_zorch",
+        "@zorch//zorch/pcs:ring_switch",
+        requirement("absl-py"),
+        requirement("frx"),
+        requirement("numpy"),
+    ],
+)
+
 # No golden: `CscCircuit.fold_alpha_batched` (device seg-scan) vs a naive host
 # XOR-scatter reference — the non-identity A₀/B₀ structure coverage.
 py_test(

@@ -199,6 +199,41 @@ another process is using the GPU — a neighbour saturating the SMs inflates a w
 prove ~28× here, which is enough to invent a result. Swap `sha2` for `blake3` or
 `keccak3`; `--golden` points it at an m-variant dump.
 
+### Primitive opcode census
+
+Sweep every GF(2^128) primitive from 2^10 through 2^24 elements on an idle GPU:
+
+```bash
+export FRX_PLATFORMS=cuda XLA_PYTHON_CLIENT_PREALLOCATE=false
+export PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"
+export CUDA_ROOT="$HOME/.local/cuda13-merged"
+export PATH="$HOME/.local/cuda13/bin:$PATH"
+export XLA_FLAGS="--xla_gpu_cuda_data_dir=$CUDA_ROOT"
+.venv/bin/python python/flock_zorch/testing/primitive_census.py \
+  --bandwidth-gbps 1790 --clmul-gops MEASURED_CLMUL_PEAK \
+  --integer-gops MEASURED_INTEGER_PEAK \
+  --json primitive-census.json
+```
+
+The table reports the size-curve classification, operation-specific roofline,
+and native-field/uint64-lane ratio where the operations are identical. Supply a
+JSON object mapping primitive names to element invocations with `--op-counts`
+to append a ranked estimate of each opcode's total time and avoidable gap per
+prove. `--only NAME` is repeatable for focused profiler runs. The clmul peak is
+required before multiply-bearing rows claim a roofline percentage; omitting it
+leaves their roofline efficiency unavailable rather than comparing
+compute-bound work with a memory-only ceiling. The same rule applies to the
+integer issue peak used by ring-switch's bit-selection and transpose kernels.
+Standalone bitcasts are
+labelled `entry-boundary-copy`: the opcode itself simplifies to an alias, but
+XLA must copy a differently typed result at a non-donated jit boundary.
+
+Before recording multiply-bearing rows, confirm that the compiler emits
+`clmad` rather than the software GHASH multiply. Add
+`--xla_dump_to=/tmp/flock-census-xla` to `XLA_FLAGS`, run a one-point
+`--only multiply` sweep, and check its `.ptx` files with
+`rg 'clmad' /tmp/flock-census-xla`. CUDA 13.3 or newer `ptxas` is required.
+
 ## Benchmark
 
 Apple-to-apple: **unmodified flock CPU vs flock-zorch GPU on the same idle
