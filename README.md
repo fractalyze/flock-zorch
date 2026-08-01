@@ -167,6 +167,7 @@ git_override'd zorch via `scripts/zorch_pythonpath.sh`:
 export JAX_PLATFORMS=cuda
 export XLA_PYTHON_CLIENT_PREALLOCATE=false   # don't grab ~75% of VRAM up front
 export PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"
+export CUDA_ROOT="$HOME/.local/cuda13-merged" # makes PJRT prefer CUDA 13.3 ptxas
 export PATH="$HOME/.local/cuda13/bin:$PATH"  # CUDA 13.3 ptxas -> compiler emits clmad
 VENV=.venv/bin/python
 scripts/dump_goldens.sh all                  # + the real hash circuits
@@ -188,6 +189,7 @@ cargo run --release --example dump_sha2_ligerito -- 2048 artifacts/sha2_ligerito
 cargo build --release --example bench_sha2_ligerito_cpu                                   # CPU anchor
 export JAX_PLATFORMS=cuda XLA_PYTHON_CLIENT_PREALLOCATE=false
 export PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"
+export CUDA_ROOT="$HOME/.local/cuda13-merged" # required for the hardware clmad path
 export PATH="$HOME/.local/cuda13/bin:$PATH"
 CPU=$(target/release/examples/bench_sha2_ligerito_cpu 2048 | grep -oE '[0-9.]+ ms' | head -1)
 $VENV python/flock_zorch/testing/prove_phase_bench.py sha2 --cpu-ms "${CPU%% ms}"         # GPU vs CPU
@@ -247,12 +249,13 @@ machine** (RTX 5090, Ryzen 9 9950X), same-instance both sides. The golden is
 dumped from flock-core, the CPU bench (`bench_*_cpu`, thin-LTO /
 `codegen-units=1` / `target-cpu=native` — flock's honest x86 best) proves it, and
 the GPU bench ingests the same golden. GPU uses the hardware `clmad` multiply;
-timing is warm best-of-3 (JIT compile excluded), GPU verified idle. Every
+Timing is warm best-of-3 (JIT compile excluded), GPU verified idle. Except for
+rows marked ‡, measurements use zorch `650b1cf` and FRX
+`dev20260720085939` from 2026-07-21. Every
 instance is a real flock hash-circuit R1CS at flock's shipped size, swept over
 the witness size m to locate the GPU/CPU crossover. The CPU baseline is x86
 **scalar** (flock's NEON paths are aarch64-gated), so Apple silicon would shift
-the crossover right. Measured with zorch `650b1cf` and FRX
-`dev20260720085939` on 2026-07-21.
+the crossover right.
 
 ### Keccak3 (Ligerito) — crossover ≈ m=24
 
@@ -278,7 +281,15 @@ from m=24 and reaches 16.58× at m=31.
 | m   | n_comp | flock CPU (ms) | GPU (ms) | speedup    |
 | --- | ------ | -------------- | -------- | ---------- |
 | 26  | 4096   | 316.5          | 66.8     | **4.73×**  |
+| 28‡ | 16384  | 1,163.2        | 71.0     | **16.38×** |
 | 31† | 131072 | 10,724.9       | 621.1    | **17.27×** |
+
+‡ Re-measured 2026-08-01 with the latest published wheel set,
+`frx` / `frxlib` / `frx-cuda12-{plugin,pjrt}`
+`0.10.1.dev20260801051831`, and CUDA 13.3 `ptxas` selected through
+`CUDA_ROOT`. The exact run emitted PTX 9.3 with `clmad` and used the idle RTX
+5090; the older m=26/m=31 rows are retained as historical points and should not
+be used to interpolate this row.
 
 BLAKE3 uses the generic sparse CSC lincheck rather than Keccak3's procedural
 walker. The same packed zerocheck path keeps its high-end curve nearly identical:
