@@ -87,13 +87,17 @@ def _to_u8(x):
     return lax.bitcast_convert_type(x, fnp.uint8)
 
 
-@functools.partial(frx.jit, static_argnums=(3,))
-def _round1_core(a, b, c, k_skip, r):
-    """Fused round-1 core: build eqx, extend a/b/c S→Λ, a·b, φ8-embed, AND
-    eq-accumulate — all in ONE jit kernel so the large [N,ell,2] φ8 intermediate is
-    consumed in-fusion and never written to HBM (halves round1's bandwidth vs the
-    separate extend + accumulate). `build_eq` is in-kernel (no `build_eq_fused`)."""
-    eqx = sumcheck.build_eq(r[k_skip:])[:, None]  # r is ghash [m]; [n_chunks, 1]
+# Rows per block once round-1 blocks (see `_round1_core`). 2**22 is the row
+# count m=28 runs at unblocked, so a block reproduces a working set the stack is
+# already measured on: 256 MiB per track, ~1.8 GiB for the whole core.
+_ROUND1_BLOCK_ROWS = 1 << 22
+
+
+def _round1_partial(a, b, c, eqx, k_skip):
+    """One block's contribution to (P^AB, P^C): extend a/b/c S→Λ, a·b, φ8-embed
+    and eq-accumulate over this block's rows. Fused, so the large [rows, ell] φ8
+    intermediate is consumed in-fusion and never written to HBM (halves round1's
+    bandwidth vs a separate extend + accumulate)."""
     a_l = _extend_rows(a, k_skip)
     b_l = _extend_rows(b, k_skip)
     c_l = _to_u8(_extend_rows(c, k_skip))
@@ -101,6 +105,50 @@ def _round1_core(a, b, c, k_skip, r):
     phi_ab = _PHI_DEV_G[ab]
     phi_c = _PHI_DEV_G[c_l.astype(fnp.int32)]
     return fnp.sum(eqx * phi_ab, axis=0), fnp.sum(eqx * phi_c, axis=0)
+
+
+@functools.partial(frx.jit, static_argnums=(3,))
+def _round1_core(a, b, c, k_skip, r):
+    """Fused round-1 core: build eqx, then accumulate `_round1_partial` over the
+    row axis. `build_eq` is in-kernel (no `build_eq_fused`).
+
+    **Blocked over rows above `_ROUND1_BLOCK_ROWS`.** Round-1 is a map-reduce:
+    `_extend_rows` transforms along the LAST axis (ell = 2^k_skip), so rows are
+    independent, and the reduction is over the row axis down to `[ell]` — 64
+    ghash elements, 1 KiB, out of a 4 GiB-per-track input at m=32. Holding all
+    N rows live is therefore a property of the traced program, not of the
+    algorithm, and it is what puts round-1 at 28.06 GiB on a 32 GB card at m=32
+    (a 16.06 GiB temp arena plus three 4 GiB `u8[N, ell]` tracks) — the OOM in
+    #179. Blocking divides the arena by the block count.
+
+    Bit-identical, not merely close: the accumulation is `+` on
+    `binary_field_ghash`, i.e. XOR, which is associative and commutative, so
+    partitioning the rows cannot change the result — the same argument
+    `sumcheck.build_eq_suffix_tables` relies on.
+
+    One block (N <= block rows) takes the unblocked path unchanged, so every
+    instance that already fits keeps its exact program, not a scan of length 1.
+    """
+    eqx = sumcheck.build_eq(r[k_skip:])[:, None]  # r is ghash [m]; [n_chunks, 1]
+    n_rows, ell = a.shape
+    n_blocks = n_rows // _ROUND1_BLOCK_ROWS
+    if n_blocks <= 1:
+        return _round1_partial(a, b, c, eqx, k_skip)
+
+    rows = _ROUND1_BLOCK_ROWS
+    blocked = lambda x, w: x.reshape(n_blocks, rows, w)  # noqa: E731
+
+    def step(acc, xs):
+        part = _round1_partial(*xs[:3], xs[3], k_skip)
+        return (acc[0] + part[0], acc[1] + part[1]), None
+
+    zero = fnp.zeros(ell, fnp.binary_field_ghash)
+    (acc_ab, acc_c), _ = lax.scan(
+        step,
+        (zero, zero),
+        (blocked(a, ell), blocked(b, ell), blocked(c, ell), blocked(eqx, 1)),
+    )
+    return acc_ab, acc_c
 
 
 @functools.partial(frx.jit, static_argnums=(1, 2))
