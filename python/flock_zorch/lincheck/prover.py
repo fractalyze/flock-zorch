@@ -107,19 +107,35 @@ class CscCircuit:
         return alpha * out_a + out_b
 
 
-def partial_fold_packed_z(z_packed_bytes: bytes, m: int, k_log: int, x_outer):
+def stripe_to_device(z_packed_bytes: bytes | bytearray, m: int, k_log: int):
+    """Upload the packed lincheck stripe as the device-resident [n_bytes, k]
+    uint8 array `partial_fold_packed_z` consumes. Call once at witness ingest,
+    alongside the other witness buffers — the stripe is per-witness, and left
+    as host bytes it re-crosses PCIe on every prove (512 MiB at m=32)."""
+    k = 1 << k_log
+    n_bytes = (1 << (m - k_log)) // 8
+    return fnp.asarray(np.frombuffer(z_packed_bytes, np.uint8).reshape(n_bytes, k))
+
+
+def partial_fold_packed_z(z_stripe, m: int, k_log: int, x_outer):
     """z_vec[i_inner] = Σ_{i_outer} z(i_inner, i_outer)·eq_outer[i_outer]
     (flock `partial_fold_packed_z`, useful_bits = 2^k_log). `x_outer` is the outer
     challenge; the eq table is built inside the jitted core.
 
+    `z_stripe` is either the host packed bytes (uploaded here, paying PCIe per
+    call) or the device array `stripe_to_device` returns.
+
     z_packed layout: byte `z_packed[byte_idx·k + i_inner]` holds outer bits
     `z[i_inner, 8·byte_idx + r]` at bit r."""
-    k = 1 << k_log
     n_outer = 1 << (m - k_log)
-    n_bytes = n_outer // 8
-    zp = fnp.asarray(np.frombuffer(z_packed_bytes, np.uint8).reshape(n_bytes, k))
+    if isinstance(z_stripe, (bytes, bytearray)):
+        z_stripe = stripe_to_device(z_stripe, m, k_log)
+    elif z_stripe.shape != (n_outer // 8, 1 << k_log):
+        raise ValueError(
+            f"device stripe shape {z_stripe.shape} != {(n_outer // 8, 1 << k_log)}"
+        )
     return _partial_fold(
-        zp, x_outer, n_outer
+        z_stripe, x_outer, n_outer
     )  # device + jit (keeps the intermediate off HBM)
 
 
@@ -162,7 +178,7 @@ class _LincheckCarry:
     step instances (cf. zerocheck._ZerocheckCarry); the `None` fields are per-step
     outputs set via `replace`. Not pytree-registered (no @jit boundary)."""
 
-    z_packed_bytes: Any
+    z_stripe: Any
     a_dense: Any
     b_dense: Any
     x_ab: Any
@@ -212,9 +228,7 @@ class _SumcheckRound:
         m, k_log, k_skip = self._m, self._k_log, self._k_skip
         inner_rest = k_log - k_skip
         comb = carry.comb
-        z_vec = partial_fold_packed_z(
-            carry.z_packed_bytes, m, k_log, carry.x_ab.x_outer
-        )
+        z_vec = partial_fold_packed_z(carry.z_stripe, m, k_log, carry.x_ab.x_outer)
 
         rounds, r_rounds = [], []
         if inner_rest > 0:
@@ -268,7 +282,7 @@ def lincheck_steps(m: int, k_log: int, k_skip: int) -> list:
 
 
 def prove(
-    z_packed_bytes,
+    z_stripe,
     a_dense,
     b_dense,
     x_ab: AbClaimPoint,
@@ -282,6 +296,8 @@ def prove(
     """Run lincheck. `x_ab` is an `AbClaimPoint` (z_skip:[2], x_inner_rest:[*,2],
     x_outer:[*,2]). Byte-identical to flock `prove_padded_capture_z_vec` — the
     claim-bearing entry point, the only one anything downstream consumes.
+    `z_stripe`: host packed bytes or the device array `stripe_to_device`
+    returns (see `partial_fold_packed_z`).
 
     A `lincheck_steps` sequence (comb → sumcheck → claim) threading one
     `Challenger`. `circuit`: a `CscCircuit` for real hash R1CS (sparse A₀/B₀ at
@@ -292,7 +308,7 @@ def prove(
         ch = Challenger(domain)
     carry, _ch, _msgs = prove_rounds(
         lincheck_steps(m, k_log, k_skip),
-        _LincheckCarry(z_packed_bytes, a_dense, b_dense, x_ab, circuit),
+        _LincheckCarry(z_stripe, a_dense, b_dense, x_ab, circuit),
         ch,
     )
     return LincheckProof(

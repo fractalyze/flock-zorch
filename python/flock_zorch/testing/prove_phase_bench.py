@@ -246,11 +246,12 @@ def make_prove(circ: Circuit, g, unpacked: bool):
     else:
         # Packed F128 — witness_to_rows unpacks on device (8x less host transfer).
         witness = (g["a"], g["b"], g["z"])
-    # Upload once. Left as host numpy these re-cross PCIe every iteration, and the
-    # cost lands on whichever phase touches them first — skewing the very split
-    # this harness exists to report.
+    # Upload once — the lincheck stripe included. Left as host numpy/bytes these
+    # re-cross PCIe every iteration, and the cost lands on whichever phase
+    # touches them first — skewing the very split this harness exists to report.
     a_bits, b_bits, c_bits = (frx.device_put(x) for x in witness)
     z = frx.device_put(g["z"])
+    zlc = lincheck.stripe_to_device(zlc, m, k_log)
 
     def prove(times=None):
         def phase(name, fn):

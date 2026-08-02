@@ -139,6 +139,19 @@ py_test(
     ],
 )
 
+# No golden: the device-stripe path of `partial_fold_packed_z` is bit-identical
+# to the host-bytes path, and a mis-shaped stripe is rejected. Software-mul, so
+# it runs on CPU.
+py_test(
+    name = "stripe_residency_test",
+    size = "small",
+    srcs = ["flock_zorch/lincheck/testing/stripe_residency_test.py"],
+    deps = [
+        ":flock_zorch",
+        requirement("absl-py"),
+    ],
+)
+
 # No golden: prove_packed → verify round-trip for the zerocheck verifier (accept +
 # claim reconstruction + tamper rejection). Software-mul, so it runs on CPU.
 py_test(
