@@ -142,9 +142,15 @@ def partial_fold_packed_z(z_stripe, m: int, k_log: int, x_outer):
 @functools.partial(frx.jit, static_argnums=(2,))
 def _partial_fold(zp, x_outer, n_outer):
     """z_vec[i_inner] = Σ_{i_outer} bit·eq_outer[i_outer], device+jit so the large
-    [n_outer,k,2] intermediate stays fused on device and never lands in HBM. `build_eq`
-    is in-kernel (no `build_eq_fused`), so the eq build fuses with the fold."""
-    eq_outer = build_eq(x_outer)
+    [n_outer,k,2] intermediate stays fused on device and never lands in HBM.
+
+    The barrier makes `build_eq` materialize its [n_outer] table (4 MiB at
+    m=32) before the reduce. Without it XLA fuses the tail of the eq hypercube
+    expansion into the reduce fusion and recomputes eq per reduce-input
+    element — a clmul chain that deepens with every doubling past the
+    materialized [2^14] prefix, which is what made the fold superlinear
+    (124 ms instead of 3.4 ms at m=32, blake3 shape)."""
+    eq_outer = frx.lax.optimization_barrier(build_eq(x_outer))
     bits = (
         zp[:, None, :] >> fnp.arange(8, dtype=fnp.uint8)[None, :, None]
     ) & 1  # [nb,8,k]
