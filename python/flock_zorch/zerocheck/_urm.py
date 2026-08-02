@@ -132,17 +132,18 @@ def _round1_partial_decomp(a, b, c, eq_or_point, phi_basis, *, k_skip: int):
     emits only GHASH partials.  This decomposition spells the same operation in
     ordinary array primitives for CPU and marker fallback.
     """
-    if a.ndim == 3 and a.shape[-2:] == (2, 8):
-        operand_rows = a.shape[0] * 2
-    elif a.ndim == 2 and a.shape[-1] == 2 and np.dtype(a.dtype) == np.uint64:
-        operand_rows = a.shape[0] * 2
-    elif a.ndim == 1 and np.dtype(a.dtype) == np.uint8:
-        operand_rows = a.shape[0] // 8
-    else:
-        operand_rows = a.shape[0]
-    point_weights = (
-        eq_or_point.shape[0] < 63 and (1 << eq_or_point.shape[0]) == operand_rows
-    )
+
+    def matches_rows(rows: int) -> bool:
+        if a.ndim == 3 and a.shape[-2:] == (2, 8):
+            return a.shape[0] * 2 == rows
+        if a.ndim == 2 and a.shape[-1] == 2 and np.dtype(a.dtype) == np.uint64:
+            return a.shape[0] * 2 == rows
+        if a.ndim == 1 and np.dtype(a.dtype) == np.uint8:
+            return a.shape[0] in (rows * 8, rows * 64)
+        return a.shape[0] == rows
+
+    point_rows = 1 << eq_or_point.shape[0]
+    point_weights = eq_or_point.shape[0] < 63 and matches_rows(point_rows)
     eqx = (
         expand_eq_to_hypercube(eq_or_point, fnp.ones((), eq_or_point.dtype), msb=True)
         if point_weights
