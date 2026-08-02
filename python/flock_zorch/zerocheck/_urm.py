@@ -148,12 +148,18 @@ def _round1_input_rows(x, n_rows: int):
 _ROUND1_BLOCK_ROWS = 1 << 22
 
 
-def _round1_partial_decomp(a, b, c, eq_or_point, phi_basis, *, k_skip: int):
+def _round1_partial_decomp(
+    a, b, c, eq_or_point, phi_basis, *, k_skip: int, with_c: bool = True
+):
     """Portable decomposition of the fused bit-sliced URM map-reduce.
 
     The custom GPU emitter keeps the transformed AES bit planes on chip and
     emits only GHASH partials.  This decomposition spells the same operation in
     ordinary array primitives for CPU and marker fallback.
+
+    `with_c=False` (the identity-C stripe shortcut, #192) skips the C track and
+    returns only the P^AB partial; the AB arithmetic is untouched, so P^AB is
+    bit-identical either way.
     """
 
     def matches_rows(rows: int) -> bool:
@@ -175,7 +181,6 @@ def _round1_partial_decomp(a, b, c, eq_or_point, phi_basis, *, k_skip: int):
     n_rows = eqx.shape[0]
     a = _round1_input_rows(a, n_rows)
     b = _round1_input_rows(b, n_rows)
-    c = _round1_input_rows(c, n_rows)
     a_l = _extend_rows(a, k_skip)
     b_l = _extend_rows(b, k_skip)
     byte_values = _to_u8(a_l * b_l)
@@ -187,15 +192,31 @@ def _round1_partial_decomp(a, b, c, eq_or_point, phi_basis, *, k_skip: int):
     zero = ghash.to_ghash(fnp.zeros((2,), dtype=fnp.uint64))
     bit_sums = fnp.sum(fnp.where(selected, weights, zero), axis=1)
     partial_ab = fnp.sum(bit_sums * phi_basis[None, None, :], axis=2)
+    if not with_c:
+        return partial_ab  # [n_partials, ell] — stripe shortcut, no C track
 
+    c = _round1_input_rows(c, n_rows)
     c_selected = c.astype(fnp.bool_).reshape(n_partials, rows_per_partial, 64)
     c_weights = eqx.reshape(n_partials, rows_per_partial, 1)
     partial_c = fnp.sum(fnp.where(c_selected, c_weights, zero), axis=1)
     return fnp.stack([partial_ab, partial_c], axis=1)
 
 
-def _round1_partial(a, b, c, eq_or_point, k_skip):
-    """One row block's canonical zerocheck URM composite."""
+def _round1_partial(a, b, c, eq_or_point, k_skip, with_c=True):
+    """One row block's canonical zerocheck URM composite. `with_c=False` (the
+    identity-C stripe shortcut, #192) bypasses the fused marker and runs the
+    portable decomposition AB-only, so the C track is never computed on device."""
+    if not with_c:
+        partial_ab = _round1_partial_decomp(
+            a,
+            b,
+            None,
+            eq_or_point.reshape(-1),
+            _PHI_BASIS_DEV_G,
+            k_skip=k_skip,
+            with_c=False,
+        )
+        return fnp.sum(partial_ab, axis=0)
     partials = fused_region(
         _round1_partial_decomp,
         a,
@@ -224,8 +245,8 @@ def _extend_folded_c(v, k_skip: int):
     return fnp.sum(basis * v[:, None], axis=0)
 
 
-@functools.partial(frx.jit, static_argnums=(3,))
-def _round1_core(a, b, c, k_skip, r):
+@functools.partial(frx.jit, static_argnums=(3, 5))
+def _round1_core(a, b, c, k_skip, r, with_c=True):
     """Fused round-1 core: build eqx, then accumulate `_round1_partial` over the
     row axis. `build_eq` is in-kernel (no `build_eq_fused`).
 
@@ -256,8 +277,8 @@ def _round1_core(a, b, c, k_skip, r):
     n_rows, ell = 1 << outer_point.shape[0], 1 << k_skip
     n_blocks = n_rows // _ROUND1_BLOCK_ROWS
     if n_blocks <= 1:
-        p_ab, folded_c = _round1_partial(a, b, c, outer_point, k_skip)
-        return p_ab, _extend_folded_c(folded_c, k_skip)
+        part = _round1_partial(a, b, c, outer_point, k_skip, with_c)
+        return (part[0], _extend_folded_c(part[1], k_skip)) if with_c else part
 
     eqx = sumcheck.build_eq(outer_point)[:, None]
 
@@ -270,20 +291,32 @@ def _round1_core(a, b, c, k_skip, r):
             return x.reshape(n_blocks, rows // 2, 2)
         return x.reshape(n_blocks, rows, ell)
 
+    eqx_blocks = eqx.reshape(n_blocks, rows, 1)
+    zero = fnp.zeros(ell, fnp.binary_field_ghash)
+
+    # `with_c=False` (stripe shortcut, #192) drops the C track; the block-scan
+    # scaffold is shared so it cannot drift from the drain path.
+    if not with_c:
+
+        def step_ab(acc, xs):
+            return (
+                acc + _round1_partial(xs[0], xs[1], None, xs[2], k_skip, False),
+                None,
+            )
+
+        acc_ab, _ = lax.scan(
+            step_ab, zero, (blocked_witness(a), blocked_witness(b), eqx_blocks)
+        )
+        return acc_ab
+
     def step(acc, xs):
         part = _round1_partial(*xs[:3], xs[3], k_skip)
         return (acc[0] + part[0], acc[1] + part[1]), None
 
-    zero = fnp.zeros(ell, fnp.binary_field_ghash)
     (acc_ab, acc_c), _ = lax.scan(
         step,
         (zero, zero),
-        (
-            blocked_witness(a),
-            blocked_witness(b),
-            blocked_witness(c),
-            eqx.reshape(n_blocks, rows, 1),
-        ),
+        (blocked_witness(a), blocked_witness(b), blocked_witness(c), eqx_blocks),
     )
     return acc_ab, _extend_folded_c(acc_c, k_skip)
 
@@ -337,3 +370,54 @@ def round1_rows(a, b, c, m: int, k_skip: int, r):
     host lift; consumers observe/interpolate natively and byte-gate readers
     normalize via `ghash.to_lanes`."""
     return _round1_core(a, b, c, k_skip, r)  # eqx build + extend+phi+accum, fused
+
+
+# ---------------------------------------------------------------------------
+# The identity-C shortcut (flock-zorch#192).
+#
+# When C is the identity (Cz = z), the round-1 C message carries no information
+# the lincheck stripe does not already hold: both are partial folds of the SAME
+# witness z, over the SAME high bits. So instead of draining C from the
+# row-major witness (an extra 2^m-scale track), we compute only P^AB
+# (`round1_ab_rows` = `_round1_core` with `with_c=False`, which bypasses the URM
+# marker so the C track is never computed on device) and DERIVE P^C from the
+# stripe (`round1_c_from_stripe`). Byte-identical by construction — proven in
+# `stripe_c_test`.
+# ---------------------------------------------------------------------------
+
+
+def round1_ab_rows(a, b, k_skip: int, r):
+    """Round-1 P^AB only (`binary_field_ghash [2^k_skip]` on Λ). The C track is
+    taken from the lincheck stripe by `round1_c_from_stripe`, so the C witness
+    never enters round-1. Byte-identical to `round1_rows(...)[0]`."""
+    return _round1_core(a, b, None, k_skip, r, with_c=False)
+
+
+@functools.partial(frx.jit, static_argnums=(2,))
+def _round1_c_from_zvec(z_vec, r_mid, k_skip):
+    """Given the inner table `z_vec` (the stripe folded at r_outer, length
+    2^k_log), fold its top (k_log − k_skip) bits at r_mid = r[k_skip:k_log] to
+    the length-2^k_skip S-domain vector `folded_c`, then S→Λ extend it (the SAME
+    `_extend_folded_c` the drain used). `z_vec[y·2^k_skip + s]`: s = low k_skip
+    bits, y = the middle bits, so the reshape puts y on axis 0."""
+    eq_mid = sumcheck.build_eq(r_mid)  # [2^(k_log-k_skip)]
+    grid = z_vec.reshape(eq_mid.shape[0], 1 << k_skip)  # [y, s]
+    folded_c = fnp.sum(eq_mid[:, None] * grid, axis=0)  # [2^k_skip] ghash
+    return _extend_folded_c(folded_c, k_skip)
+
+
+def round1_c_from_stripe(z_stripe, m: int, k_log: int, k_skip: int, r):
+    """Derive the exact round-1 C message from the lincheck stripe instead of
+    draining the row-major witness. C is identity (Cz = z), and both the drain
+    (`folded_c[s] = Σ_x eq(r[k_skip:], x)·z[x·2^k_skip + s]`) and the stripe are
+    partial folds of the same z. Fold the stripe at r_outer = r[k_log:] to the
+    tiny 2^k_log inner table, then fold its top (k_log − k_skip) bits at
+    r[k_skip:k_log] — algebraically identical to the drain by the tensor
+    factorization eq(r[k_skip:]) = eq(r[k_skip:k_log]) ⊗ eq(r[k_log:]). Returns
+    `binary_field_ghash [2^k_skip]` on Λ, byte-identical to `round1_rows(...)[1]`."""
+    # Lazy import: lincheck.prover imports zerocheck._lagrange_weights at module
+    # load, so importing it at module top here would cycle.
+    from flock_zorch.lincheck.prover import partial_fold_packed_z
+
+    z_vec = partial_fold_packed_z(z_stripe, m, k_log, r[k_log:])  # [2^k_log] ghash
+    return _round1_c_from_zvec(z_vec, r[k_skip:k_log], k_skip)

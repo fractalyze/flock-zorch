@@ -47,7 +47,7 @@ LABEL = b"flock-zerocheck-v0"
 @dataclass(frozen=True)
 class _ZerocheckCarry:
     """State threaded between the zerocheck's steps — only what a later step
-    reads from an earlier one. Static config (m, k_skip) lives on the step
+    reads from an earlier one. Static config (m, k_skip, k_log) lives on the step
     instances; the `None` fields are per-step outputs set via `replace`. Not
     pytree-registered: the sequence never crosses a @jit boundary (the per-round
     field ops jit internally via _jit_round_fold)."""
@@ -55,6 +55,7 @@ class _ZerocheckCarry:
     a_bits: Any
     b_bits: Any
     c_bits: Any
+    c_stripe: Any = None  # ← lincheck stripe; when set, round-1 C skips the drain
     r: Any = None  # ← sample_challenge_coords, seeded by prove_packed
     a_rows: Any = None  # ← _UrmRound (reused by _MultilinearRound)
     b_rows: Any = None  # ← _UrmRound
@@ -162,8 +163,8 @@ class _UrmRound:
     a·b + φ8-accumulate on the GPU, then the c-claim interpolation at z. Message
     = (round1_ab, round1_c)."""
 
-    def __init__(self, m: int, k_skip: int):
-        self._m, self._k_skip = m, k_skip
+    def __init__(self, m: int, k_skip: int, k_log: int | None = None):
+        self._m, self._k_skip, self._k_log = m, k_skip, k_log
 
     def __call__(self, carry, transcript):
         m, k_skip = self._m, self._k_skip
@@ -171,9 +172,22 @@ class _UrmRound:
         # composite unpacks packed lanes in-fusion (`_urm._round1_input_rows`),
         # so nothing here materializes the 8x larger bit rows. The multilinear
         # fold below likewise keeps the compact form when it has one.
-        round1_ab, round1_c = _urm.round1_rows(
-            carry.a_bits, carry.b_bits, carry.c_bits, m, k_skip, carry.r
-        )
+        if carry.c_stripe is not None:
+            # Identity-C shortcut (#192): derive round-1 C from the lincheck
+            # stripe (a partial fold of the same z), so the C witness never
+            # enters round-1 — no row-major drain, no c track. AB comes from
+            # round1_ab_rows, which bypasses the URM marker so the device C
+            # track is never computed either.
+            round1_ab = _urm.round1_ab_rows(
+                carry.a_bits, carry.b_bits, k_skip, carry.r
+            )
+            round1_c = _urm.round1_c_from_stripe(
+                carry.c_stripe, m, self._k_log, k_skip, carry.r
+            )
+        else:
+            round1_ab, round1_c = _urm.round1_rows(
+                carry.a_bits, carry.b_bits, carry.c_bits, m, k_skip, carry.r
+            )
         transcript.observe_f128(round1_ab)  # native ghash, no host round trip
         transcript.observe_f128(round1_c)
         z = transcript.sample_f128()
@@ -238,12 +252,12 @@ class _MultilinearRound:
         return carry, transcript, (rounds, final_a_eval, final_b_eval)
 
 
-def zerocheck_steps(m: int, k_skip: int) -> list:
+def zerocheck_steps(m: int, k_skip: int, k_log: int | None = None) -> list:
     """The zerocheck sub-sequence: round-1 URM → multilinear sumcheck. One
     definition for the wiring (cf. prover.prove_fast). Drive with
     ``zorch.round.prove_rounds``, after ``sample_challenge_coords`` has drawn the
     challenge vector."""
-    return [_UrmRound(m, k_skip), _MultilinearRound(m, k_skip)]
+    return [_UrmRound(m, k_skip, k_log), _MultilinearRound(m, k_skip)]
 
 
 def prove_packed(
@@ -253,6 +267,8 @@ def prove_packed(
     m: int,
     domain: bytes | None = None,
     ch: Challenger | None = None,
+    c_stripe: Any = None,
+    k_log: int | None = None,
 ) -> tuple[ZerocheckProof, ZerocheckClaim]:
     """Returns the wire `ZerocheckProof` and the `ZerocheckClaim` it discharges
     into — the evaluation point and the â/b̂/ĉ evals bound at it.
@@ -260,9 +276,17 @@ def prove_packed(
     A `zerocheck_steps` sequence (URM → multilinear) threading one
     `Challenger`; pass a shared `ch` (the e2e challenger carrying commit/bind state)
     to thread Fiat-Shamir through the fused prover, else a fresh Challenger(domain)
-    is made."""
+    is made.
+
+    When `c_stripe` (the lincheck stripe bytes/device array) and `k_log` are
+    given, round-1 C is derived from the stripe instead of drained from
+    `c_bits` — byte-identical, since C is the identity (see
+    `_urm.round1_c_from_stripe`). This is the fused-prover path; stripe-less
+    callers keep the row-major drain."""
     k_skip = K_SKIP
     assert m >= k_skip + N_INNER, f"m must be >= {k_skip + N_INNER}"
+    if c_stripe is not None:
+        assert k_log is not None, "c_stripe requires k_log to fold the stripe"
     if ch is None:
         assert domain is not None, "pass either a domain or a Challenger"
         ch = Challenger(domain)
@@ -270,7 +294,9 @@ def prove_packed(
     # r = r_skip ++ small ++ medium ++ r_outer, assembled on the dtype.
     r = fnp.concatenate([r_skip, _SMALL_G, _MEDIUM_G, r_outer])
     carry, _ch, _msgs = prove_rounds(
-        zerocheck_steps(m, k_skip), _ZerocheckCarry(a_bits, b_bits, c_bits, r=r), ch
+        zerocheck_steps(m, k_skip, k_log),
+        _ZerocheckCarry(a_bits, b_bits, c_bits, c_stripe=c_stripe, r=r),
+        ch,
     )
     proof = ZerocheckProof(
         round1_ab=carry.round1_ab,
@@ -301,17 +327,24 @@ class ZerocheckProver(
     identity R1CS gate meaningful.
     """
 
-    def __init__(self, m):
+    def __init__(self, m, k_log=None):
         self._m = m
+        self._k_log = k_log
 
     def prove(
         self, claim: R1csClaim, witness: R1csWitness, transcript
     ) -> ProveResult[ZerocheckClaim, ZerocheckProof]:
+        # C is the identity (a = b = c = z), so round-1 C comes from the lincheck
+        # stripe rather than a row-major drain (#192). Falls back to the drain
+        # when no k_log is wired (e.g. a bare ZerocheckProver(m)).
+        stripe = witness.z_lincheck if self._k_log is not None else None
         proof, reduced = prove_packed(
             witness.z_packed,
             witness.z_packed,
             witness.z_packed,
             self._m,
             ch=transcript,
+            c_stripe=stripe,
+            k_log=self._k_log,
         )
         return ProveResult(reduced, proof, transcript)

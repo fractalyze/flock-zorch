@@ -180,6 +180,34 @@ py_test(
     ],
 )
 
+# No golden: the fold identity behind the #192 shortcut — the round-1 folded-C
+# vector equals the lincheck stripe folded at r[k_log:] then at r[k_skip:k_log].
+# First-principles falsification with the real primitives (no wiring); the
+# producer-parity is `stripe_c_test`. Software-mul, so it runs on CPU.
+py_test(
+    name = "round1_c_from_stripe_test",
+    size = "medium",
+    srcs = ["flock_zorch/zerocheck/testing/round1_c_from_stripe_test.py"],
+    deps = [
+        ":flock_zorch",
+        requirement("absl-py"),
+    ],
+)
+
+# No golden: the identity-C shortcut (#192) — round-1 C derived from the lincheck
+# stripe reproduces the row-major drain bit-for-bit (P^AB, P^C, and a full
+# prove_packed proof), honest and padded. The e2e byte gate pins it against flock;
+# this pins the two producers against each other. Software-mul, so it runs on CPU.
+py_test(
+    name = "stripe_c_test",
+    size = "medium",
+    srcs = ["flock_zorch/zerocheck/testing/stripe_c_test.py"],
+    deps = [
+        ":flock_zorch",
+        requirement("absl-py"),
+    ],
+)
+
 # No golden: prove zerocheck+lincheck → verify both, claim reconstruction + tamper
 # rejection for the lincheck verifier. Software-mul, so it runs on CPU.
 py_test(

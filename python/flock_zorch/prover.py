@@ -173,7 +173,9 @@ class FlockProver(ProverStage[R1csClaim, R1csWitness, TrivialClaim, ProveFastRes
 
     def __init__(self, cfg, m, k_log, k_skip, circuit=None):
         self.pcs = FlockLigeritoPcs(cfg)
-        self.zerocheck = ZerocheckProver(m)
+        # k_log lets zerocheck derive round-1 C from the lincheck stripe (#192)
+        # instead of draining the row-major witness.
+        self.zerocheck = ZerocheckProver(m, k_log)
         self.lincheck = LincheckProver(m, k_log, k_skip, circuit)
 
     def prove(
