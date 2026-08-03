@@ -34,7 +34,7 @@ class R1csWitness:
     dense A/B blocks for the lincheck."""
 
     z_packed: Array  # witness ẑ, device-resident across the reductions
-    z_lincheck: bytes
+    z_lincheck: bytes | Array  # host bytes, or device-resident after prove_fast ingest
     a0: Array  # lincheck A matrix (dense)
     b0: Array  # lincheck B matrix (dense)
 
