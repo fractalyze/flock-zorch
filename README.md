@@ -237,29 +237,16 @@ from m=24 and reaches 16.58× at m=31.
 
 ### BLAKE3 (Ligerito)
 
-Re-baselined 2026-08-03 on the same 9950X/RTX 5090. CPU is current flock main
-`8790722` with `target-cpu=native` (AVX-512/VPCLMULQDQ), timing only
-`prove_fast_ligerito_from_witness` after witness construction. GPU is the
-published `frx` / `frxlib` / CUDA 12 plugin and PJRT wheel set
-`0.10.1.dev20260803035606`, zorch `ea18d245`, also excluding witness
-construction. CUDA 12.9 user-space libraries came from the plugin's
-`with-cuda` extra; CUDA 13.3 `ptxas` 13.3.73 was selected through `CUDA_ROOT`.
-The compiler emitted PTX 9.3 with `clmad` for the RTX 5090 (sm_120, driver
-610.43.02).
+Measured 2026-08-03 on a Ryzen 9 9950X / RTX 5090, excluding witness
+construction. CPU is flock `8790722` with `target-cpu=native`; GPU uses zorch
+`cad4fea` and FRX `0.10.1.dev20260803035606`. CUDA 13.3 `ptxas` emitted PTX 9.3
+with `clmad` for sm_120 (driver 610.43.02).
 
-| m   | n_comp | flock CPU (ms) | GPU (ms) | speedup    |
-| --- | ------ | -------------- | -------- | ---------- |
-| 26  | 4096   | 26.13          | 14.8     | **1.77×**  |
-| 28  | 16384  | 113.60         | 21.5     | **5.29×**  |
-| 31† | 131072 | 754.27         | 72.5     | **10.40×** |
-
-BLAKE3 uses the generic sparse CSC lincheck rather than Keccak3's procedural
-walker. Serial Ligerito SHA-256 query chains run on CPU callbacks; the large
-array work remains on GPU. At m=31 commit, zerocheck, lincheck, and open take
-14.03, 24.39, 4.51, and 28.33 ms respectively. Zerocheck's custom URM region
-consumes the packed witness without materializing the three LDE matrices. The
-phase-accounted points reach 277,143, 763,256, and 1,806,867 hashes/s at m=26,
-m=28, and m=31 respectively.
+| m   | n_comp | flock CPU (ms) | GPU (ms) | BLAKE/s   | speedup    |
+| --- | ------ | -------------- | -------- | --------- | ---------- |
+| 26  | 4096   | 26.13          | 13.90    | 294,779   | **1.88×**  |
+| 28  | 16384  | 113.60         | 19.08    | 858,540   | **5.95×**  |
+| 31† | 131072 | 754.27         | 64.91    | 2,019,327 | **11.62×** |
 
 Reproduce all three GPU points with the shared goldens (m=31 needs the async
 allocator to avoid BFC fragmentation):
@@ -268,23 +255,18 @@ allocator to avoid BFC fragmentation):
 export FLOCK_ZORCH_ARTIFACTS=/home/baz/Workspace/flock-zorch/artifacts
 export FRX_PLATFORMS=cuda,cpu FRX_ENABLE_X64=1
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
-unset JAX_PLATFORMS JAX_ENABLE_X64
 export CUDA_ROOT=/usr/local/cuda PATH="$CUDA_ROOT/bin:$PATH"
 export PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"
 VENV=.venv/bin/python
 # Needed when the host does not already provide CUDA 12 user-space libraries:
 .venv/bin/pip install 'frx-cuda12-plugin[with-cuda]==0.10.1.dev20260803035606' --extra-index-url https://fractalyze.github.io/pypi/simple/
-$VENV python/flock_zorch/testing/prove_phase_bench.py blake3 --golden blake3_m26_ligerito_golden.bin --cpu-ms 26.13
-$VENV python/flock_zorch/testing/prove_phase_bench.py blake3 --golden blake3_m28_ligerito_golden.bin --cpu-ms 113.60
-XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async $VENV python/flock_zorch/testing/prove_phase_bench.py blake3 --golden blake3_m31_ligerito_golden.bin --cpu-ms 754.27
+$VENV python/flock_zorch/testing/prove_phase_bench.py blake3 --throughput --golden blake3_m26_ligerito_golden.bin --cpu-ms 26.13
+$VENV python/flock_zorch/testing/prove_phase_bench.py blake3 --throughput --golden blake3_m28_ligerito_golden.bin --cpu-ms 113.60
+XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async $VENV python/flock_zorch/testing/prove_phase_bench.py blake3 --throughput --golden blake3_m31_ligerito_golden.bin --cpu-ms 754.27
 ```
 
-**Reading the numbers.** flock's prover is a sequential SHA-256 Fiat-Shamir
-chain, but those short serial chains are faster on CPU even after callback
-overhead. GPU wins all three measured BLAKE3 sizes because the NTT / URM /
-recursive-fold work is large enough to amortize dispatch; current AVX-512 flock
-keeps the m=26 margin to 1.20×. The m=31 throughput dip is a zerocheck scaling
-problem, not a hash-chain crossover.
+Omit `--throughput` for the synchronized commit / zerocheck / lincheck / open
+diagnostic breakdown; its phase barriers intentionally report a slower time.
 
 ## Acknowledgments
 
