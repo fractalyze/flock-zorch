@@ -237,34 +237,29 @@ from m=24 and reaches 16.58× at m=31.
 
 ### BLAKE3 (Ligerito)
 
-Re-baselined 2026-08-02 on the same 9950X/RTX 5090. CPU is current flock main
+Re-baselined 2026-08-03 on the same 9950X/RTX 5090. CPU is current flock main
 `8790722` with `target-cpu=native` (AVX-512/VPCLMULQDQ), timing only
 `prove_fast_ligerito_from_witness` after witness construction. GPU is the
-latest published `frx` / `frxlib` wheel set,
-`0.10.1.dev20260801051831`, with a locally built PJRT from
-[XLA #397](https://github.com/fractalyze/xla/pull/397), also excluding witness
-construction. CUDA 13.3 `ptxas` 13.3.73 was selected through `CUDA_ROOT`; the
-compiler emitted PTX 9.3 with `clmad` for the RTX 5090 (sm_120, driver
+published `frx` / `frxlib` / CUDA 12 plugin and PJRT wheel set
+`0.10.1.dev20260803035606`, zorch `ea18d245`, also excluding witness
+construction. CUDA 12.9 user-space libraries came from the plugin's
+`with-cuda` extra; CUDA 13.3 `ptxas` 13.3.73 was selected through `CUDA_ROOT`.
+The compiler emitted PTX 9.3 with `clmad` for the RTX 5090 (sm_120, driver
 610.43.02).
 
 | m   | n_comp | flock CPU (ms) | GPU (ms) | speedup    |
 | --- | ------ | -------------- | -------- | ---------- |
-| 26  | 4096   | 26.13          | 21.0     | **1.25×**  |
-| 28  | 16384  | 113.60         | 38.3     | **2.96×**  |
-| 31† | 131072 | 754.27         | 244.3    | **3.09×**  |
+| 26  | 4096   | 26.13          | 14.8     | **1.77×**  |
+| 28  | 16384  | 113.60         | 21.5     | **5.29×**  |
+| 31† | 131072 | 754.27         | 72.5     | **10.40×** |
 
 BLAKE3 uses the generic sparse CSC lincheck rather than Keccak3's procedural
 walker. Serial Ligerito SHA-256 query chains run on CPU callbacks; the large
-array work remains on GPU. At m=31 zerocheck is 124.6 ms (51% of the proof),
-including the custom URM region that consumes the packed witness without
-materializing the three LDE matrices. The phase-accounted points reach 195,410,
-427,282, and 536,417 hashes/s at m=26, m=28, and m=31 respectively.
-
-A separate full-device-JIT probe at m=28 takes 23.425 ms (699,436 hashes/s).
-It returns the device proof object directly, skips host proof serialization,
-and removes the benchmark's per-phase synchronization, so it is useful as an
-optimization bound but is not an apples-to-apples table row. The best observed
-version of that same probe was 22.204 ms (737,876 hashes/s).
+array work remains on GPU. At m=31 commit, zerocheck, lincheck, and open take
+14.03, 24.39, 4.51, and 28.33 ms respectively. Zerocheck's custom URM region
+consumes the packed witness without materializing the three LDE matrices. The
+phase-accounted points reach 277,143, 763,256, and 1,806,867 hashes/s at m=26,
+m=28, and m=31 respectively.
 
 Reproduce all three GPU points with the shared goldens (m=31 needs the async
 allocator to avoid BFC fragmentation):
@@ -277,6 +272,8 @@ unset JAX_PLATFORMS JAX_ENABLE_X64
 export CUDA_ROOT=/usr/local/cuda PATH="$CUDA_ROOT/bin:$PATH"
 export PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"
 VENV=.venv/bin/python
+# Needed when the host does not already provide CUDA 12 user-space libraries:
+.venv/bin/pip install 'frx-cuda12-plugin[with-cuda]==0.10.1.dev20260803035606' --extra-index-url https://fractalyze.github.io/pypi/simple/
 $VENV python/flock_zorch/testing/prove_phase_bench.py blake3 --golden blake3_m26_ligerito_golden.bin --cpu-ms 26.13
 $VENV python/flock_zorch/testing/prove_phase_bench.py blake3 --golden blake3_m28_ligerito_golden.bin --cpu-ms 113.60
 XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async $VENV python/flock_zorch/testing/prove_phase_bench.py blake3 --golden blake3_m31_ligerito_golden.bin --cpu-ms 754.27
