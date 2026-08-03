@@ -288,7 +288,9 @@ def make_prove(circ: Circuit, g, unpacked: bool):
         # `mlv_challenges`, `r_rest`) lives on `ZerocheckClaim`.
         zc_proof, zc = phase(
             "zerocheck",
-            lambda: zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch),
+            lambda: zerocheck.prove_packed(
+                a_bits, b_bits, c_bits, m, ch=ch, c_stripe=zlc, k_log=k_log
+            ),
         )
         x_ab, lc = phase("lincheck", lambda: _lincheck(zc))
         opening = phase("open", lambda: _open(zc, x_ab, lc))
