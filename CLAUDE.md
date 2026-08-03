@@ -44,3 +44,12 @@ lanes are the SAME 16 LE bytes, so `to_ghash`/`from_ghash` are pure bitcasts and
   never `mask_uint64 * x_g` (that clmuls the mask as a field element, not a select).
 - **FS framing: scalar draw ≠ slice(1)** on the wire. `sample_f128()` (bare) is a
   scalar; a vector draw is `sample_f128(n)` (slice) even when n==1.
+
+## Eager ops are not free — shape normalization belongs inside the jit
+
+`reshape` on a device array is metadata-only **inside a trace**. Called eagerly it
+dispatches its own program and allocates a fresh buffer — `unsafe_buffer_pointer()`
+differs, i.e. the whole array is copied (512 MiB per prove at m=32 for a witness
+reshape that reads as a no-op). So a host helper picks which form to pass and hands
+it over untouched; the traced core reinterprets it. Applies to any large-array
+"free" op reached from host code, not just `reshape`.
