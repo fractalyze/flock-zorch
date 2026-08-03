@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import frx
 import frx.numpy as fnp
-import numpy as np
 from frx import Array
 from zorch.stage import ProveResult, ProverStage, TrivialClaim
 
@@ -46,19 +45,13 @@ def _unpack_bits(z_packed):
     return fnp.concatenate([lo, hi], axis=1).reshape(-1)
 
 
-def _as_bytes(x) -> bytes:
-    if isinstance(x, (bytes, bytearray)):
-        return bytes(x)
-    return np.asarray(x, np.uint8).tobytes()
-
-
 def bind_statement(ch, statement_digest, root) -> None:
     """Bind the Fiat-Shamir transcript to the statement (flock `proof::bind_statement`):
     observe `flock-r1cs-v0` + the R1CS instance digest + the commitment root. Call
     once after commit, before any sub-protocol challenge."""
     ch.observe_label(b"flock-r1cs-v0")
-    ch.observe_bytes(_as_bytes(statement_digest))
-    ch.observe_bytes(_as_bytes(root))
+    ch.observe_bytes(statement_digest)
+    ch.observe_bytes(root)
 
 
 def _combine_claims(

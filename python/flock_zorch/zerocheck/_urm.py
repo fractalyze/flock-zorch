@@ -26,6 +26,8 @@ import frx.numpy as fnp
 import numpy as np
 import zk_dtypes
 from frx import lax
+from zorch.fusion import fused_region
+from zorch.poly.eq import expand_eq_to_hypercube
 
 from flock_zorch import ghash, sumcheck
 
@@ -67,7 +69,10 @@ _PHI_DEV = fnp.asarray(PHI_8_TABLE)
 _PHI_DEV_G = ghash.to_ghash(
     _PHI_DEV
 )  # [256] ghash — indexed in-kernel, no lane bitcast
+_PHI_BASIS_DEV_G = ghash.to_ghash(fnp.asarray(_PHI8_BASIS))
 _AES = np.dtype(zk_dtypes.binary_field_gf8_aes)
+URM_MARKER = "zorch.zerocheck_urm"
+_ROUND1_PARTIALS = 8192
 
 
 # ---------------------------------------------------------------------------
@@ -87,31 +92,101 @@ def _to_u8(x):
     return lax.bitcast_convert_type(x, fnp.uint8)
 
 
+def _round1_input_rows(x, n_rows: int):
+    """Normalize an unpacked row matrix or a physically represented packed
+    F128 witness to one bit per byte for the portable decomposition.
+
+    ``lax.composite`` exposes a logical ``uint64[..., 2]`` operand to its
+    decomposition as little-endian ``uint8[..., 2, 8]`` storage.  The custom
+    GPU emitter consumes those bytes directly; spelling the unpack here keeps
+    the marker's fallback semantics shape-correct without materializing this
+    expansion on the custom path.
+    """
+    if x.ndim == 1 and np.dtype(x.dtype) == np.uint8:
+        if x.shape[0] == n_rows * 64:
+            return x.reshape(n_rows, 64)
+        assert x.shape[0] == n_rows * 8
+        bit = fnp.arange(8, dtype=fnp.uint8)
+        return ((x[:, None] >> bit) & fnp.uint8(1)).reshape(-1, 64)
+    if x.ndim == 3 and x.shape[-2:] == (2, 8):
+        bit = fnp.arange(8, dtype=fnp.uint8)
+        return ((x[..., None] >> bit) & fnp.uint8(1)).reshape(-1, 64)
+    if x.ndim == 2 and x.shape[-1] == 2 and np.dtype(x.dtype) == np.uint64:
+        bit = fnp.arange(64, dtype=fnp.uint64)
+        lo = ((x[:, 0:1] >> bit) & fnp.uint64(1)).astype(fnp.uint8)
+        hi = ((x[:, 1:2] >> bit) & fnp.uint64(1)).astype(fnp.uint8)
+        return fnp.concatenate([lo, hi], axis=1).reshape(-1, 64)
+    return x
+
+
 # Rows per block once round-1 blocks (see `_round1_core`). 2**22 is the row
 # count m=28 runs at unblocked, so a block reproduces a working set the stack is
 # already measured on: 256 MiB per track, ~1.8 GiB for the whole core.
 _ROUND1_BLOCK_ROWS = 1 << 22
 
 
-def _round1_partial(a, b, c, eqx, k_skip):
-    """One block's contribution to (P^AB, folded-C): extend a/b S→Λ, a·b,
-    φ8-embed and eq-accumulate over this block's rows. Fused, so the large
-    [rows, ell] φ8 intermediate is consumed in-fusion and never written to HBM
-    (halves round1's bandwidth vs a separate extend + accumulate).
+def _round1_partial_decomp(a, b, c, eq_or_point, phi_basis, *, k_skip: int):
+    """Portable decomposition of the fused bit-sliced URM map-reduce.
 
-    The C track is only FOLDED here — `Σ_x eq_x · c_x[s]`, a select-XOR since
-    the rows are bits — and its S→Λ extension happens once on the accumulated
-    result in `_round1_core` (`_extend_folded_c`). For C the two orders are
-    equal: the extend is linear and φ8 is a homomorphism, so
-    `Σ_x eq_x·φ8(LDE(c_x)) = LDE_F128(Σ_x eq_x·c_x)`. AB cannot reorder —
-    `a·b` is a product, formed pointwise on the extended domain — which is why
-    only C drops its per-row extend, φ8 gather and clmul accumulate."""
+    The custom GPU emitter keeps the transformed AES bit planes on chip and
+    emits only GHASH partials.  This decomposition spells the same operation in
+    ordinary array primitives for CPU and marker fallback.
+    """
+
+    def matches_rows(rows: int) -> bool:
+        if a.ndim == 3 and a.shape[-2:] == (2, 8):
+            return a.shape[0] * 2 == rows
+        if a.ndim == 2 and a.shape[-1] == 2 and np.dtype(a.dtype) == np.uint64:
+            return a.shape[0] * 2 == rows
+        if a.ndim == 1 and np.dtype(a.dtype) == np.uint8:
+            return a.shape[0] in (rows * 8, rows * 64)
+        return a.shape[0] == rows
+
+    point_rows = 1 << eq_or_point.shape[0]
+    point_weights = eq_or_point.shape[0] < 63 and matches_rows(point_rows)
+    eqx = (
+        expand_eq_to_hypercube(eq_or_point, fnp.ones((), eq_or_point.dtype), msb=True)
+        if point_weights
+        else eq_or_point.reshape(-1)
+    )
+    n_rows = eqx.shape[0]
+    a = _round1_input_rows(a, n_rows)
+    b = _round1_input_rows(b, n_rows)
+    c = _round1_input_rows(c, n_rows)
     a_l = _extend_rows(a, k_skip)
     b_l = _extend_rows(b, k_skip)
-    ab = _to_u8(a_l * b_l).astype(fnp.int32)
-    phi_ab = _PHI_DEV_G[ab]
-    c_sel = fnp.where(c.astype(bool), eqx, fnp.zeros((), fnp.binary_field_ghash))
-    return fnp.sum(eqx * phi_ab, axis=0), fnp.sum(c_sel, axis=0)
+    byte_values = _to_u8(a_l * b_l)
+    n_partials = min(_ROUND1_PARTIALS, n_rows)
+    rows_per_partial = n_rows // n_partials
+    bit = fnp.arange(8, dtype=fnp.uint8)
+    selected = ((byte_values[..., None] >> bit) & fnp.uint8(1)).astype(fnp.bool_)
+    selected = selected.reshape(n_partials, rows_per_partial, 64, 8)
+    weights = eqx.reshape(n_partials, rows_per_partial, 1, 1)
+    zero = ghash.to_ghash(fnp.zeros((2,), dtype=fnp.uint64))
+    bit_sums = fnp.sum(fnp.where(selected, weights, zero), axis=1)
+    partial_ab = fnp.sum(bit_sums * phi_basis[None, None, :], axis=2)
+
+    c_selected = c.astype(fnp.bool_).reshape(n_partials, rows_per_partial, 64)
+    c_weights = eqx.reshape(n_partials, rows_per_partial, 1)
+    partial_c = fnp.sum(fnp.where(c_selected, c_weights, zero), axis=1)
+    return fnp.stack([partial_ab, partial_c], axis=1)
+
+
+def _round1_partial(a, b, c, eq_or_point, k_skip):
+    """One row block's canonical zerocheck URM composite."""
+    partials = fused_region(
+        _round1_partial_decomp,
+        a,
+        b,
+        c,
+        eq_or_point.reshape(-1),
+        _PHI_BASIS_DEV_G,
+        name=URM_MARKER,
+        version=1,
+        k_skip=k_skip,
+    )
+    out = fnp.sum(partials, axis=0)
+    return out[0], out[1]
 
 
 def _extend_folded_c(v, k_skip: int):
@@ -155,15 +230,23 @@ def _round1_core(a, b, c, k_skip, r):
     of the reduced vector. Equal by linearity — valid for ANY c rows, not an
     identity-C special case.
     """
-    eqx = sumcheck.build_eq(r[k_skip:])[:, None]  # r is ghash [m]; [n_chunks, 1]
-    n_rows, ell = a.shape
+    outer_point = r[k_skip:]
+    n_rows, ell = 1 << outer_point.shape[0], 1 << k_skip
     n_blocks = n_rows // _ROUND1_BLOCK_ROWS
     if n_blocks <= 1:
-        p_ab, folded_c = _round1_partial(a, b, c, eqx, k_skip)
+        p_ab, folded_c = _round1_partial(a, b, c, outer_point, k_skip)
         return p_ab, _extend_folded_c(folded_c, k_skip)
 
+    eqx = sumcheck.build_eq(outer_point)[:, None]
+
     rows = _ROUND1_BLOCK_ROWS
-    blocked = lambda x, w: x.reshape(n_blocks, rows, w)  # noqa: E731
+    packed = a.ndim == 2 and a.shape[-1] == 2 and np.dtype(a.dtype) == np.uint64
+
+    def blocked_witness(x):
+        if packed:
+            # One packed F128 element holds two consecutive 64-bit rows.
+            return x.reshape(n_blocks, rows // 2, 2)
+        return x.reshape(n_blocks, rows, ell)
 
     def step(acc, xs):
         part = _round1_partial(*xs[:3], xs[3], k_skip)
@@ -173,7 +256,12 @@ def _round1_core(a, b, c, k_skip, r):
     (acc_ab, acc_c), _ = lax.scan(
         step,
         (zero, zero),
-        (blocked(a, ell), blocked(b, ell), blocked(c, ell), blocked(eqx, 1)),
+        (
+            blocked_witness(a),
+            blocked_witness(b),
+            blocked_witness(c),
+            eqx.reshape(n_blocks, rows, 1),
+        ),
     )
     return acc_ab, _extend_folded_c(acc_c, k_skip)
 

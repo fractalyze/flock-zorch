@@ -12,7 +12,7 @@ one byte-match `bazel test` can run on CPU CI.
 Run under bazel (bazel test //python:ligerito_oracle_test) or on the venv
 (regen golden: cargo run --release --example dump_ligerito -- 15
 artifacts/ligerito_golden.bin):
-  FRX_PLATFORMS=cuda PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
+  FRX_PLATFORMS=cuda,cpu PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
       python/flock_zorch/pcs/testing/ligerito_oracle_test.py
 """
 

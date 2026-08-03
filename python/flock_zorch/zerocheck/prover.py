@@ -114,6 +114,27 @@ def _mlv_round(a_g, b_g, eq_g, r0_g, t):
 
 
 @frx.jit
+def _mlv_sumcheck(a_g, b_g, eq_tables, r0_g, t):
+    """Run the complete multilinear tail as one device program.
+
+    The round shapes shrink statically, so tracing the tuple of suffix tables
+    unrolls the protocol without a host-controlled loop.  This used to be a bad
+    trade while each SHA-256 transcript hop lowered as a streaming loop; the
+    dedicated SHA kernels and current XLA fusion make it worth re-evaluating.
+    """
+    rounds, rhos = [], []
+    for eq_g in eq_tables:
+        a_g, b_g, t, m1, minf, rho = _mlv_round(
+            a_g, b_g, eq_g, r0_g, t
+        )
+        rounds.append((m1, minf))
+        rhos.append(rho)
+    final_a, final_b = a_g[0], b_g[0]
+    t = t.observe_scalar(final_a).observe_scalar(final_b)
+    return t, tuple(rounds), fnp.stack(rhos), final_a, final_b
+
+
+@frx.jit
 def _observe_finals(t, final_a, final_b):
     return t.observe_scalar(final_a).observe_scalar(final_b)
 
@@ -151,11 +172,8 @@ class _UrmRound:
         # Round 1 needs unpacked bit rows.  The multilinear fold retains the
         # compact a/b inputs when they are packed, instead of keeping the 8x
         # larger rows alive across the round boundary.
-        a_rows = _urm.witness_to_rows(carry.a_bits, m, k_skip)
-        b_rows = _urm.witness_to_rows(carry.b_bits, m, k_skip)
-        c_rows = _urm.witness_to_rows(carry.c_bits, m, k_skip)
         round1_ab, round1_c = _urm.round1_rows(
-            a_rows, b_rows, c_rows, m, k_skip, carry.r
+            carry.a_bits, carry.b_bits, carry.c_bits, m, k_skip, carry.r
         )
         transcript.observe_f128(round1_ab)  # native ghash, no host round trip
         transcript.observe_f128(round1_c)
@@ -165,8 +183,16 @@ class _UrmRound:
         is_packed = lambda x: (
             getattr(x, "ndim", 0) == 2 and x.shape[-1] == 2 and x.dtype == np.uint64
         )
-        a_fold = carry.a_bits if is_packed(carry.a_bits) else a_rows
-        b_fold = carry.b_bits if is_packed(carry.b_bits) else b_rows
+        a_fold = (
+            carry.a_bits
+            if is_packed(carry.a_bits)
+            else _urm.witness_to_rows(carry.a_bits, m, k_skip)
+        )
+        b_fold = (
+            carry.b_bits
+            if is_packed(carry.b_bits)
+            else _urm.witness_to_rows(carry.b_bits, m, k_skip)
+        )
         carry = replace(
             carry,
             a_rows=a_fold,
@@ -189,9 +215,7 @@ class _MultilinearRound:
 
     def __call__(self, carry, transcript):
         m, k_skip = self._m, self._k_skip
-        n_mlv = m - k_skip
-
-        # Fold the witness at z, then run each multilinear round as one jitted
+        # Fold the witness at z, then run the multilinear tail as one jitted
         # device program with Fiat-Shamir inside — all on the dtype, so the lanes
         # only reappear where a proof message is serialized.
         weights = _lagrange_weights(k_skip, carry.z, 0)  # S-domain, ghash [ell]
@@ -199,28 +223,21 @@ class _MultilinearRound:
         b_g = _fold_at_z(carry.b_rows, weights)
         r_g = carry.r
 
-        t = transcript._t
         # All rounds' eq suffix tables in one program (round i reads
         # eq(r[k_skip+1+i:])); r[0] of every round's message is fixed to one.
         eq_tables = _EQ_TABLES(r_g[k_skip + 1 :])
-        rounds, rhos = [], []
-        for i in range(n_mlv):
-            a_g, b_g, t, m1, minf, rho = _mlv_round(
-                a_g, b_g, eq_tables[i], sumcheck.eq._ONE_G, t
-            )
-            rounds.append((m1, minf))
-            rhos.append(rho)
-        final_a, final_b = a_g[0], b_g[0]
-        transcript._t = _observe_finals(t, final_a, final_b)
+        transcript._t, rounds, rhos, final_a, final_b = _mlv_sumcheck(
+            a_g, b_g, eq_tables, sumcheck.eq._ONE_G, transcript._t
+        )
 
         final_a_eval = final_a
         final_b_eval = final_b
         carry = replace(
             carry,
-            multilinear_rounds=rounds,
+            multilinear_rounds=list(rounds),
             final_a_eval=final_a_eval,
             final_b_eval=final_b_eval,
-            mlv_challenges=fnp.stack(rhos),
+            mlv_challenges=rhos,
         )  # native ghash open-point coords
         return carry, transcript, (rounds, final_a_eval, final_b_eval)
 

@@ -19,11 +19,25 @@ Requires `zorch` on PYTHONPATH (run gates with `PYTHONPATH=python:../zorch`).
 
 from __future__ import annotations
 
+import functools
+
 import frx.numpy as fnp
 import numpy as np
 from zorch.sha256_field_transcript import Sha256FieldTranscript
 
 from flock_zorch import fs
+
+
+@functools.lru_cache(maxsize=None)
+def _initial_transcript(domain: bytes):
+    """Memoize the immutable device state for a transcript domain.
+
+    Constructing the SHA-256 field transcript absorbs the same domain through
+    several eager device primitives.  Array values are immutable and every
+    ``Challenger`` replaces (rather than mutates) ``_t`` as it advances, so the
+    seeded state is safe to share between proofs.
+    """
+    return Sha256FieldTranscript.new(domain, fnp.binary_field_ghash)
 
 
 class Challenger:
@@ -32,13 +46,20 @@ class Challenger:
     `binary_field_ghash` elements; host-int consumers convert at their own edge."""
 
     def __init__(self, domain: bytes):
-        self._t = Sha256FieldTranscript.new(domain, fnp.binary_field_ghash)
+        self._t = _initial_transcript(bytes(domain))
 
     def observe_label(self, label: bytes) -> None:
         self._t = fs.observe_label(self._t, label)
 
     def observe_bytes(self, data) -> None:
-        self._t = fs.observe_bytes(self._t, np.frombuffer(bytes(data), np.uint8))
+        if isinstance(data, (bytes, bytearray, memoryview)):
+            data = np.frombuffer(data, np.uint8)
+        else:
+            # Commitment roots are already device uint8 arrays.  Converting
+            # through bytes() synchronizes the stream and immediately uploads
+            # the same 32 bytes again; keep that transcript hop on-device.
+            data = fnp.asarray(data, fnp.uint8).reshape(-1)
+        self._t = fs.observe_bytes(self._t, data)
 
     def observe_f128(self, g) -> None:
         """Observe F128 (native `binary_field_ghash`) — a scalar or a slice,

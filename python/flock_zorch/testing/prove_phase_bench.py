@@ -5,7 +5,8 @@ The e2e_*_ligerito_bench scripts each report one wall-clock number for one
 circuit. That is not enough to steer throughput work: it cannot say which of
 commit / zerocheck / lincheck / open owns the time, and it never converts to the
 metric a throughput goal is stated in. This does both, for every Ligerito hash
-circuit, off the goldens the byte gates already use.
+circuit, off the goldens the byte gates already use. Pass `--throughput` for
+the unsplit whole-prove number; omit it for the synchronized phase diagnostic.
 
 It **reports hashes/second**: each circuit packs `n_sub * 2^(m - k_log)` hashes
 into a proof, so cost per hash — the quantity a throughput target is about —
@@ -24,19 +25,19 @@ a back-to-back batch held 41-47C at pegged clocks with no throttle reason, and
 wall time did not track temperature. So take several runs, report the spread,
 and treat a single number at m <= 26 as having a wide error bar.
 
-**Every phase is awaited before the next starts**, so the split accounts for the
-whole prove and each phase is billed the work it actually causes. The cost is
-that awaiting serialises work an un-instrumented prove may overlap, which makes
-the reported total an *upper* bound on a real prove — the conservative direction
-for a "how far are we from the target" question. (The commit->zerocheck boundary
-already syncs regardless: commit ends by pulling the root to host.) `Sum` versus
-`wall` is printed as a self-check on the instrumentation, not as a claim about
-overlap: a gap there means work escaped every phase.
+In diagnostic mode, **every phase is awaited before the next starts**, so the
+split accounts for the whole prove and each phase is billed the work it actually
+causes. Those barriers serialise work the `--throughput` path may overlap, so
+the split is an upper bound rather than a headline throughput measurement.
+`Sum` versus `wall` is printed as a self-check on the instrumentation: a gap
+there means work escaped every phase.
 
 Run:
-    export CUDA_ROOT="$HOME/.local/cuda13-merged"
-    export FRX_PLATFORMS=cuda XLA_PYTHON_CLIENT_PREALLOCATE=false
-    export PATH="$HOME/.local/cuda13/bin:$PATH"
+    export CUDA_ROOT=/usr/local/cuda
+    export FRX_PLATFORMS=cuda,cpu FRX_ENABLE_X64=1
+    export XLA_PYTHON_CLIENT_PREALLOCATE=false
+    unset JAX_PLATFORMS JAX_ENABLE_X64
+    export PATH="$CUDA_ROOT/bin:$PATH"
     PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \\
         python/flock_zorch/testing/prove_phase_bench.py [circuit ...] [options]
 """
@@ -61,7 +62,8 @@ from flock_zorch import lincheck, prover, zerocheck  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
 from flock_zorch.testing._golden import unpack_bits  # noqa: E402
-from flock_zorch.testing._util import await_all, best_of  # noqa: E402
+from flock_zorch.testing._util import await_all, best, best_of  # noqa: E402
+from flock_zorch.types import ProveFastResult  # noqa: E402
 
 PHASES = ("commit", "zerocheck", "lincheck", "open")
 
@@ -284,12 +286,19 @@ def make_prove(circ: Circuit, g, unpacked: bool):
         # The claim, not the wire proof: `ZerocheckProof` holds wire fields
         # only, and the point the lincheck and open reduce (`z`,
         # `mlv_challenges`, `r_rest`) lives on `ZerocheckClaim`.
-        _zc_proof, zc = phase(
+        zc_proof, zc = phase(
             "zerocheck",
             lambda: zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch),
         )
         x_ab, lc = phase("lincheck", lambda: _lincheck(zc))
-        return phase("open", lambda: _open(zc, x_ab, lc))
+        opening = phase("open", lambda: _open(zc, x_ab, lc))
+        return ProveFastResult(
+            zerocheck=zc_proof,
+            lincheck=(lc.rounds, lc.z_partial),
+            pcs_open=opening,
+            claim_ab_value=lc.claim.w,
+            claim_c_value=zc.c_eval,
+        )
 
     return prove
 
@@ -304,6 +313,19 @@ def bench(circ: Circuit, args) -> None:
     meta = g["meta"]
     n_hash = circ.hashes_per_proof(meta)
     prove = make_prove(circ, g, args.unpacked)
+
+    if args.throughput:
+        wall = best(lambda: prove(), args.runs)
+        print(
+            f"{circ.name:>8} {meta['m']:>3} {n_hash:>8} "
+            f"{wall:>9.2f}ms {n_hash * 1e3 / wall:>10.0f}"
+        )
+        if args.cpu_ms:
+            print(
+                f"  {args.cpu_ms / wall:.2f}x vs same-instance flock CPU "
+                f"{args.cpu_ms:.0f}ms"
+            )
+        return
 
     def timed_prove():
         times = {}
@@ -342,6 +364,12 @@ def main() -> int:
         "dumps (single circuit only)",
     )
     ap.add_argument("--runs", type=int, default=3, help="timed iterations, best-of")
+    ap.add_argument(
+        "--throughput",
+        action="store_true",
+        help="time the whole prove with one final synchronization; omit for the "
+        "synchronized phase breakdown",
+    )
     ap.add_argument(
         "--cpu-ms",
         type=float,
@@ -385,11 +413,14 @@ def main() -> int:
         f"| best-of-{args.runs} within this process\n"
     )
 
-    hdr = (
-        f"{'circuit':>8} {'m':>3} {'hashes':>8} "
-        + " ".join(f"{p:>10}" for p in PHASES)
-        + f" {'sum':>9} {'wall':>9} {'hash/s':>10}"
-    )
+    if args.throughput:
+        hdr = f"{'circuit':>8} {'m':>3} {'hashes':>8} {'wall':>11} {'hash/s':>10}"
+    else:
+        hdr = (
+            f"{'circuit':>8} {'m':>3} {'hashes':>8} "
+            + " ".join(f"{p:>10}" for p in PHASES)
+            + f" {'sum':>9} {'wall':>9} {'hash/s':>10}"
+        )
     print(hdr)
     print("-" * len(hdr))
 

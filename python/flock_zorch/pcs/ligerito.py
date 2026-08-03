@@ -42,6 +42,7 @@ from zorch.pcs.ligerito.choreography import LigeritoChoreography
 from zorch.pcs.ligerito.config import LigeritoConfig
 from zorch.pcs.ligerito.prover import LigeritoProver, LigeritoProverData
 from zorch.pcs.ligerito.verifier import LigeritoVerifier
+from zorch.hash.sha256 import Sha256State
 from zorch.sha256_field_transcript import Sha256FieldTranscript
 
 from flock_zorch import fs, ghash
@@ -120,29 +121,86 @@ def flock_transcript(domain: bytes) -> FlockTranscript:
     return FlockTranscript(Sha256FieldTranscript.new(domain, fnp.binary_field_ghash))
 
 
-@functools.partial(frx.jit, static_argnums=(1, 2))
-def _sample_distinct_positions(inner, block_len: int, count: int):
-    """flock's distinct-query rejection sampler; one squeeze per iteration, like
-    `fs.sample_chain`. Jitted on the static (block_len, count) for the EAGER
-    callers — the verifier's query phase and the FS oracle test — where an
-    un-jitted `while_loop` re-lowers its SHA-256 body on every call (~1100ms ->
-    ~7ms). On the prove path this inlines into the open's own jit."""
+def _sample_distinct_positions_impl(inner, block_len: int, count: int):
+    """Backend-neutral rejection sampler used by the CPU query-chain jit."""
     bl = fnp.uint64(block_len)
     idx = fnp.arange(count, dtype=fnp.int32)
 
     def body(carry):
         inner, out, n = carry
         inner, g = inner.sample_scalar()
-        lo = ghash.from_ghash(g).reshape(2)[0]  # low uint64 limb = flock's v.lo
+        lo = ghash.from_ghash(g).reshape(2)[0]
         pos = (lo % bl).astype(fnp.int32)
-        hit = fnp.any((idx < n) & (out == pos))  # already drawn this level?
+        hit = fnp.any((idx < n) & (out == pos))
         out = fnp.where(hit, out, out.at[n].set(pos))
         return inner, out, fnp.where(hit, n, n + fnp.int32(1))
 
     inner, out, _ = lax.while_loop(
-        lambda c: c[2] < count, body, (inner, fnp.zeros(count, fnp.int32), fnp.int32(0))
+        lambda c: c[2] < count,
+        body,
+        (inner, fnp.zeros(count, fnp.int32), fnp.int32(0)),
     )
     return inner, fnp.sort(out)
+
+
+@functools.lru_cache(maxsize=None)
+def _cpu_query_jit(block_len: int, count: int):
+    @frx.jit
+    def run(h, pending, counts):
+        inner = Sha256FieldTranscript(
+            Sha256State(h=h, pending=pending, counts=counts),
+            np.dtype(fnp.binary_field_ghash),
+        )
+        inner, positions = _sample_distinct_positions_impl(
+            inner, block_len, count
+        )
+        return inner.state.h, inner.state.pending, inner.state.counts, positions
+
+    return run
+
+
+def _sample_distinct_positions_host(h, pending, counts, *, block_len, count):
+    """Run the serial SHA chain on CPU and return NumPy callback leaves."""
+    cpu = frx.devices("cpu")[0]
+    args = tuple(frx.device_put(x, cpu) for x in (h, pending, counts))
+    return tuple(np.asarray(x) for x in _cpu_query_jit(block_len, count)(*args))
+
+
+@functools.partial(frx.jit, static_argnums=(1, 2), inline=True)
+def _sample_distinct_positions(inner, block_len: int, count: int):
+    """Sample Ligerito queries on CPU while the surrounding open stays on GPU.
+
+    The chain is 43--218 sequential SHA-256 scalar squeezes per level, so GPU
+    parallelism cannot help. One pure callback transfers the 104-byte stream
+    state to CPU and the updated state plus positions back; the five m=28
+    levels cost less than running a dedicated single-thread GPU chain.
+    """
+    h, pending, counts, positions = frx.pure_callback(
+        functools.partial(
+            _sample_distinct_positions_host,
+            block_len=block_len,
+            count=count,
+        ),
+        (
+            frx.ShapeDtypeStruct(inner.state.h.shape, inner.state.h.dtype),
+            frx.ShapeDtypeStruct(
+                inner.state.pending.shape, inner.state.pending.dtype
+            ),
+            frx.ShapeDtypeStruct(
+                inner.state.counts.shape, inner.state.counts.dtype
+            ),
+            frx.ShapeDtypeStruct((count,), fnp.int32),
+        ),
+        inner.state.h,
+        inner.state.pending,
+        inner.state.counts,
+    )
+    return (
+        Sha256FieldTranscript(
+            Sha256State(h=h, pending=pending, counts=counts), inner.dtype
+        ),
+        positions,
+    )
 
 
 @dataclass(frozen=True)
@@ -279,7 +337,7 @@ def _make_ghash_code(message_len: int, log_inv_rate: int) -> ReedSolomon:
 
 
 def _flock_proof_dict(
-    p, initial_root: np.ndarray, config: LigeritoConfig, chor: FlockChoreography
+    p, initial_root: Array, config: LigeritoConfig, chor: FlockChoreography
 ) -> dict:
     """zorch `LigeritoProof` -> flock's `recursive_prover_with_basis` dict.
 
@@ -288,6 +346,12 @@ def _flock_proof_dict(
     from each `Opening.path` + `component_positions` via `merkle.paths_to_multi_proof`,
     and the schedule-order `pow_witnesses` are split back into flock's fold / query
     nonce lists."""
+    # One coordinated transfer for the whole proof.  Calling np.asarray/int on
+    # each message, path level, and query position serialized hundreds of tiny
+    # D2H copies and stream synchronizations after the GPU open had finished.
+    # Wire assembly below is host work, so materialize the registered proof
+    # pytree and root together once, then never touch a device value again.
+    p, initial_root = frx.device_get((p, initial_root))
     num_levels = config.num_levels
 
     def level(j) -> dict:
@@ -347,7 +411,7 @@ def _flock_ligerito_prover(cfg: dict, log_n: int):
     return prover, config, chor
 
 
-def commit_flock_ligerito(cfg: dict, z_packed) -> tuple[np.ndarray, LigeritoProverData]:
+def commit_flock_ligerito(cfg: dict, z_packed) -> tuple[Array, LigeritoProverData]:
     """L0 commit for the flock ligerito open. Committing through zorch's own
     `LigeritoProver.commit` (rather than flock's `pcs_commit.commit`) yields the
     `LigeritoProverData` the open consumes directly — the commit→open prover-data
@@ -359,7 +423,7 @@ def commit_flock_ligerito(cfg: dict, z_packed) -> tuple[np.ndarray, LigeritoProv
     log_n = z.shape[0].bit_length() - 1
     prover, _config, _chor = _flock_ligerito_prover(cfg, log_n)
     root, pdata = prover.commit([_bitrev(ghash.to_ghash(z))])
-    return np.asarray(root), pdata
+    return root, pdata
 
 
 @functools.partial(frx.jit, static_argnums=(0,))
@@ -417,5 +481,5 @@ def prove_flock_ligerito(
         prover, pdata, b_combined, target, FlockTranscript(ch._t)
     )
     ch._t = t_open.inner
-    wire = _flock_proof_dict(proof, np.asarray(pdata.initial.root), config, chor)
+    wire = _flock_proof_dict(proof, pdata.initial.root, config, chor)
     return (wire, proof) if return_proof else wire
