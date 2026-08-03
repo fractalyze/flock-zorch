@@ -212,41 +212,35 @@ Apple-to-apple: **unmodified flock CPU vs flock-zorch GPU on the same idle
 machine** (RTX 5090, Ryzen 9 9950X), same-instance both sides. Every instance is
 a real flock hash-circuit R1CS at flock's shipped size, swept over witness size
 to locate the crossover. GPU uses hardware `clmad`; timing is warm best-of-3
-(JIT compile excluded), with the card verified idle. The historical Keccak3
-table uses zorch `650b1cf` and FRX `dev20260720085939` from 2026-07-21. The
-BLAKE3 table states its newer CPU/GPU stack and timing scope below.
+(JIT compile excluded), with the card verified idle. CPU rows use pinned flock
+`85fc0e7`, thin LTO, one codegen unit, and `target-cpu=native`
+(AVX-512/VPCLMULQDQ). GPU rows use zorch `cad4fea` and FRX
+`0.10.1.dev20260803035606`.
 
-### Keccak3 (Ligerito) — crossover ≈ m=24
+### Keccak3 (Ligerito)
 
-| m   | n_keccaks | flock CPU (ms) | GPU (ms) | speedup    |
-| --- | --------- | -------------- | -------- | ---------- |
-| 22  | 49        | 25.8           | 48.0     | 0.54×      |
-| 24  | 384       | 70.9           | 56.7     | **1.25×**  |
-| 26  | 1536      | 266.4          | 76.1     | **3.50×**  |
-| 28  | 6144      | 1,123.7        | 123.7    | **9.08×**  |
-| 30† | 24576     | 4,706.1        | 316.7    | **14.86×** |
-| 31† | 49152     | 9,724.2        | 586.4    | **16.58×** |
+| m   | hash slots | flock CPU (ms) | GPU (ms) | Keccak/s | speedup   |
+| --- | ---------- | -------------- | -------- | -------- | --------- |
+| 22  | 96         | 6.54           | 12.26    | 7,831    | 0.53×     |
+| 24  | 384        | 7.38           | 13.43    | 28,598   | 0.55×     |
+| 26  | 1536       | 15.21          | 16.57    | 92,699   | 0.92×     |
+| 28  | 6144       | 52.67          | 21.74    | 282,628  | **2.42×** |
+| 30† | 24576      | 218.17         | 40.51    | 606,655  | **5.39×** |
+| 31† | 49152      | 456.69         | 67.47    | 728,483  | **6.77×** |
 
 † m≥30 uses `XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async`; the default BFC arena
 fragments on the large proof phases (#131).
 
-The Ligerito open runs device-resident — zorch's recursive open compiles to one
-device program (#479) and query positions are sampled on-device (#104) — while
-the packed-byte zerocheck fold avoids expanding the retained witness. GPU wins
-from m=24 and reaches 16.58× at m=31.
-
 ### BLAKE3 (Ligerito)
 
-Measured 2026-08-03 on a Ryzen 9 9950X / RTX 5090, excluding witness
-construction. CPU is flock `8790722` with `target-cpu=native`; GPU uses zorch
-`cad4fea` and FRX `0.10.1.dev20260803035606`. CUDA 13.3 `ptxas` emitted PTX 9.3
-with `clmad` for sm_120 (driver 610.43.02).
+Both sides exclude witness construction. CUDA 13.3 `ptxas` emitted PTX 9.3 for
+sm_120 (driver 610.43.02).
 
 | m   | n_comp | flock CPU (ms) | GPU (ms) | BLAKE/s   | speedup    |
 | --- | ------ | -------------- | -------- | --------- | ---------- |
-| 26  | 4096   | 26.13          | 13.90    | 294,779   | **1.88×**  |
-| 28  | 16384  | 113.60         | 19.08    | 858,540   | **5.95×**  |
-| 31† | 131072 | 754.27         | 64.91    | 2,019,327 | **11.62×** |
+| 26  | 4096   | 14.58          | 13.90    | 294,779   | **1.05×** |
+| 28  | 16384  | 44.77          | 19.08    | 858,540   | **2.35×** |
+| 31† | 131072 | 367.18         | 64.91    | 2,019,327 | **5.66×** |
 
 Reproduce all three GPU points with the shared goldens (m=31 needs the async
 allocator to avoid BFC fragmentation):
@@ -260,9 +254,9 @@ export PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"
 VENV=.venv/bin/python
 # Needed when the host does not already provide CUDA 12 user-space libraries:
 .venv/bin/pip install 'frx-cuda12-plugin[with-cuda]==0.10.1.dev20260803035606' --extra-index-url https://fractalyze.github.io/pypi/simple/
-$VENV python/flock_zorch/testing/prove_phase_bench.py blake3 --throughput --golden blake3_m26_ligerito_golden.bin --cpu-ms 26.13
-$VENV python/flock_zorch/testing/prove_phase_bench.py blake3 --throughput --golden blake3_m28_ligerito_golden.bin --cpu-ms 113.60
-XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async $VENV python/flock_zorch/testing/prove_phase_bench.py blake3 --throughput --golden blake3_m31_ligerito_golden.bin --cpu-ms 754.27
+$VENV python/flock_zorch/testing/prove_phase_bench.py blake3 --throughput --golden blake3_m26_ligerito_golden.bin --cpu-ms 14.58
+$VENV python/flock_zorch/testing/prove_phase_bench.py blake3 --throughput --golden blake3_m28_ligerito_golden.bin --cpu-ms 44.77
+XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async $VENV python/flock_zorch/testing/prove_phase_bench.py blake3 --throughput --golden blake3_m31_ligerito_golden.bin --cpu-ms 367.18
 ```
 
 Omit `--throughput` for the synchronized commit / zerocheck / lincheck / open
