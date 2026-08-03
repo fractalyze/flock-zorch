@@ -121,28 +121,6 @@ class _Sha256MerkleTree(MerkleTree):
 GHASH_TREE = _Sha256MerkleTree(_GhashSha256LeafHasher(), _Sha256Compressor())
 
 
-def _octopus_levels(positions, num_leaves: int):
-    """flock's octopus dedup schedule — the walk behind the octopus assembler
-    (`paths_to_multi_proof` from a zorch `Opening`'s paths).
-
-    Yields, per tree level (leaves→root), the sorted-left-to-right list of active
-    groups `(p, paired)`: `p` is the group's lower active node index and `paired`
-    is True when its sibling `p ^ 1` is also active (recomputed from below, no proof
-    element) or False when the sibling is a distinct emitted digest. The active set
-    halves each level (`p >> 1`, deduped); the caller attaches the digest source (a
-    path entry) and emits only on `not paired`."""
-    active = sorted({int(p) for p in positions})
-    for _level in range(num_leaves.bit_length() - 1):
-        groups, i, n = [], 0, len(active)
-        while i < n:
-            p = active[i]
-            paired = i + 1 < n and active[i + 1] == (p ^ 1)
-            groups.append((p, paired))
-            i += 2 if paired else 1
-        yield groups
-        active = sorted({p >> 1 for p in active})
-
-
 def paths_to_multi_proof(paths: np.ndarray, num_leaves: int, positions) -> np.ndarray:
     """Assemble flock's octopus multi-proof from a zorch `Opening`'s per-query
     authentication paths + the sampled query positions, byte-identical to flock
@@ -155,24 +133,33 @@ def paths_to_multi_proof(paths: np.ndarray, num_leaves: int, positions) -> np.nd
     alone — but every sibling it emits IS one path entry: query `qi` at leaf
     `positions[qi]` carries, at level L, `paths[qi, L]` = the digest of node
     `(positions[qi] >> L) ^ 1`, exactly the sibling flock emits for an active node
-    whose sibling is not itself active. So this walks the shared `_octopus_levels`
-    schedule, sourcing each emission from the paths — no tree rebuild.
+    whose sibling is not itself active. The active-node walk below sources each
+    emission from the paths without rebuilding the tree.
 
     `paths`: uint8 [Q, depth, 32] (query-major, `np.stack(opening.path, axis=1)`);
     `positions`: length-Q query leaf indices (dups allowed). Returns uint8
     [num_siblings, 32]."""
-    positions = [int(p) for p in positions]
-    if not positions or num_leaves == 1:
+    positions = np.asarray(positions, dtype=np.uint64).reshape(-1)
+    if positions.size == 0 or num_leaves == 1:
         return np.zeros((0, 32), np.uint8)
     paths = np.asarray(paths)
+    # Track each active node together with the first query whose path crosses
+    # it.  Advancing this mapping with the tree avoids rebuilding a Python dict
+    # from every original query at every level; NumPy performs the sort/dedup in
+    # C and whole level slices are appended at once.
+    active, first_qi = np.unique(positions, return_index=True)
     proof = []
-    for level, groups in enumerate(_octopus_levels(positions, num_leaves)):
-        node_to_qi: dict[int, int] = {}
-        for qi, leaf in enumerate(positions):
-            node_to_qi.setdefault(
-                leaf >> level, qi
-            )  # any query passing through this node
-        for p, paired in groups:
-            if not paired:
-                proof.append(paths[node_to_qi[p], level])  # digest of node p^1
-    return np.stack(proof) if proof else np.zeros((0, 32), np.uint8)
+    for level in range(num_leaves.bit_length() - 1):
+        paired = np.zeros(active.size, dtype=np.bool_)
+        paired[:-1] = (active[:-1] ^ np.uint64(1)) == active[1:]
+        second_of_pair = np.zeros(active.size, dtype=np.bool_)
+        second_of_pair[1:] = paired[:-1]
+        emit = ~paired & ~second_of_pair
+        if np.any(emit):
+            proof.append(paths[first_qi[emit], level])
+
+        parents = active >> np.uint64(1)
+        active, parent_first = np.unique(parents, return_index=True)
+        first_qi = first_qi[parent_first]
+
+    return np.concatenate(proof, axis=0) if proof else np.zeros((0, 32), np.uint8)
