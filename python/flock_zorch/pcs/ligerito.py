@@ -323,6 +323,39 @@ def _lohi(x) -> np.ndarray:
     return np.asarray(x).reshape(-1).view(np.uint64).reshape(-1, 2)
 
 
+@frx.jit
+def _pack_tree_leaves(leaves):
+    """Concatenate a pytree's array leaves into one device buffer per dtype."""
+    groups = {}
+    for leaf in leaves:
+        groups.setdefault(np.dtype(leaf.dtype), []).append(leaf.reshape(-1))
+    return tuple(fnp.concatenate(group) for group in groups.values())
+
+
+def _packed_device_get(tree):
+    """Materialize an array pytree through a small number of packed transfers.
+
+    Ligerito proofs contain many small path and transcript arrays.  A regular
+    ``device_get`` schedules one D2H copy per leaf; grouping by dtype preserves
+    every leaf's exact representation while reducing that launch count.
+    """
+    leaves, treedef = frx.tree_util.tree_flatten(tree)
+    groups = {}
+    for index, leaf in enumerate(leaves):
+        groups.setdefault(np.dtype(leaf.dtype), []).append(
+            (index, tuple(leaf.shape), leaf.size)
+        )
+
+    buffers = frx.device_get(_pack_tree_leaves(tuple(leaves)))
+    restored = [None] * len(leaves)
+    for buffer, group in zip(buffers, groups.values()):
+        offset = 0
+        for index, shape, size in group:
+            restored[index] = np.asarray(buffer[offset : offset + size]).reshape(shape)
+            offset += size
+    return frx.tree_util.tree_unflatten(treedef, restored)
+
+
 def _bitrev(x: Array) -> Array:
     return lax.bit_reverse(x, dimensions=(0,))
 
@@ -348,7 +381,7 @@ def _flock_proof_dict(
     # D2H copies and stream synchronizations after the GPU open had finished.
     # Wire assembly below is host work, so materialize the registered proof
     # pytree and root together once, then never touch a device value again.
-    p, initial_root = frx.device_get((p, initial_root))
+    p, initial_root = _packed_device_get((p, initial_root))
     num_levels = config.num_levels
 
     def level(j) -> dict:
