@@ -10,7 +10,7 @@ a_0/b_0 are populated sparse matrices folded by the generic `CscCircuit`.
 Run (regen: cargo run --release --example dump_blake3_ligerito -- 256 \
 artifacts/blake3_ligerito_golden.bin):
   export PATH="$HOME/.local/cuda13/bin:$PATH"
-  FRX_PLATFORMS=cuda PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
+  FRX_PLATFORMS=cuda,cpu PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
       python/flock_zorch/testing/blake3_ligerito_oracle_test.py
 """
 

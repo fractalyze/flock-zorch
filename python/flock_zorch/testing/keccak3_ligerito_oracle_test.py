@@ -12,7 +12,7 @@ the procedural Keccak3LincheckCircuit (3 disjoint sub-keccak walks).
 Run (regen: cargo run --release --example dump_keccak3_ligerito -- 49 \
 artifacts/keccak3_ligerito_golden.bin):
   export PATH="$HOME/.local/cuda13/bin:$PATH"
-  FRX_PLATFORMS=cuda PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
+  FRX_PLATFORMS=cuda,cpu PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
       python/flock_zorch/testing/keccak3_ligerito_oracle_test.py
 """
 
