@@ -124,9 +124,7 @@ def _mlv_sumcheck(a_g, b_g, eq_tables, r0_g, t):
     """
     rounds, rhos = [], []
     for eq_g in eq_tables:
-        a_g, b_g, t, m1, minf, rho = _mlv_round(
-            a_g, b_g, eq_g, r0_g, t
-        )
+        a_g, b_g, t, m1, minf, rho = _mlv_round(a_g, b_g, eq_g, r0_g, t)
         rounds.append((m1, minf))
         rhos.append(rho)
     final_a, final_b = a_g[0], b_g[0]
@@ -169,9 +167,10 @@ class _UrmRound:
 
     def __call__(self, carry, transcript):
         m, k_skip = self._m, self._k_skip
-        # Round 1 needs unpacked bit rows.  The multilinear fold retains the
-        # compact a/b inputs when they are packed, instead of keeping the 8x
-        # larger rows alive across the round boundary.
+        # Round 1 takes the witness in whatever form it arrived: the URM
+        # composite unpacks packed lanes in-fusion (`_urm._round1_input_rows`),
+        # so nothing here materializes the 8x larger bit rows. The multilinear
+        # fold below likewise keeps the compact form when it has one.
         round1_ab, round1_c = _urm.round1_rows(
             carry.a_bits, carry.b_bits, carry.c_bits, m, k_skip, carry.r
         )
@@ -180,17 +179,14 @@ class _UrmRound:
         z = transcript.sample_f128()
         # c-claim: interpolate round1_c at z.
         final_c_eval = _interpolate_at_z_on_lambda(round1_c, k_skip, z)
-        is_packed = lambda x: (
-            getattr(x, "ndim", 0) == 2 and x.shape[-1] == 2 and x.dtype == np.uint64
-        )
         a_fold = (
             carry.a_bits
-            if is_packed(carry.a_bits)
+            if _urm.is_packed_witness(carry.a_bits)
             else _urm.witness_to_rows(carry.a_bits, m, k_skip)
         )
         b_fold = (
             carry.b_bits
-            if is_packed(carry.b_bits)
+            if _urm.is_packed_witness(carry.b_bits)
             else _urm.witness_to_rows(carry.b_bits, m, k_skip)
         )
         carry = replace(

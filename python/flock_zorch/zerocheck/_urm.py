@@ -92,6 +92,32 @@ def _to_u8(x):
     return lax.bitcast_convert_type(x, fnp.uint8)
 
 
+def is_packed_witness(bits) -> bool:
+    """Is this the packed F128 witness (uint64 [2^(m-7), 2]) rather than bits?
+
+    The one authority on that question: round-1, the multilinear fold and the
+    block reshape all branch on it, and open-coding the three clauses per site
+    is how they drift. `getattr` rather than `.ndim` so a host list or a scalar
+    answers False instead of raising."""
+    return (
+        getattr(bits, "ndim", 0) == 2
+        and bits.shape[-1] == 2
+        and np.dtype(bits.dtype) == np.uint64
+    )
+
+
+def _lsb_bits(x, width: int):
+    """Expand each element of unsigned-integer `x` into its `width` LSB-first
+    bits, as a trailing axis of 0/1 in x's own dtype.
+
+    The witness bit order in one place. Packed storage reaches round-1 in three
+    guises — the uint8 byte planes `lax.composite` exposes, the uint64 F128
+    lanes, and the a·b product bytes — and every one of them unpacks through
+    here, so they cannot drift. Lazy: whether the expansion lands in HBM is the
+    consumer's business, not this function's."""
+    return (x[..., None] >> fnp.arange(width, dtype=x.dtype)) & fnp.ones((), x.dtype)
+
+
 def _round1_input_rows(x, n_rows: int):
     """Normalize an unpacked row matrix or a physically represented packed
     F128 witness to one bit per byte for the portable decomposition.
@@ -106,15 +132,12 @@ def _round1_input_rows(x, n_rows: int):
         if x.shape[0] == n_rows * 64:
             return x.reshape(n_rows, 64)
         assert x.shape[0] == n_rows * 8
-        bit = fnp.arange(8, dtype=fnp.uint8)
-        return ((x[:, None] >> bit) & fnp.uint8(1)).reshape(-1, 64)
+        return _lsb_bits(x, 8).reshape(-1, 64)
     if x.ndim == 3 and x.shape[-2:] == (2, 8):
-        bit = fnp.arange(8, dtype=fnp.uint8)
-        return ((x[..., None] >> bit) & fnp.uint8(1)).reshape(-1, 64)
-    if x.ndim == 2 and x.shape[-1] == 2 and np.dtype(x.dtype) == np.uint64:
-        bit = fnp.arange(64, dtype=fnp.uint64)
-        lo = ((x[:, 0:1] >> bit) & fnp.uint64(1)).astype(fnp.uint8)
-        hi = ((x[:, 1:2] >> bit) & fnp.uint64(1)).astype(fnp.uint8)
+        return _lsb_bits(x, 8).reshape(-1, 64)
+    if is_packed_witness(x):
+        lo = _lsb_bits(x[:, 0], 64).astype(fnp.uint8)
+        hi = _lsb_bits(x[:, 1], 64).astype(fnp.uint8)
         return fnp.concatenate([lo, hi], axis=1).reshape(-1, 64)
     return x
 
@@ -136,7 +159,7 @@ def _round1_partial_decomp(a, b, c, eq_or_point, phi_basis, *, k_skip: int):
     def matches_rows(rows: int) -> bool:
         if a.ndim == 3 and a.shape[-2:] == (2, 8):
             return a.shape[0] * 2 == rows
-        if a.ndim == 2 and a.shape[-1] == 2 and np.dtype(a.dtype) == np.uint64:
+        if is_packed_witness(a):
             return a.shape[0] * 2 == rows
         if a.ndim == 1 and np.dtype(a.dtype) == np.uint8:
             return a.shape[0] in (rows * 8, rows * 64)
@@ -158,8 +181,7 @@ def _round1_partial_decomp(a, b, c, eq_or_point, phi_basis, *, k_skip: int):
     byte_values = _to_u8(a_l * b_l)
     n_partials = min(_ROUND1_PARTIALS, n_rows)
     rows_per_partial = n_rows // n_partials
-    bit = fnp.arange(8, dtype=fnp.uint8)
-    selected = ((byte_values[..., None] >> bit) & fnp.uint8(1)).astype(fnp.bool_)
+    selected = _lsb_bits(byte_values, 8).astype(fnp.bool_)
     selected = selected.reshape(n_partials, rows_per_partial, 64, 8)
     weights = eqx.reshape(n_partials, rows_per_partial, 1, 1)
     zero = ghash.to_ghash(fnp.zeros((2,), dtype=fnp.uint64))
@@ -240,7 +262,7 @@ def _round1_core(a, b, c, k_skip, r):
     eqx = sumcheck.build_eq(outer_point)[:, None]
 
     rows = _ROUND1_BLOCK_ROWS
-    packed = a.ndim == 2 and a.shape[-1] == 2 and np.dtype(a.dtype) == np.uint64
+    packed = is_packed_witness(a)
 
     def blocked_witness(x):
         if packed:
@@ -275,9 +297,8 @@ def _packed_to_rows(packed, m: int, k_skip: int):
     taking the packed form and unpacking here turns a fat host->device transfer
     into a small one + a cheap device kernel — the same device-unpack pattern
     `prover._unpack_bits` uses for the identity path."""
-    bi = fnp.arange(64, dtype=fnp.uint64)
-    lo = ((packed[:, 0:1] >> bi) & fnp.uint64(1)).astype(fnp.uint8)
-    hi = ((packed[:, 1:2] >> bi) & fnp.uint64(1)).astype(fnp.uint8)
+    lo = _lsb_bits(packed[:, 0], 64).astype(fnp.uint8)
+    hi = _lsb_bits(packed[:, 1], 64).astype(fnp.uint8)
     bits = fnp.concatenate([lo, hi], axis=1).reshape(-1)  # [2^m]
     return bits.reshape(1 << (m - k_skip), 1 << k_skip)
 
@@ -292,13 +313,11 @@ def witness_to_rows(bits, m: int, k_skip: int):
 
     Accepts three forms: the **packed F128** witness (uint64 [2^(m-7), 2]) — unpacked
     on device (8x less host transfer, the preferred form); a uint8 [2^m] (0/1) bit
-    array (transferred once); or an already-device array (reshaped, no copy)."""
+    array (transferred once); or an already-device array, reshaped eagerly. That
+    last reshape is NOT free: outside a trace it dispatches its own program and
+    allocates a fresh buffer, so it copies the whole witness."""
     n_chunks, ell = 1 << (m - k_skip), 1 << k_skip
-    if (
-        getattr(bits, "ndim", 0) == 2
-        and bits.shape[-1] == 2
-        and np.dtype(bits.dtype) == np.uint64
-    ):
+    if is_packed_witness(bits):
         return _packed_to_rows(
             fnp.asarray(bits), m, k_skip
         )  # packed F128 -> device unpack
