@@ -38,11 +38,11 @@ import numpy as np
 from frx import Array, lax
 from frx.tree_util import register_dataclass
 from zorch.coding.reed_solomon import ReedSolomon
+from zorch.hash.sha256 import Sha256State
 from zorch.pcs.ligerito.choreography import LigeritoChoreography
 from zorch.pcs.ligerito.config import LigeritoConfig
 from zorch.pcs.ligerito.prover import LigeritoProver, LigeritoProverData
 from zorch.pcs.ligerito.verifier import LigeritoVerifier
-from zorch.hash.sha256 import Sha256State
 from zorch.sha256_field_transcript import Sha256FieldTranscript
 
 from flock_zorch import fs, ghash
@@ -151,9 +151,7 @@ def _cpu_query_jit(block_len: int, count: int):
             Sha256State(h=h, pending=pending, counts=counts),
             np.dtype(fnp.binary_field_ghash),
         )
-        inner, positions = _sample_distinct_positions_impl(
-            inner, block_len, count
-        )
+        inner, positions = _sample_distinct_positions_impl(inner, block_len, count)
         return inner.state.h, inner.state.pending, inner.state.counts, positions
 
     return run
@@ -183,12 +181,8 @@ def _sample_distinct_positions(inner, block_len: int, count: int):
         ),
         (
             frx.ShapeDtypeStruct(inner.state.h.shape, inner.state.h.dtype),
-            frx.ShapeDtypeStruct(
-                inner.state.pending.shape, inner.state.pending.dtype
-            ),
-            frx.ShapeDtypeStruct(
-                inner.state.counts.shape, inner.state.counts.dtype
-            ),
+            frx.ShapeDtypeStruct(inner.state.pending.shape, inner.state.pending.dtype),
+            frx.ShapeDtypeStruct(inner.state.counts.shape, inner.state.counts.dtype),
             frx.ShapeDtypeStruct((count,), fnp.int32),
         ),
         inner.state.h,
@@ -322,8 +316,11 @@ def flock_ligerito_config(
 
 def _lohi(x) -> np.ndarray:
     """ghash (any shape) -> (-1, 2) uint64 lo‖hi, flock's F128 representation."""
-    b = np.asarray(lax.bitcast_convert_type(x, fnp.uint8))
-    return np.frombuffer(b.tobytes(), np.uint64).reshape(-1, 2)
+    # Wire assembly calls this after one coordinated ``device_get``.  The host
+    # GHASH dtype is a contiguous 16-byte scalar with the same lo/hi storage as
+    # flock's F128, so a NumPy view is sufficient.  Going back through an frx
+    # bitcast here would upload and download every proof field separately.
+    return np.asarray(x).reshape(-1).view(np.uint64).reshape(-1, 2)
 
 
 def _bitrev(x: Array) -> Array:

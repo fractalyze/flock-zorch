@@ -33,6 +33,7 @@ from zorch.poly.multilinear import eval_mle  # noqa: E402
 
 from flock_zorch.challenger import Challenger  # noqa: E402
 from flock_zorch.hash import merkle  # noqa: E402
+from flock_zorch.pcs import ligerito as flock_ligerito  # noqa: E402
 from flock_zorch.pcs.ligerito import (  # noqa: E402
     FlockChoreography,
     flock_ligerito_config,
@@ -70,6 +71,17 @@ def _state_eq(a, b) -> bool:
             (sa.pending_len, sb.pending_len),
             (sa.total_len, sb.total_len),
         )
+    )
+
+
+def test_wire_lohi_host_view():
+    """The post-device_get wire view handles both scalar and vector GHASH."""
+    lanes = np.array([[1, 2], [3, 4]], dtype=np.uint64)
+    values = np.asarray(frx.device_get(_ghash(lanes)))
+    check("wire lohi vector", np.array_equal(flock_ligerito._lohi(values), lanes))
+    check(
+        "wire lohi scalar",
+        np.array_equal(flock_ligerito._lohi(values[0]), lanes[:1]),
     )
 
 
@@ -231,6 +243,7 @@ def test_round_trip_ghash():
 
 
 if __name__ == "__main__":
+    test_wire_lohi_host_view()
     test_observe_framing()
     test_sample_framing()
     test_grind_lockstep()
