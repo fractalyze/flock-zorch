@@ -85,6 +85,31 @@ def test_wire_lohi_host_view():
     )
 
 
+def test_packed_device_get_preserves_mixed_tree():
+    """Packed D2H reconstruction preserves shape, dtype, and scalar leaves."""
+    lanes = np.array([[1, 2], [3, 4]], dtype=np.uint64)
+    tree = (
+        _ghash(lanes),
+        [
+            _ghash(lanes[:1]).reshape(()),
+            fnp.arange(5, dtype=fnp.int32),
+            fnp.arange(7, dtype=fnp.uint8),
+        ],
+    )
+    got = flock_ligerito._packed_device_get(tree)
+    want = frx.device_get(tree)
+    got_leaves = frx.tree_util.tree_leaves(got)
+    want_leaves = frx.tree_util.tree_leaves(want)
+    check(
+        "packed device_get",
+        len(got_leaves) == len(want_leaves)
+        and all(
+            x.shape == y.shape and x.dtype == y.dtype and np.array_equal(x, y)
+            for x, y in zip(got_leaves, want_leaves)
+        ),
+    )
+
+
 def check(name: str, ok: bool):
     print(("PASS " if ok else "FAIL ") + name)
     if not ok:
@@ -244,6 +269,7 @@ def test_round_trip_ghash():
 
 if __name__ == "__main__":
     test_wire_lohi_host_view()
+    test_packed_device_get_preserves_mixed_tree()
     test_observe_framing()
     test_sample_framing()
     test_grind_lockstep()
