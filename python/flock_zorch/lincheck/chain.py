@@ -26,6 +26,7 @@ import numpy as np
 from flock_zorch import ghash
 from flock_zorch.sumcheck import build_eq
 from flock_zorch.sumcheck.inf_product import prove_inf_product
+from flock_zorch.types import PackedDirectClaim
 
 LOG_PACKING = ghash.LOG_PACKING  # 128 = 2^7 bits per packed F128 element
 
