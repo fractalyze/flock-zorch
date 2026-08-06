@@ -32,31 +32,50 @@ def _inner_product(a, b):
 
 
 @frx.jit
-def _reduce_one(t, packed, x_outer):
-    """One claim's observe-and-reduce (prove_batched runs it per opening point):
-    observe LABEL + s_hat_v, sample r'', compute the sumcheck claim. A pure jitted
-    region that THREADS the functional transcript `t` in and out — so the whole
-    observe/build/sample/reduce fuses as one program. `build_eq` is called directly
-    (no `build_eq_fused`: under this outer jit it already fuses), and the sampled
-    challenge stays native ghash — no `from_ghash`→`to_ghash` lane round-trip.
+def _batched_slice_evals(packed, suffixes):
+    """The transcript-independent half of the batched open, shared across claims.
 
-    Returns (t, s_hat_v [128] ghash, suffix_tensor [ghash], eq_r_dprime [128] ghash,
-    claim [ghash]); the caller turns eq_r_dprime into rs_eq_ind (with or without a
-    gamma scale)."""
+    Builds each opening point's suffix eq tensor and bit-slices the shared witness
+    ONCE — `bit_slice_evals` reads the ~512 MiB packed witness a single time for
+    all N claims instead of once per claim (the batched-open win). `suffixes` is a
+    tuple of N `[L]` ghash coord vectors (static N); the build stays under this jit
+    so `build_eq` fuses (as it did inside the old per-claim `_reduce_one`).
+
+    The `(2^L, N)` selectors-major stack is built only as the batched-read input
+    and stays inside this jit; the per-claim eq tensors are returned UN-stacked, so
+    the gamma combine's `rs_eq_ind` reads a contiguous `(2^L,)` tensor per claim
+    rather than a strided column sliced back out of the stack. Returns
+    (s_hat_vs [N, 128] ghash, suffix_tensors: N contiguous `[2^L]` ghash)."""
+    suffix_tensors = [sumcheck.build_eq(s) for s in suffixes]  # N x (2^L,) ghash
+    # stack selectors-major (shared row axis leads) for the one batched read.
+    s_hat_vs = bit_slice_evals(packed, fnp.stack(suffix_tensors, axis=1))  # (N, 128)
+    return s_hat_vs, suffix_tensors
+
+
+@frx.jit
+def _observe_and_reduce(t, s_hat_v):
+    """One claim's serial Fiat-Shamir with `s_hat_v` already computed: observe
+    LABEL + s_hat_v, sample r'', build the reduced sumcheck claim. THREADS the
+    functional transcript `t` in unchanged order (observe_label → observe_slice →
+    sample_slice), so lifting the transcript-free `bit_slice_evals` out into the
+    batched pass above leaves every Fiat-Shamir draw byte-identical to the old
+    per-claim loop. Returns (t, eq_r_dprime [128] ghash, claim [ghash])."""
     t = fs.observe_label(t, LABEL)
-    suffix = x_outer[1:]  # ghash coords, length L
-    suffix_tensor = sumcheck.build_eq(suffix)
-    s_hat_v = bit_slice_evals(packed, suffix_tensor)  # (128,) ghash
     t = fs.observe_slice(t, s_hat_v)  # observe device ghash directly
     t, r_dprime = fs.sample_slice(t, LOG_PACKING)  # [7] ghash, kept native
     eq_r_dprime = sumcheck.build_eq(r_dprime)  # [128] ghash, for the gamma combine
     claim = _inner_product(tensor_algebra_transpose(s_hat_v), eq_r_dprime)
-    return t, s_hat_v, suffix_tensor, eq_r_dprime, claim  # claim native ghash
+    return t, eq_r_dprime, claim  # claim native ghash
 
 
 def prove_batched(packed_witness, x_outers, ch: Challenger):
     """Batched ring-switch over N opening points — byte-identical to flock
     `ring_switch::prove_batched_padded_with_precomputed`.
+
+    The witness read is shared: `bit_slice_evals` runs once over the stacked suffix
+    tensors (`_batched_slice_evals`), not once per claim. Only the serial
+    transcript then runs per claim, in the same order as before, so the wire is
+    unchanged.
 
     Transcript: per claim (in order) observe `flock-ring-switch-v0` + s_hat_v +
     sample r_dprime[7]; THEN sample N gamma's (sound only after all observations);
@@ -64,21 +83,22 @@ def prove_batched(packed_witness, x_outers, ch: Challenger):
     — see the zorch module's contract). Returns
     (s_hat_vs, rs_eq_inds[gamma-baked], sumcheck_claims, gammas)."""
     packed = ghash.to_ghash(packed_witness)
-    works = []
-    for x_outer in x_outers:
-        ch._t, *work = _reduce_one(ch._t, packed, x_outer)
-        works.append(work)  # [s_hat_v, suffix_tensor, eq_r_dprime, claim]
+    suffixes = tuple(x_outer[1:] for x_outer in x_outers)  # ghash coords, length L
+    s_hat_vs, suffix_tensors = _batched_slice_evals(packed, suffixes)
+
+    eq_r_dprimes, claims = [], []
+    for i in range(len(x_outers)):
+        ch._t, eq_r_dprime, claim = _observe_and_reduce(ch._t, s_hat_vs[i])
+        eq_r_dprimes.append(eq_r_dprime)
+        claims.append(claim)
     gammas = [ch.sample_f128() for _ in range(len(x_outers))]
 
-    s_hat_vs, rs_eq_inds, sumcheck_claims = [], [], []
-    for (s_hat_v, suffix_tensor, eq_r_dprime, claim), g in zip(works, gammas):
-        scaled = g * eq_r_dprime  # gamma baked into eq
-        rs_eq_inds.append(
-            rs_eq_ind(suffix_tensor, scaled)
-        )  # ghash [2^L], device-resident
-        s_hat_vs.append(s_hat_v)
-        sumcheck_claims.append(claim)
-    return s_hat_vs, rs_eq_inds, sumcheck_claims, gammas
+    # Bake gamma_i into each eq, then rs_eq_ind it against the claim's contiguous
+    # suffix tensor -> ghash [2^L], device-resident (the caller-owned combination).
+    rs_eq_inds = [
+        rs_eq_ind(suffix_tensors[i], g * eq_r_dprimes[i]) for i, g in enumerate(gammas)
+    ]
+    return list(s_hat_vs), rs_eq_inds, claims, gammas
 
 
 # ---- verifier side ---------------------------------------------------------
