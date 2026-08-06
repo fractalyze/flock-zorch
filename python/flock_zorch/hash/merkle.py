@@ -17,31 +17,28 @@ import frx
 import frx.numpy as fnp
 import numpy as np
 from zorch.commit.merkle import MerkleTree
-from zorch.hash.sha256 import INITIAL_STATE, U32, sha256_chain
+from zorch.hash.sha256 import INITIAL_STATE, block_to_words, sha256_chain
 
 
 def _pad_device(msg, length: int):
     """Device SHA-256 pad: uint8 [B, length] -> uint32 [B, nblocks, 16] BE, all-fnp
     (no host round-trip) so Merkle nodes stay device-resident across levels. flock-
-    local; `length` is static and the compression itself is zorch's `sha256_chain`."""
+    local; `length` is static and the compression itself is zorch's `sha256_chain`.
+
+    `length` being static makes every byte past the message identical for all rows
+    and known here, so the suffix is a host constant broadcast onto the batch.
+    Writing it instead with `.at[].set()` emits a `dynamic-update-slice` per write
+    whose in-bounds guard XLA does not fold, and fusing that chain into the leaf
+    transpose costs XLA its tiled-transpose emitter — see fractalyze/flock-zorch#205
+    for the measurements."""
     b = msg.shape[0]
-    bitlen = length * 8
+    # +8 for the length field and +1 block so the 0x80 never lands inside it.
     nblocks = (length + 8) // 64 + 1
-    total = nblocks * 64
-    padded = fnp.zeros((b, total), dtype=fnp.uint8)
-    padded = padded.at[:, :length].set(msg)
-    padded = padded.at[:, length].set(fnp.uint8(0x80))
-    for i in range(8):  # 8-byte big-endian bit length at the tail (static bytes)
-        padded = padded.at[:, total - 8 + i].set(
-            fnp.uint8((bitlen >> (8 * (7 - i))) & 0xFF)
-        )
-    words = padded.reshape(b, nblocks, 16, 4).astype(fnp.uint32)
-    return (
-        (words[..., 0] << U32(24))
-        | (words[..., 1] << U32(16))
-        | (words[..., 2] << U32(8))
-        | words[..., 3]
-    )
+    tail = np.zeros(nblocks * 64 - length, dtype=np.uint8)
+    tail[0] = 0x80
+    tail[-8:] = np.frombuffer((length * 8).to_bytes(8, "big"), np.uint8)
+    padded = fnp.concatenate([msg, fnp.broadcast_to(tail, (b, tail.size))], axis=1)
+    return block_to_words(padded)
 
 
 def _digest(msgs, length: int):
