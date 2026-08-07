@@ -28,6 +28,16 @@ The rules every change must respect:
   wheels to the SAME version as zorch's own `requirements.in`: the binary-field
   GPU kernels must match, and CPU-only CI can't catch a desync.
 
+## Measurement gotchas
+
+- **A `.bazelrc.user` `--override_module=zorch=...` silently substitutes the
+  measurement's zorch.** Before trusting any wall number, `git log` the
+  override checkout against the `MODULE.bazel` pin — a stale override once
+  hid a +35% m32 throughput difference (flock#200 erratum, 2026-08-06).
+- **Do not set `XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async` at m32** — it
+  inflates the prove +21–31% wall, non-uniformly across phases (measured
+  twice, flock#200). `XLA_PYTHON_CLIENT_PREALLOCATE=false` alone suffices.
+
 ## Native `binary_field_ghash` dtype gotchas
 
 Compute on the dtype (`*`→clmul, `+`→XOR, `jnp.sum`→XOR-sum). The uint64[lo,hi]
