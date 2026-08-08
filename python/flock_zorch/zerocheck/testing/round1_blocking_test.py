@@ -44,18 +44,34 @@ def _inputs(seed: int):
     return a, b, c, r
 
 
-def _round1_at(block_rows: int, a, b, c, r):
-    """`_round1_core` with the block size forced, as lanes for exact compare."""
-    saved = _urm._ROUND1_BLOCK_ROWS
+def _round1_at(block_rows: int, a, b, c, r, n_partials: int | None = None):
+    """`_round1_core` with the block size (and optionally both partials counts)
+    forced, as lanes for exact compare."""
+    saved = (
+        _urm._ROUND1_BLOCK_ROWS,
+        _urm._ROUND1_PARTIALS_POINT,
+        _urm._ROUND1_PARTIALS_EQX,
+    )
     try:
         _urm._ROUND1_BLOCK_ROWS = block_rows
-        _urm._round1_core.clear_cache()  # block size is baked into the trace
+        if n_partials is not None:
+            _urm._ROUND1_PARTIALS_POINT = _urm._ROUND1_PARTIALS_EQX = n_partials
+        _urm._round1_core.clear_cache()  # the constants are baked into the trace
         return [
             np.asarray(ghash.to_lanes(x)) for x in _urm._round1_core(a, b, c, K_SKIP, r)
         ]
     finally:
-        _urm._ROUND1_BLOCK_ROWS = saved
+        (
+            _urm._ROUND1_BLOCK_ROWS,
+            _urm._ROUND1_PARTIALS_POINT,
+            _urm._ROUND1_PARTIALS_EQX,
+        ) = saved
         _urm._round1_core.clear_cache()
+
+
+def _assert_messages_equal(ref, got, what: str) -> None:
+    for name, x, y in zip(("P_AB", "P_C"), ref, got):
+        np.testing.assert_array_equal(x, y, err_msg=f"{name} differs: {what}")
 
 
 class Round1BlockingTest(parameterized.TestCase):
@@ -70,15 +86,31 @@ class Round1BlockingTest(parameterized.TestCase):
         # A block wider than the input takes the unblocked path — the reference.
         ref = _round1_at(N_ROWS << 1, a, b, c, r)
         got = _round1_at(block_rows, a, b, c, r)
-        for name, x, y in zip(("P_AB", "P_C"), ref, got):
-            np.testing.assert_array_equal(
-                x, y, err_msg=f"{name} differs at {N_ROWS // block_rows} blocks"
-            )
+        _assert_messages_equal(ref, got, f"at {N_ROWS // block_rows} blocks")
 
     def test_production_block_size_leaves_small_instances_unblocked(self) -> None:
         # The threshold exists so an instance that already fits keeps its exact
         # program rather than becoming a scan of length 1. m<=28 is below it.
         self.assertGreaterEqual(_urm._ROUND1_BLOCK_ROWS, 1 << 22)
+
+
+class Round1PartialsCountTest(parameterized.TestCase):
+    """`_ROUND1_PARTIALS_POINT` / `_ROUND1_PARTIALS_EQX` split the row axis
+    ahead of the same XOR reduce as the blocking above, so no count can change
+    the message, on either eq form."""
+
+    @parameterized.named_parameters(("64", 64), ("4096", 4096), ("cap", 1 << 15))
+    def test_partials_count_cannot_change_the_result(self, n_partials: int) -> None:
+        a, b, c, r = _inputs(seed=19)
+        ref = _round1_at(N_ROWS << 1, a, b, c, r)
+        got_point = _round1_at(N_ROWS << 1, a, b, c, r, n_partials=n_partials)
+        _assert_messages_equal(ref, got_point, f"point form at {n_partials} partials")
+        # The blocked lane holds N_ROWS >> 1 rows per block, so a count at or
+        # above that clamps back to the production program — coverage the
+        # blocking test already owns. Only smaller counts add an eqx-form case.
+        if n_partials < N_ROWS >> 1:
+            got_eqx = _round1_at(N_ROWS >> 1, a, b, c, r, n_partials=n_partials)
+            _assert_messages_equal(ref, got_eqx, f"eqx form at {n_partials} partials")
 
 
 class Round1CFoldFirstTest(absltest.TestCase):
@@ -127,8 +159,7 @@ class Round1CFoldFirstTest(absltest.TestCase):
             np.asarray(ghash.to_lanes(x))
             for x in _urm._round1_core(pack(a), pack(b), pack(c), K_SKIP, r)
         ]
-        for name, x, y in zip(("P_AB", "P_C"), ref, got):
-            np.testing.assert_array_equal(x, y, err_msg=f"packed {name} differs")
+        _assert_messages_equal(ref, got, "packed witness")
 
 
 if __name__ == "__main__":
