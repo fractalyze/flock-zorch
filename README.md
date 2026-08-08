@@ -31,6 +31,8 @@ device-resident — reproducing flock `prove`'s proof bit-for-bit.
 How the protocol is modelled — what a claim may state, which steps are roles
 rather than functions, and what the tooling does not cover — is
 [`docs/conventions.md`](docs/conventions.md).
+How performance is measured — which numbers to trust, and the traps that have
+each cost a session — is [`docs/measurement.md`](docs/measurement.md).
 
 ## Installation
 

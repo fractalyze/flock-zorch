@@ -4,6 +4,9 @@ Overview, setup, the reproduction path, and the benchmark all live in
 [`README.md`](README.md) — start there.
 How the protocol is modelled — claims, roles, and what the tooling misses — is
 [`docs/conventions.md`](docs/conventions.md).
+How performance is measured — which numbers to trust, and the traps that have
+each cost a session — is [`docs/measurement.md`](docs/measurement.md). Read it
+before quoting or comparing any benchmark number.
 
 ## Non-negotiables
 
