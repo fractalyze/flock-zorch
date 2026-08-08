@@ -16,6 +16,19 @@ The benchmark itself — how to run it and what it has published — is in
   ~4×. **If `commit` is tens of ms at m28 instead of ~1.3 ms, that is a toolchain
   bug, not a perf finding.** Self-check by reproducing the README's published
   m28 baseline.
+- **A `.bazelrc.user` `--override_module=zorch=...` silently substitutes the
+  zorch you are measuring.** Before trusting any wall number, `git log` the
+  override checkout against the `MODULE.bazel` pin. A stale override once hid a
+  +35% m32 throughput difference (#200 erratum) — every m32 wall measured under
+  it had to be thrown away.
+- **Do not set `XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async` by default.** At m32 it
+  *inflates* the prove **~16%** — 82.0 ms without it vs 95.0 ms with it, means
+  of three interleaved fresh processes per arm, `--throughput` best-of-10 each,
+  idle RTX 5090 — and it is also what makes the barriered phase-split mode OOM
+  in its warm-up prove. `XLA_PYTHON_CLIENT_PREALLOCATE=false` alone suffices at
+  m32. Reach for the async allocator only against an actual allocator OOM. The
+  size of the penalty moves with the phase mix (#200 measured +21–31% on an
+  earlier pin), so re-price it rather than quoting a fixed number.
 - **Pick targets by marginal µs/hash across a size step, never by phase share at
   one `m`.** Phase shares at small `m` are dominated by fixed floors and give the
   wrong ranking for a throughput goal: `open` has read as high as 61–67% at
