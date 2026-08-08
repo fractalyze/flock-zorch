@@ -72,7 +72,15 @@ _PHI_DEV_G = ghash.to_ghash(
 _PHI_BASIS_DEV_G = ghash.to_ghash(fnp.asarray(_PHI8_BASIS))
 _AES = np.dtype(zk_dtypes.binary_field_gf8_aes)
 URM_MARKER = "zorch.zerocheck_urm"
-_ROUND1_PARTIALS = 8192
+# Partials count for the round-1 map-reduce, per eq form (measured m28/m32,
+# RTX 5090, ptxas 13.3): with the eq block pre-materialized 16384 is faster —
+# 833 -> 792 us per `_ROUND1_BLOCK_ROWS`-row block (the two constants were
+# measured together) against a +7 us partials-sum, ~ -0.5 ms on the m32 URM
+# window (flock-zorch#200) — while the point-form composite (eq built
+# in-fusion) regresses 915 -> 1010 us at the same doubling. Byte-safe for any
+# count by `_round1_core`'s partition argument.
+_ROUND1_PARTIALS_POINT = 8192
+_ROUND1_PARTIALS_EQX = 16384
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +187,8 @@ def _round1_partial_decomp(a, b, c, eq_or_point, phi_basis, *, k_skip: int):
     a_l = _extend_rows(a, k_skip)
     b_l = _extend_rows(b, k_skip)
     byte_values = _to_u8(a_l * b_l)
-    n_partials = min(_ROUND1_PARTIALS, n_rows)
+    partials = _ROUND1_PARTIALS_POINT if point_weights else _ROUND1_PARTIALS_EQX
+    n_partials = min(partials, n_rows)
     rows_per_partial = n_rows // n_partials
     selected = _lsb_bits(byte_values, 8).astype(fnp.bool_)
     selected = selected.reshape(n_partials, rows_per_partial, 64, 8)
