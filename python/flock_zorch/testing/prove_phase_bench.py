@@ -32,7 +32,12 @@ the split is an upper bound rather than a headline throughput measurement.
 `Sum` versus `wall` is printed as a self-check on the instrumentation: a gap
 there means work escaped every phase.
 
-Run:
+Run (`CUDA_ROOT` must point at a **13.3** toolchain — `/usr/local/cuda` is not
+necessarily one, and 12.9 silently selects the software GF(2^128) multiply,
+worth ~5.5x on the whole prove; verify with `ptxas --version`. Do NOT reach for
+`XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async` by default: at m32 it inflates the
+prove ~16% and makes the phase-split mode OOM, and `PREALLOCATE=false` alone
+is sufficient):
     export CUDA_ROOT=/usr/local/cuda
     export FRX_PLATFORMS=cuda,cpu FRX_ENABLE_X64=1
     export XLA_PYTHON_CLIENT_PREALLOCATE=false

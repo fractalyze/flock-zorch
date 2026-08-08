@@ -219,6 +219,11 @@ to locate the crossover. GPU uses hardware `clmad`; timing is warm best-of-3
 (AVX-512/VPCLMULQDQ). GPU rows use zorch `cad4fea` and FRX
 `0.10.1.dev20260803035606`.
 
+**The GPU columns below are stale.** `cad4fea` was an orphaned-branch pin that
+#199 dropped when it repinned to zorch main, and the repin alone moved m32
+throughput substantially. Every GPU number in the tables predates that, so read
+them as a floor, not as current performance.
+
 ### Keccak3 (Ligerito)
 
 | m   | hash slots | flock CPU (ms) | GPU (ms) | Keccak/s | speedup   |
@@ -230,8 +235,14 @@ to locate the crossover. GPU uses hardware `clmad`; timing is warm best-of-3
 | 30† | 24576      | 218.17         | 33.21    | 739,960  | **6.57×** |
 | 31† | 49152      | 456.69         | 56.47    | 870,485  | **8.09×** |
 
-† m≥30 uses `XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async`; the default BFC arena
-fragments on the large proof phases (#131).
+† Rows marked † were measured under `XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async`,
+believed at the time to be required against BFC fragmentation (#131). That is
+not a general rule for large `m`: at m32 the default allocator runs clean in
+both throughput and phase-split mode, and `cuda_async` *inflates* the prove
+**~16%** (82.0 vs 95.0 ms, means of three interleaved fresh processes per arm).
+Reach for it only if you actually hit an allocator OOM — and expect these rows
+to understate the current prover until they are re-measured. See
+[`docs/measurement.md`](docs/measurement.md).
 
 ### BLAKE3 (Ligerito)
 
@@ -244,21 +255,24 @@ sm_120 (driver 610.43.02).
 | 28  | 16384  | 44.77          | 13.78    | 1,188,901 | **3.25×** |
 | 31† | 131072 | 367.18         | 55.46    | 2,363,383 | **6.62×** |
 
-Reproduce all three GPU points with the shared goldens (m=31 needs the async
-allocator to avoid BFC fragmentation):
+Reproduce all three GPU points with the shared goldens:
 
 ```bash
-export FLOCK_ZORCH_ARTIFACTS=/home/baz/Workspace/flock-zorch/artifacts
+export FLOCK_ZORCH_ARTIFACTS="$PWD/artifacts"   # where dump_goldens.sh writes
 export FRX_PLATFORMS=cuda,cpu FRX_ENABLE_X64=1
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
+# Must be a 13.3 toolchain — /usr/local/cuda is not necessarily one, and 12.9
+# silently selects the software GF(2¹²⁸) multiply (~5.5× on the whole prove).
 export CUDA_ROOT=/usr/local/cuda PATH="$CUDA_ROOT/bin:$PATH"
+ptxas --version | grep -q 'release 13.3' || echo 'WARNING: ptxas is not 13.3'
 export PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"
 VENV=.venv/bin/python
-# Needed when the host does not already provide CUDA 12 user-space libraries:
-.venv/bin/pip install 'frx-cuda12-plugin[with-cuda]==0.10.1.dev20260803035606' --extra-index-url https://fractalyze.github.io/pypi/simple/
-$VENV python/flock_zorch/testing/prove_phase_bench.py blake3 --throughput --golden blake3_m26_ligerito_golden.bin --cpu-ms 14.58
-$VENV python/flock_zorch/testing/prove_phase_bench.py blake3 --throughput --golden blake3_m28_ligerito_golden.bin --cpu-ms 44.77
-XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async $VENV python/flock_zorch/testing/prove_phase_bench.py blake3 --throughput --golden blake3_m31_ligerito_golden.bin --cpu-ms 367.18
+# Needed when the host does not already provide CUDA 12 user-space libraries.
+# Keep the version identical to requirements.in's frx pin.
+.venv/bin/pip install "frx-cuda12-plugin[with-cuda]==$(sed -n 's/^frx==//p' requirements.in)" --extra-index-url https://fractalyze.github.io/pypi/simple/
+$VENV python/flock_zorch/testing/prove_phase_bench.py blake3 --throughput --golden blake3_ligerito_golden_m26.bin --cpu-ms 14.58
+$VENV python/flock_zorch/testing/prove_phase_bench.py blake3 --throughput --golden blake3_ligerito_golden_m28.bin --cpu-ms 44.77
+$VENV python/flock_zorch/testing/prove_phase_bench.py blake3 --throughput --golden blake3_ligerito_golden_m31.bin --cpu-ms 367.18
 ```
 
 Omit `--throughput` for the synchronized commit / zerocheck / lincheck / open
