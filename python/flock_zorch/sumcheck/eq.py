@@ -74,7 +74,7 @@ def _suffix_chain(cs_g):
     return out[::-1]
 
 
-def build_eq_suffix_tables(cs_g):
+def build_eq_suffix_tables(cs_g, keep=None):
     """eq tables for every challenge suffix, sharing work across the family:
     the small layers are shared chains instead of n separate `build_eq` builds
     (each layer is a fat clmul kernel XLA compiles for ~0.7 s, so a per-round
@@ -92,17 +92,38 @@ def build_eq_suffix_tables(cs_g):
     is bandwidth-bound, so traffic is the currency.
 
     cs_g: `[n]` ghash challenges. Returns `[T_0 .. T_n]`, `T_i = eq(cs_g[i:])`
-    of shape `[2^(n-i)]`; `T_n = [1]`."""
+    of shape `[2^(n-i)]`; `T_n = [1]`.
+
+    keep: optional predicate on the suffix index. A consumer that reads only a
+    subset of the family (the sq pair schedule reads the odd-index tables plus
+    the tail — `round_pair_eq_sq_basis`) passes the indices it will touch and
+    the outer-product regime skips the other emissions entirely, returning
+    None in their slots; since the even-index total is 2/3 of the family's
+    element count, that is most of the emission cost. Kept indices are always
+    present and exact. Chain layers and shared high halves that exist as
+    building blocks anyway may still be returned — any non-None entry is the
+    exact table."""
     n = int(cs_g.shape[0])
     if n < _OUTER_SPLIT_MIN:
         return _suffix_chain(cs_g)
     j = n // 2
-    low = build_eq_suffix_tables(cs_g[:j])  # low[i] = eq(cs_g[i:j])
-    high = build_eq_suffix_tables(cs_g[j:])  # high[i-j] = T_i, i in [j, n]
+    # The recursions drop what the parent won't touch: a low factor is read
+    # only for kept i < j, and of the high family the parent always needs the
+    # shared high half T_j (local 0) besides the kept globals.
+    high_keep = None if keep is None else (lambda i: i == 0 or keep(j + i))
+    low = build_eq_suffix_tables(cs_g[:j], keep)  # low[i] = eq(cs_g[i:j])
+    high = build_eq_suffix_tables(cs_g[j:], high_keep)  # high[i-j] = T_i
     t_j = high[0]
     # T_i places cs_g[i] at bit 0, so bits [j-i, n-i) of T_i are exactly T_j's
     # index — T_j is the slow axis, the low factor the fast axis.
-    return [(t_j[:, None] * low[i][None, :]).reshape(-1) for i in range(j)] + high
+    return [
+        (
+            (t_j[:, None] * low[i][None, :]).reshape(-1)
+            if keep is None or keep(i)
+            else None
+        )
+        for i in range(j)
+    ] + high
 
 
 def round_pair_eq(ag, bg, eq, r0g):
