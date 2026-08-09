@@ -307,7 +307,11 @@ _SUBSTEPS: dict[str, tuple[tuple[str, str, str], ...]] = {
         ),
         ("flock_zorch.zerocheck.prover", "_fold_at_z", "zerocheck-ml-sq/fold_at_z"),
         ("flock_zorch.zerocheck.prover", "_SQRT", "zerocheck-ml-sq/sqrt"),
-        ("flock_zorch.zerocheck.prover", "_EQ_TABLES", "zerocheck-ml-sq/eq_tables"),
+        (
+            "flock_zorch.zerocheck.prover",
+            "_EQ_TABLES_SQ",
+            "zerocheck-ml-sq/eq_tables",
+        ),
         (
             "flock_zorch.zerocheck.prover",
             "_mlv_sumcheck_sq",
