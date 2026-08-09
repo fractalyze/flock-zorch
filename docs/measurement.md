@@ -47,6 +47,15 @@ The benchmark itself — how to run it and what it has published — is in
   while a phase wall spreads several percent, so read busy for small deltas.
   Use `--throughput` for any number compared against a goal — the barriered
   phase-split mode runs ~14% slower and is for attribution only.
+- **The bench's contention guard checks only at startup — re-check the card
+  when the run ends.** A neighbour process arriving mid-run is invisible to
+  `prove_phase_bench.py` and inflates silently: a phase split once read
+  101.5 ms against a clean 78.8 ms taken the same hour. On a shared card the
+  gaps between a sibling lane's chained jobs are seconds wide, so a
+  watch-then-launch handoff loses the race to its own notification latency —
+  run the wait and the launch in one process (tight poll, fire the moment
+  `nvidia-smi --query-compute-apps` is empty), then re-run that query after
+  the bench exits and discard the number if anyone else showed up.
 - **A/B knobs in combination, not one at a time.** Tiling the elements reduce
   measured flat and a mask-select measured *slower*, which read as "not
   tunable" — then zorch#590 combined both with a per-program parity fold for
