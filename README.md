@@ -239,7 +239,7 @@ them as a floor, not as current performance.
 believed at the time to be required against BFC fragmentation (#131). That is
 not a general rule for large `m`: at m32 the default allocator runs clean in
 both throughput and phase-split mode, and `cuda_async` *inflates* the prove
-**~16%** (82.0 vs 95.0 ms, means of three interleaved fresh processes per arm).
+**~14%** (71.8 vs 81.6 ms, means of three fresh processes per arm).
 Reach for it only if you actually hit an allocator OOM — and expect these rows
 to understate the current prover until they are re-measured. See
 [`docs/measurement.md`](docs/measurement.md).
