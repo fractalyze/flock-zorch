@@ -1,68 +1,85 @@
 # Copyright 2026 The Flock-Zorch Authors. SPDX-License-Identifier: Apache-2.0
-"""nsys capture + attribution harness for the `open` phase, and an open-only
-wall sampler.
+"""nsys capture + attribution harness for one prover window, and a wall sampler.
 
-The open-phase perf work (the "attribute the Ligerito recursive open" board
-item) needs three measurements this file provides in one place, because its
-capture scaffolding was previously rebuilt from scratch in three separate
-sessions:
+`prove_phase_bench` answers which PHASE owns the time. This answers the next
+question down — which kernels inside one window own it — which
+`docs/measurement.md` insists on before work is scoped ("a phase is not a
+target"). The capture scaffolding for this had been rebuilt from session
+scratch several times over, in more than one perf lane, which is why it lives
+in the tree.
 
-- **capture** (default): run commit -> zerocheck -> lincheck once, warm the
-  open, then replay ONE open iteration inside a `cudaProfilerApi` capture
-  range with NVTX ranges around the open's four sub-steps
-  (`ring_switch.prove_batched`, `_combine_claims`, `_open_jitted`,
-  `_flock_proof_dict`). Run it UNDER nsys — see the recipe below.
-- **--walls N**: the same open, replayed N times un-profiled, reporting
+Windows (`--window`, default `open`):
+
+- **`open`** — the Ligerito recursive open, with sub-step ranges around
+  `ring_switch.prove_batched`, `_combine_claims`, `_open_jitted` and
+  `_flock_proof_dict`, plus a per-recursion-level breakdown.
+- **`zerocheck-urm`**, **`zerocheck-ml`** — one zerocheck `ProverRound` each.
+  Zerocheck is why a window is round-level and not phase-level: its two rounds
+  turned out to have OPPOSITE bindings — the round-1 URM composite
+  arithmetic-bound at ~9x its read roofline, the multilinear ladder
+  bandwidth-bound with its folds already at 90% of peak — so a zerocheck-level
+  number cannot pick either one's lever.
+
+Modes:
+
+- **capture** (default): run the prove up to the window, warm it, then replay
+  ONE iteration inside a `cudaProfilerApi` range with NVTX sub-step ranges.
+  Run it UNDER nsys — recipe below. Gating the range excludes warm-up and
+  autotune by CONSTRUCTION rather than filtering them out afterwards, which is
+  what makes the bucket table trustworthy.
+- **--walls N**: the same window replayed N times un-profiled, reporting
   p10 / median / min. This is the clean-wall channel; nsys inflates host
   dispatch ~2x, so wall numbers must never come from the capture run.
 - **--report FILE.sqlite**: read an exported capture and print device-busy
-  attribution: per sub-step, per CUDA kernel, per XLA HLO-op family, and per
-  recursion level (segmented at the per-level query-sampler callbacks).
+  attribution: per sub-step, per CUDA kernel, per XLA HLO-op family, and (for
+  `open`) per recursion level.
 
-The open is replayable because `Challenger` advances by REPLACING its
-immutable `_t` pytree: snapshotting the post-lincheck `_t` and re-assigning
-it before each iteration replays byte-identical Fiat-Shamir draws, so every
-iteration runs the same program on the same data.
+Every window is replayable because `Challenger` advances by REPLACING its
+immutable `_t` pytree: snapshotting `_t` and re-assigning it before each
+iteration replays byte-identical Fiat-Shamir draws, so every iteration runs the
+same program on the same data. Rebuilding the state per iteration instead would
+pay a fresh commit each time.
 
-Attribution method: `busy` = sum of on-device kernel durations, `wall` =
-clean un-profiled runs, `latency` = wall - busy. Kernels are attributed to
-NVTX ranges by HOST-ENQUEUE containment — each kernel's CUDA API row (joined
-via correlationId) locates the dispatch inside the range that issued it.
-This deliberately differs from the device-timestamp containment earlier
-sessions used: dispatch is async, so device-time containment re-attributes an
-early sub-step's kernels to whichever range the host had reached by the time
-they ran (measured here: it moved ring_switch's bit-select reduces into the
-jitted-open range), and it lands kernels that overlap a blocking
-`pure_callback` inside the callback's thunk range. The enqueue anchor fixes
-both.
+Attribution method: `busy` = sum of on-device kernel durations, `wall` = clean
+un-profiled runs, `latency` = wall - busy. Kernels are attributed to NVTX
+ranges by HOST-ENQUEUE containment — each kernel's CUDA API row (joined via
+correlationId) locates the dispatch inside the range that issued it. This
+deliberately differs from the device-timestamp containment earlier sessions
+used: dispatch is async, so device-time containment re-attributes an early
+sub-step's kernels to whichever range the host had reached by the time they ran
+(measured: it moved ring_switch's bit-select reduces into the jitted-open
+range), and it lands kernels that overlap a blocking `pure_callback` inside the
+callback's thunk range. The enqueue anchor fixes both.
+
+`--cuda-graph-trace=node` is mandatory in the capture: without it XLA's
+CUDA-graph dispatches under-report kernels ~50x.
 
 Run (the toolchain preamble is load-bearing — ptxas 12.9 silently selects
 soft-GHASH, 5.5x on the prove; `commit` at tens of ms instead of ~1.3 ms at
-m28 is the tell):
+m28 is the tell. See docs/measurement.md, which also says NOT to set
+XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async):
 
     export CUDA_ROOT=$HOME/.local/cuda13   # must be a 13.3 ptxas
     export FRX_PLATFORMS=cuda,cpu XLA_PYTHON_CLIENT_PREALLOCATE=false
     unset JAX_PLATFORMS XLA_PYTHON_CLIENT_ALLOCATOR JAX_COMPILATION_CACHE_DIR
     export PATH="$CUDA_ROOT/bin:$PATH"
     PY="python:$(scripts/zorch_pythonpath.sh)"
+    H=python/flock_zorch/testing/nsys_capture.py
 
     # clean walls (no nsys):
-    PYTHONPATH="$PY" .venv/bin/python \
-        python/flock_zorch/testing/open_nsys_capture.py --golden \
-        blake3_ligerito_golden_m32.bin --walls 12
+    PYTHONPATH="$PY" .venv/bin/python "$H" --window zerocheck-ml \
+        --golden blake3_ligerito_golden_m32.bin --walls 12
 
     # capture:
     nsys profile --capture-range=cudaProfilerApi --capture-range-end=stop \
-        --cuda-graph-trace=node --trace=cuda,nvtx -o open_m32 \
-        --force-overwrite true env PYTHONPATH="$PY" .venv/bin/python \
-        python/flock_zorch/testing/open_nsys_capture.py --golden \
-        blake3_ligerito_golden_m32.bin
-    nsys export --type sqlite --force-overwrite true -o open_m32.sqlite \
-        open_m32.nsys-rep
+        --cuda-graph-trace=node --trace=cuda,nvtx -o zcml_m32 \
+        --force-overwrite true env PYTHONPATH="$PY" .venv/bin/python "$H" \
+        --window zerocheck-ml --golden blake3_ligerito_golden_m32.bin
+    nsys export --type sqlite --force-overwrite true -o zcml_m32.sqlite \
+        zcml_m32.nsys-rep
 
-    # report:
-    .venv/bin/python python/flock_zorch/testing/open_nsys_capture.py \
-        --report open_m32.sqlite
+    # report (pass the same --window so sub-step ranges are picked up):
+    .venv/bin/python "$H" --window zerocheck-ml --report zcml_m32.sqlite
 """
 from __future__ import annotations
 
@@ -71,6 +88,7 @@ import ctypes
 import sqlite3
 import time
 from collections import defaultdict
+from typing import Any
 
 # ------------------------------------------------------------------ NVTX / CUPTI
 #
@@ -177,15 +195,112 @@ def _build_open(golden: str):
     return open_once, meta
 
 
-_SUBSTEPS = (
-    ("flock_zorch.pcs.ring_switch", "prove_batched", "open/ring_switch"),
-    ("flock_zorch.prover", "_combine_claims", "open/combine_claims"),
-    ("flock_zorch.pcs.ligerito", "_open_jitted", "open/ligerito_jitted"),
-    ("flock_zorch.pcs.ligerito", "_flock_proof_dict", "open/proof_dict"),
-)
+def _build_zerocheck(golden: str, which: str):
+    """Run the prove up to one zerocheck `ProverRound` and return a replayable
+    thunk for that round — `urm` for round-1's univariate skip, `ml` for the
+    multilinear ladder.
+
+    `zerocheck` is the case that forces a round-level window rather than a
+    phase-level one: its two rounds turned out to have opposite bindings — the
+    round-1 URM composite arithmetic-bound at ~9x its read roofline, the ladder
+    bandwidth-bound with its folds already at 90% of peak — so a zerocheck-level
+    number cannot pick either one's lever, and a diagnosis carried from one
+    round to the other is simply wrong.
+
+    `prove_rounds` is a bare loop over `rnd(carry, transcript)`, so driving the
+    rounds one at a time here is the shipped path rather than an approximation
+    of it. The carry construction mirrors `zerocheck.prove_packed` and has to
+    follow it if that changes shape.
+    """
+    import frx
+
+    frx.config.update("jax_enable_x64", True)
+    import frx.numpy as fnp
+
+    from flock_zorch import lincheck, prover
+    from flock_zorch.challenger import Challenger
+    from flock_zorch.pcs import ligerito as zorch_ligerito
+    from flock_zorch.testing._util import await_all
+    from flock_zorch.testing.prove_phase_bench import Circuit
+    from flock_zorch.zerocheck import prover as zcp
+
+    circ = Circuit("blake3")
+    g = circ.ingest(golden)
+    meta, cfg = g["meta"], g["cfg"]
+    m, k_log = meta["m"], meta["k_log"]
+
+    a_bits, b_bits, c_bits = (frx.device_put(x) for x in (g["a"], g["b"], g["z"]))
+    z = c_bits  # same host array as the C track; saves 512 MiB at m32
+    lincheck.stripe_to_device(g["zlc"], m, k_log)
+
+    root, _pdata = zorch_ligerito.commit_flock_ligerito(cfg, z)
+    ch = Challenger(circ.domain)
+    prover.bind_statement(ch, g["stmt"], root)
+
+    k_skip = zcp.K_SKIP
+    r_skip, r_outer = zcp.sample_challenge_coords(ch, m, k_skip)
+    r = fnp.concatenate([r_skip, zcp._SMALL_G, zcp._MEDIUM_G, r_outer])
+    carry = zcp._ZerocheckCarry(a_bits, b_bits, c_bits, r=r)
+    urm, ml = zcp.zerocheck_steps(m, k_skip)
+    if which == "ml":
+        carry, ch, _ = urm(carry, ch)
+        await_all(carry)  # the URM is settled OUTSIDE the measured window
+    rnd = ml if which == "ml" else urm
+
+    # Same replay trick as the open: the rounds are functional in `carry`, and
+    # the Challenger advances by REPLACING its immutable `_t`, so restoring the
+    # snapshot replays byte-identical Fiat-Shamir draws. Rebuilding the whole
+    # state per iteration instead would pay a fresh commit each time.
+    t_snapshot = ch._t
+
+    def round_once():
+        ch._t = t_snapshot
+        return await_all(rnd(carry, ch))
+
+    return round_once, meta
 
 
-def _wrap_substeps(nvtx: _Nvtx):
+_SUBSTEPS: dict[str, tuple[tuple[str, str, str], ...]] = {
+    "open": (
+        ("flock_zorch.pcs.ring_switch", "prove_batched", "open/ring_switch"),
+        ("flock_zorch.prover", "_combine_claims", "open/combine_claims"),
+        ("flock_zorch.pcs.ligerito", "_open_jitted", "open/ligerito_jitted"),
+        ("flock_zorch.pcs.ligerito", "_flock_proof_dict", "open/proof_dict"),
+    ),
+    # Patch on `zerocheck.prover`, not on `._fold`: the round body looks these
+    # up in its own module globals, so that is where the wrapper must land.
+    "zerocheck-ml": (
+        ("flock_zorch.zerocheck.prover", "_lagrange_weights", "zerocheck-ml/weights"),
+        ("flock_zorch.zerocheck.prover", "_fold_at_z", "zerocheck-ml/fold_at_z"),
+        ("flock_zorch.zerocheck.prover", "_EQ_TABLES", "zerocheck-ml/eq_tables"),
+        ("flock_zorch.zerocheck.prover", "_mlv_sumcheck", "zerocheck-ml/mlv_sumcheck"),
+    ),
+    "zerocheck-urm": (
+        ("flock_zorch.zerocheck._urm", "round1_rows", "zerocheck-urm/round1_rows"),
+        (
+            "flock_zorch.zerocheck.prover",
+            "_interpolate_at_z_on_lambda",
+            "zerocheck-urm/interpolate",
+        ),
+    ),
+}
+
+# name -> (build thunk, sub-steps). The capture/walls/report machinery below is
+# window-agnostic; only these two entries differ per window.
+WINDOWS: dict[str, tuple[Any, tuple[tuple[str, str, str], ...]]] = {
+    "open": (lambda golden: _build_open(golden), _SUBSTEPS["open"]),
+    "zerocheck-urm": (
+        lambda golden: _build_zerocheck(golden, "urm"),
+        _SUBSTEPS["zerocheck-urm"],
+    ),
+    "zerocheck-ml": (
+        lambda golden: _build_zerocheck(golden, "ml"),
+        _SUBSTEPS["zerocheck-ml"],
+    ),
+}
+
+
+def _wrap_substeps(nvtx: _Nvtx, substeps):
     """Monkeypatch NVTX push/pop around the open's sub-steps.
 
     Wrapping at the callee modules (not `prover.open_batch_mixed_ligerito`'s
@@ -195,7 +310,7 @@ def _wrap_substeps(nvtx: _Nvtx):
     """
     import importlib
 
-    for mod_name, fn_name, label in _SUBSTEPS:
+    for mod_name, fn_name, label in substeps:
         mod = importlib.import_module(mod_name)
         fn = getattr(mod, fn_name)
 
@@ -210,39 +325,41 @@ def _wrap_substeps(nvtx: _Nvtx):
 
 
 def run_capture(args) -> int:
+    build, substeps = WINDOWS[args.window]
     nvtx = _Nvtx()
     prof = _Profiler()
-    open_once, meta = _build_open(args.golden)
+    once, meta = build(args.golden)
 
     for _ in range(2):  # compile + warm
-        open_once()
+        once()
 
-    _wrap_substeps(nvtx)
+    _wrap_substeps(nvtx, substeps)
     prof.start()
-    nvtx.push("open")
-    open_once()
+    nvtx.push(args.window)
+    once()
     nvtx.pop()
     prof.stop()
-    print(f"captured one warm open iteration (m={meta['m']})")
+    print(f"captured one warm {args.window} iteration (m={meta['m']})")
     return 0
 
 
 def run_walls(args) -> int:
     import numpy as np
 
-    open_once, meta = _build_open(args.golden)
+    build, _ = WINDOWS[args.window]
+    once, meta = build(args.golden)
     for _ in range(2):
-        open_once()
+        once()
 
     ms = []
     for _ in range(args.walls):
         t0 = time.perf_counter()
-        open_once()
+        once()
         ms.append((time.perf_counter() - t0) * 1e3)
     arr = np.array(ms)
     p10, med = np.percentile(arr, 10), np.median(arr)
     print(
-        f"open m={meta['m']} walls over {args.walls} iters: "
+        f"{args.window} m={meta['m']} walls over {args.walls} iters: "
         f"p10 {p10:.3f} ms | median {med:.3f} ms | min {arr.min():.3f} ms | "
         f"max {arr.max():.3f} ms | spread (max/min - 1) {arr.max() / arr.min() - 1:.1%}"
     )
@@ -312,7 +429,7 @@ def run_report(args) -> int:
             "--cuda-graph-trace=node and --capture-range=cudaProfilerApi?"
         )
 
-    ours = [r for r in ranges if r[2] and r[2].startswith("open")]
+    ours = [r for r in ranges if r[2] and r[2].startswith(args.window)]
     thunks = [r for r in ranges if r[2] and "Thunk" in r[2]]
 
     def contained(host_t, rs):
@@ -368,7 +485,7 @@ def run_report(args) -> int:
     # thunk), so those thunk ranges inside the `open/ligerito_jitted` window
     # are the level fences.
     lig = next((r for r in ours if r[2] == "open/ligerito_jitted"), None)
-    if lig is not None:
+    if lig is not None:  # open-only: no other window has recursion levels
         fences = sorted(
             (s, e)
             for s, e, t in thunks
@@ -403,7 +520,13 @@ def main() -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("--golden", default="blake3_ligerito_golden.bin")
-    ap.add_argument("--walls", type=int, help="N un-profiled open iterations")
+    ap.add_argument(
+        "--window",
+        choices=tuple(WINDOWS),
+        default="open",
+        help="which prover window to isolate",
+    )
+    ap.add_argument("--walls", type=int, help="N un-profiled iterations")
     ap.add_argument("--report", help="exported nsys sqlite to analyze")
     ap.add_argument("--top", type=int, default=12, help="rows in report tables")
     args = ap.parse_args()
