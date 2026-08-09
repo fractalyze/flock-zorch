@@ -22,8 +22,8 @@ The benchmark itself — how to run it and what it has published — is in
   +35% m32 throughput difference (#200 erratum) — every m32 wall measured under
   it had to be thrown away.
 - **Do not set `XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async` by default.** At m32 it
-  *inflates* the prove **~16%** — 82.0 ms without it vs 95.0 ms with it, means
-  of three interleaved fresh processes per arm, `--throughput` best-of-10 each,
+  *inflates* the prove **~14%** — 71.8 ms without it vs 81.6 ms with it, means
+  of three fresh processes per arm, `--throughput` best-of-10 each,
   idle RTX 5090 — and it is also what makes the barriered phase-split mode OOM
   in its warm-up prove. `XLA_PYTHON_CLIENT_PREALLOCATE=false` alone suffices at
   m32. Reach for the async allocator only against an actual allocator OOM. The
