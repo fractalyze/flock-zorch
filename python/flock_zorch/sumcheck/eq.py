@@ -196,3 +196,37 @@ def eval_deferred(triple, rho):
     the char-2 quadratic `w_lo + (w_lo+w_hi+w_sum)·ρ + w_hi·ρ²`."""
     lo, hi, s = triple
     return lo + (lo + hi + s) * rho + hi * (rho * rho)
+
+
+def round_pair_eq_deferred_sq(ag, eq_sqrt_next):
+    """`round_pair_eq_deferred` on the equal-factor path (b ≡ a).
+
+    The sq round's message values are squares of √eq-weighted sums
+    (`round_pair_eq_sq`), and round i's fold sends those sums to values LINEAR
+    in the not-yet-sampled ρ_i — so char-2 squaring kills the cross term:
+    `(A + ρB)² = A² + ρ²·B²`. Each deferred message value therefore needs a
+    coefficient PAIR of √eq_next-weighted sums (one weighting mul each), not
+    the generic path's Karatsuba triple. Over groups of four
+    (v0..v3 = ag[4z..4z+4], e = v0+v2, o = v1+v3):
+
+        G(1):  A = Σ √eq_next·v2,  B = Σ √eq_next·(v2+v3)
+        G(∞):  C = Σ √eq_next·e,   D = Σ √eq_next·(e+o)
+
+    Evaluate with `eval_deferred_sq` once ρ_i is drawn; the caller scales
+    G(1) by its r₀ as usual."""
+    a4 = ag.reshape(-1, 4)
+    g_one = (
+        fnp.sum(eq_sqrt_next * a4[:, 2]),
+        fnp.sum(eq_sqrt_next * (a4[:, 2] + a4[:, 3])),
+    )
+    e, o = a4[:, 0] + a4[:, 2], a4[:, 1] + a4[:, 3]
+    g_inf = (fnp.sum(eq_sqrt_next * e), fnp.sum(eq_sqrt_next * (e + o)))
+    return g_one, g_inf
+
+
+def eval_deferred_sq(pair, rho):
+    """Evaluate a `round_pair_eq_deferred_sq` coefficient pair at the sampled
+    ρ: `(A + ρB)² = A² + ρ²·B²` — char-2 squaring distributes, no cross
+    term."""
+    a, b = pair
+    return a * a + (rho * rho) * (b * b)
