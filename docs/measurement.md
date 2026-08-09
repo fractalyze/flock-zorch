@@ -62,3 +62,13 @@ The benchmark itself — how to run it and what it has published — is in
   CUPTI tracing rather than hardware counters. Under sudo, pin `HOME` and use
   absolute paths, or the env reset sends `CUDA_ROOT` and the venv to root's
   home and you measure the software-GHASH path.
+- **When ncu is unavailable, bound the bytes — don't re-derive them from
+  shapes.** Once ncu has priced a kernel *once*, its achieved bandwidth is a
+  ceiling you can hold it to later: a kernel that ran at 1.68 TB/s cannot move
+  more than `1.68 TB/s × wall` on the same hardware, and nsys gives the wall
+  without any counter permission. That turned "did the fix stop re-reading the
+  operands?" into arithmetic — 1.627 ms × 1.68 TB/s = 2.73 GB against the
+  2.684 GB the data dependencies require, so within 2% of one traversal. It
+  bounds from above only, which is exactly the direction a "we now move fewer
+  bytes" claim needs, and it is why the shape-derived figures this file warns
+  about are never the fallback.
