@@ -210,10 +210,17 @@ def _build_open(golden: str):
     return open_once, meta
 
 
-def _build_zerocheck(golden: str, which: str):
+def _build_zerocheck(golden: str, which: str, equal_factors: bool = False):
     """Run the prove up to one zerocheck `ProverRound` and return a replayable
     thunk for that round — `urm` for round-1's univariate skip, `ml` for the
     multilinear ladder.
+
+    `equal_factors=True` aliases the B track to the SAME device array as A,
+    which is what routes the multilinear tail onto the equal-factor
+    squared-sum ladder (`b_rows is a_rows`). The proved instance is then
+    a·a ⊕ c — NOT the golden's proof, so this mode is a wall/attribution
+    channel only (it sizes the sq ladder on a real witness at the golden's m);
+    the identity e2e byte gate pins the sq wire separately.
 
     `zerocheck` is the case that forces a round-level window rather than a
     phase-level one: its two rounds turned out to have opposite bindings — the
@@ -245,6 +252,8 @@ def _build_zerocheck(golden: str, which: str):
     m, k_log = meta["m"], meta["k_log"]
 
     a_bits, b_bits, c_bits = (frx.device_put(x) for x in (g["a"], g["b"], g["z"]))
+    if equal_factors:
+        b_bits = a_bits  # alias, don't copy — `is` routes the sq ladder
     z = c_bits  # same host array as the C track; saves 512 MiB at m32
     lincheck.stripe_to_device(g["zlc"], m, k_log)
 
@@ -290,6 +299,21 @@ _SUBSTEPS: dict[str, tuple[tuple[str, str, str], ...]] = {
         ("flock_zorch.zerocheck.prover", "_EQ_TABLES", "zerocheck-ml/eq_tables"),
         ("flock_zorch.zerocheck.prover", "_mlv_sumcheck", "zerocheck-ml/mlv_sumcheck"),
     ),
+    "zerocheck-ml-sq": (
+        (
+            "flock_zorch.zerocheck.prover",
+            "_lagrange_weights",
+            "zerocheck-ml-sq/weights",
+        ),
+        ("flock_zorch.zerocheck.prover", "_fold_at_z", "zerocheck-ml-sq/fold_at_z"),
+        ("flock_zorch.zerocheck.prover", "_SQRT", "zerocheck-ml-sq/sqrt"),
+        ("flock_zorch.zerocheck.prover", "_EQ_TABLES", "zerocheck-ml-sq/eq_tables"),
+        (
+            "flock_zorch.zerocheck.prover",
+            "_mlv_sumcheck_sq",
+            "zerocheck-ml-sq/mlv_sumcheck_sq",
+        ),
+    ),
     "zerocheck-urm": (
         ("flock_zorch.zerocheck._urm", "round1_rows", "zerocheck-urm/round1_rows"),
         (
@@ -311,6 +335,10 @@ WINDOWS: dict[str, tuple[Any, tuple[tuple[str, str, str], ...]]] = {
     "zerocheck-ml": (
         lambda golden: _build_zerocheck(golden, "ml"),
         _SUBSTEPS["zerocheck-ml"],
+    ),
+    "zerocheck-ml-sq": (
+        lambda golden: _build_zerocheck(golden, "ml", equal_factors=True),
+        _SUBSTEPS["zerocheck-ml-sq"],
     ),
 }
 

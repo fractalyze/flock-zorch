@@ -183,13 +183,44 @@ def _mlv_round_sq(a_g, eq_sqrt_g, r0_g, t):
 
 
 @frx.jit
+def _mlv_round_pair_sq(a_g, eq_sqrt_g, eq_sqrt_next_g, r0_g, t):
+    """`_mlv_round_pair` for the equal-factor ladder (b ≡ a): round i+1's
+    squared-sum message rides round i's array read as a deferred coefficient
+    pair (`sumcheck.round_pair_eq_deferred_sq`), and the two folds compose
+    into one quartering pass of the single factor state."""
+    m1, minf = sumcheck.round_pair_eq_sq(a_g, eq_sqrt_g, r0_g)
+    g_one, g_inf = sumcheck.round_pair_eq_deferred_sq(a_g, eq_sqrt_next_g)
+
+    t = t.observe_scalar(m1).observe_scalar(minf)
+    t, rho = t.sample_scalar()
+
+    m1_next = r0_g * sumcheck.eval_deferred_sq(g_one, rho)
+    minf_next = sumcheck.eval_deferred_sq(g_inf, rho)
+    t = t.observe_scalar(m1_next).observe_scalar(minf_next)
+    t, rho_next = t.sample_scalar()
+
+    a2 = fold(fold(a_g, rho, msb=False), rho_next, msb=False)
+    return a2, t, ((m1, minf), (m1_next, minf_next)), (rho, rho_next)
+
+
+@frx.jit
 def _mlv_sumcheck_sq(a_g, eq_sqrt_tables, r0_g, t):
     """`_mlv_sumcheck` on the equal-factor path — the same wire: message values
     are exact field identities of the generic pair's, and the final b̂ observe
-    repeats â's value, which is what the generic path serializes too."""
+    repeats â's value, which is what the generic path serializes too.
+
+    Rounds trace in composed pairs (`_mlv_round_pair_sq`) with the odd tail on
+    the single round — the same schedule as the generic ladder."""
     rounds, rhos = [], []
-    for eq_g in eq_sqrt_tables:
-        a_g, t, m1, minf, rho = _mlv_round_sq(a_g, eq_g, r0_g, t)
+    n_mlv = len(eq_sqrt_tables)
+    for i in range(0, n_mlv - 1, 2):
+        a_g, t, msgs, pair_rhos = _mlv_round_pair_sq(
+            a_g, eq_sqrt_tables[i], eq_sqrt_tables[i + 1], r0_g, t
+        )
+        rounds.extend(msgs)
+        rhos.extend(pair_rhos)
+    if n_mlv % 2:
+        a_g, t, m1, minf, rho = _mlv_round_sq(a_g, eq_sqrt_tables[-1], r0_g, t)
         rounds.append((m1, minf))
         rhos.append(rho)
     final_a = a_g[0]
