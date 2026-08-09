@@ -156,3 +156,43 @@ def round_pair_eq_sq(ag, eq_sqrt, r0g):
     g_one = fnp.sum(eq_sqrt * a1)
     g_inf = fnp.sum(eq_sqrt * (a0 + a1))
     return r0g * (g_one * g_one), g_inf * g_inf
+
+
+def round_pair_eq_deferred(ag, bg, eq_next):
+    """Round i+1's message precursors off round i's array read — the cascade
+    composition's deferred half.
+
+    Over groups of four (v0..v3 = ag[4z..4z+4]), round i's fold at the
+    not-yet-sampled ρ_i sends the `[2z+1]` element to `v2 + ρ_i(v2+v3)` and the
+    pair sum to `e + ρ_i(e+o)` (e = v0+v2, o = v1+v3), so round i+1's G(1) and
+    G(∞) are quadratics in ρ_i whose Karatsuba coefficient triples
+    `(w_lo, w_hi, w_sum)` are the six eq-weighted aggregates below — no second
+    array read. Evaluate with `eval_deferred` once ρ_i is drawn; the caller
+    scales G(1) by its r₀ as usual.
+
+    The six reductions are hand-written rather than routed through
+    `summand_evals` (cf. `round_pair_eq`): the operands stay strided views of
+    the one array read and the Karatsuba structure stays legible — the same
+    trade `round_pair_eq_sq` makes."""
+    a4 = ag.reshape(-1, 4)
+    b4 = bg.reshape(-1, 4)
+
+    def _triple(x0, x1, y0, y1):
+        return (
+            fnp.sum(eq_next * (x0 * y0)),
+            fnp.sum(eq_next * ((x0 + x1) * (y0 + y1))),
+            fnp.sum(eq_next * (x1 * y1)),
+        )
+
+    g_one = _triple(a4[:, 2], a4[:, 3], b4[:, 2], b4[:, 3])
+    e_a, o_a = a4[:, 0] + a4[:, 2], a4[:, 1] + a4[:, 3]
+    e_b, o_b = b4[:, 0] + b4[:, 2], b4[:, 1] + b4[:, 3]
+    g_inf = _triple(e_a, o_a, e_b, o_b)
+    return g_one, g_inf
+
+
+def eval_deferred(triple, rho):
+    """Evaluate a `round_pair_eq_deferred` Karatsuba triple at the sampled ρ:
+    the char-2 quadratic `w_lo + (w_lo+w_hi+w_sum)·ρ + w_hi·ρ²`."""
+    lo, hi, s = triple
+    return lo + (lo + hi + s) * rho + hi * (rho * rho)

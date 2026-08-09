@@ -114,6 +114,33 @@ def _mlv_round(a_g, b_g, eq_g, r0_g, t):
 
 
 @frx.jit
+def _mlv_round_pair(a_g, b_g, eq_g, eq_next_g, r0_g, t):
+    """TWO multilinear rounds as one traced block — the cascade composition.
+
+    Round i's message reads the array as usual; round i+1's message is CARRIED
+    as a deferred quadratic in the not-yet-sampled ρ_i
+    (`sumcheck.round_pair_eq_deferred`), so it needs no second array read, and
+    the two folds compose into one quartering pass. Pure reassociation of
+    exact GF(2^128) arithmetic — the transcript bytes cannot move — and per
+    round pair it deletes one full array read (the second message pass) and
+    one intermediate half-size write+read (the second fold's input)."""
+    m1, minf = sumcheck.round_pair_eq(a_g, b_g, eq_g, r0_g)
+    g_one, g_inf = sumcheck.round_pair_eq_deferred(a_g, b_g, eq_next_g)
+
+    t = t.observe_scalar(m1).observe_scalar(minf)
+    t, rho = t.sample_scalar()
+
+    m1_next = r0_g * sumcheck.eval_deferred(g_one, rho)
+    minf_next = sumcheck.eval_deferred(g_inf, rho)
+    t = t.observe_scalar(m1_next).observe_scalar(minf_next)
+    t, rho_next = t.sample_scalar()
+
+    a2 = fold(fold(a_g, rho, msb=False), rho_next, msb=False)
+    b2 = fold(fold(b_g, rho, msb=False), rho_next, msb=False)
+    return a2, b2, t, ((m1, minf), (m1_next, minf_next)), (rho, rho_next)
+
+
+@frx.jit
 def _mlv_sumcheck(a_g, b_g, eq_tables, r0_g, t):
     """Run the complete multilinear tail as one device program.
 
@@ -121,10 +148,21 @@ def _mlv_sumcheck(a_g, b_g, eq_tables, r0_g, t):
     unrolls the protocol without a host-controlled loop.  This used to be a bad
     trade while each SHA-256 transcript hop lowered as a streaming loop; the
     dedicated SHA kernels and current XLA fusion make it worth re-evaluating.
+
+    Rounds trace in composed pairs (`_mlv_round_pair`); the pair's deferred
+    group of four holds exactly while two rounds remain, so an odd round
+    count leaves one single `_mlv_round` at the end.
     """
     rounds, rhos = [], []
-    for eq_g in eq_tables:
-        a_g, b_g, t, m1, minf, rho = _mlv_round(a_g, b_g, eq_g, r0_g, t)
+    n_mlv = len(eq_tables)
+    for i in range(0, n_mlv - 1, 2):
+        a_g, b_g, t, msgs, pair_rhos = _mlv_round_pair(
+            a_g, b_g, eq_tables[i], eq_tables[i + 1], r0_g, t
+        )
+        rounds.extend(msgs)
+        rhos.extend(pair_rhos)
+    if n_mlv % 2:
+        a_g, b_g, t, m1, minf, rho = _mlv_round(a_g, b_g, eq_tables[-1], r0_g, t)
         rounds.append((m1, minf))
         rhos.append(rho)
     final_a, final_b = a_g[0], b_g[0]
