@@ -57,6 +57,16 @@ The benchmark itself — how to run it and what it has published — is in
   stall line pointed at loads. And profile the slow kernel's *neighbours in the
   same capture* — siblings at 76–86% DRAM turn "is 707 GB/s good?" from a
   judgement call into a measurement.
+- **Never derive DRAM traffic from shapes when `ncu` can count it.** Dividing
+  shape-derived bytes by a wall gives a bandwidth figure that looks like a
+  measurement and is not one: the same kernel was published at 56% of peak, then
+  47%, before the counters said **95% while moving 2.00× the bytes its operands
+  require**. The wall was right every time; the byte count was the error, and
+  each wrong figure pointed at a different lever — "tune the inefficient kernel"
+  instead of the real one, "stop it reading everything twice". A kernel at 95%
+  of peak has nothing to win from tuning; one moving twice its operands has a
+  redundant traversal to delete. Those are opposite pieces of work, so the byte
+  count has to come from `ncu`'s DRAM counters, not from `len(x) * itemsize`.
 - **ncu needs `sudo` on the build box** (`ERR_NVGPUCTRPERM`, all-or-nothing —
   it refuses even `--section LaunchStats`). nsys is unaffected because it uses
   CUPTI tracing rather than hardware counters. Under sudo, pin `HOME` and use
