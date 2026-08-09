@@ -75,9 +75,14 @@ def round_pair_eq(ag, bg, eq, r0g):
 
     The message `[G(1), G(∞)]` is zorch's compressed product round on the low bind:
     `summand_evals` over `compressed_domain(1)` with the eq suffix as the per-point
-    weight and `msb=False` (`s(∞)`'s char-2 `(a1−a0)` is flock's `(a0+a1)`)."""
+    weight and `msb=False` (`s(∞)`'s char-2 `(a1−a0)` is flock's `(a0+a1)`).
+
+    The factors ride UNSTACKED so no concatenate sits between the caller's
+    just-folded `a`/`b` and this reduction's products — the shape the GPU
+    multi-output fuser needs to merge the previous round's fold into this
+    round's message kernel (`_mlv_round` pins the carry for the same merge)."""
     g_one, g_inf = summand_evals(
-        fnp.stack([ag, bg]),
+        (ag, bg),
         _PRODUCT2,
         compressed_domain(1, ag.dtype),
         weight=eq,

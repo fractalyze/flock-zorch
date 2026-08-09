@@ -110,6 +110,15 @@ def _mlv_round(a_g, b_g, eq_g, r0_g, t):
     m1, minf = sumcheck.round_pair_eq(a_g, b_g, eq_g, r0_g)
     t = t.observe_scalar(m1).observe_scalar(minf)
     t, rho = t.sample_scalar()
+    # Pin the reduce-consumed state before folding it again. Left free, the
+    # GPU fuser recomputes each fold inside downstream consumers instead of
+    # materializing it, and the next round's reduce then re-streams up to
+    # twice its state. Pinned, the whole per-factor fold must materialize,
+    # and the multi-output fuser merges it with the round message that reads
+    # it (round_pair_eq keeps the factors unstacked for the same merge) —
+    # fold_i and reduce_{i+1} land in ONE kernel; there is no Fiat-Shamir
+    # barrier between them, only between a reduce and its own fold.
+    a_g, b_g = frx.lax.optimization_barrier((a_g, b_g))
     return fold(a_g, rho, msb=False), fold(b_g, rho, msb=False), t, m1, minf, rho
 
 
