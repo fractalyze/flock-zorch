@@ -167,6 +167,20 @@ py_test(
     ],
 )
 
+# No golden: the equal-factor (squared-sum) ladder is byte-exact against the
+# generic one — the char-2 Frobenius identity the booleanity fast path rests on.
+# Software-mul, so it runs on CPU.
+py_test(
+    name = "squared_ladder_test",
+    size = "medium",
+    srcs = ["flock_zorch/zerocheck/testing/squared_ladder_test.py"],
+    deps = [
+        ":flock_zorch",
+        ":test_support",
+        requirement("absl-py"),
+    ],
+)
+
 # No golden: round-1's row blocking is byte-exact at every block count — the
 # partition argument the m32 footprint fix (#179) rests on. Pure host.
 py_test(

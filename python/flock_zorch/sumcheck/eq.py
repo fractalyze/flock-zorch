@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import frx.numpy as fnp
 from zorch.poly.eq import expand_eq_to_hypercube
-from zorch.sumcheck.domain import compressed_domain, summand_evals
+from zorch.sumcheck.domain import compressed_domain, split_pairs, summand_evals
 from zorch.sumcheck.prover import ProductSummand
 
 from flock_zorch import ghash
@@ -84,3 +84,39 @@ def round_pair_eq(ag, bg, eq, r0g):
         msb=False,
     )
     return r0g * g_one, g_inf
+
+
+def sqrt_ghash(x):
+    """√x in GF(2¹²⁸): x^(2¹²⁷), the inverse of the Frobenius x ↦ x², as 127
+    squarings. Unique and total (x^(2¹²⁸) = x for every x, zero included), and an
+    automorphism over char 2 — √ distributes over both `+` and `·`, which is what
+    lets `build_eq_suffix_tables(sqrt_ghash(cs))` produce exactly √(eq table):
+    every chain layer multiplies by √c or √c + 1 = √(c + 1)."""
+    for _ in range(127):
+        x = x * x
+    return x
+
+
+def round_pair_eq_sq(ag, eq_sqrt, r0g):
+    """`round_pair_eq` for the equal-factor round (b ≡ a — the identity R1CS
+    instance proves ẑ∘ẑ ⊕ ẑ = 0, so both product factors are the same
+    multilinear; hash circuits keep distinct Az/Bz tracks and the generic
+    round), at half the multiplies: every product is then a square, and
+    char-2 squaring distributes over the XOR-sum, so
+
+        Σ eq·a₁·a₁ = (Σ √eq·a₁)²   and   Σ eq·S·S = (Σ √eq·S)²,  S = a₀+a₁.
+
+    Takes the √eq suffix table (`build_eq_suffix_tables` over `sqrt_ghash`
+    challenges) in place of eq: one weighting mul per pair replaces the generic
+    path's product + weighting pair — 2 muls/pair against 4 — and the closing
+    squares are two scalar muls. The wire pair `[r₀·G(1), G(∞)]` is byte-identical:
+    the rearrangement is an exact field identity, GF sums reorder freely.
+
+    Equal factors are the identity's whole domain: char 2 has no polarization
+    (x+y squared is x² + y²), so a distinct-factor product a₁·b₁ cannot be
+    recovered from squares — this is an instance specialization, not a general
+    round speedup."""
+    a0, a1 = split_pairs(ag)
+    g_one = fnp.sum(eq_sqrt * a1)
+    g_inf = fnp.sum(eq_sqrt * (a0 + a1))
+    return r0g * (g_one * g_one), g_inf * g_inf
