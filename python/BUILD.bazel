@@ -148,6 +148,7 @@ py_test(
     srcs = ["flock_zorch/lincheck/testing/stripe_residency_test.py"],
     deps = [
         ":flock_zorch",
+        ":test_support",
         requirement("absl-py"),
     ],
 )
@@ -192,6 +193,7 @@ py_test(
     srcs = ["flock_zorch/sumcheck/testing/eq_test.py"],
     deps = [
         ":flock_zorch",
+        ":test_support",
         requirement("absl-py"),
     ],
 )
