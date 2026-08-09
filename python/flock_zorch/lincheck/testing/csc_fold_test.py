@@ -19,10 +19,7 @@ from absl.testing import absltest, parameterized  # noqa: E402
 
 from flock_zorch import ghash  # noqa: E402
 from flock_zorch.lincheck import CscCircuit  # noqa: E402
-
-
-def _rand_lanes(rng, n: int) -> np.ndarray:
-    return rng.integers(0, 1 << 63, size=(n, 2), dtype=np.uint64)
+from flock_zorch.testing._util import rand_ghash  # noqa: E402
 
 
 def _rand_rows(rng, n_rows: int, k: int, max_nnz: int) -> list[list[int]]:
@@ -47,12 +44,11 @@ class CscFoldTest(parameterized.TestCase):
 
     def _assert_fold_matches(self, a_rows, b_rows, k: int, seed: int):
         rng = np.random.default_rng(seed)
-        eq_lanes = _rand_lanes(rng, max(len(a_rows), len(b_rows)))
-        alpha = ghash.to_ghash(_rand_lanes(rng, 1)[0])  # (2,) lanes -> ghash scalar
+        eq_g = rand_ghash(rng, max(len(a_rows), len(b_rows)))
+        eq_lanes = ghash.to_lanes(eq_g)  # host view for the naive reference
+        alpha = rand_ghash(rng, 1)[0]
 
-        got = CscCircuit(a_rows, b_rows, k).fold_alpha_batched(
-            alpha, ghash.to_ghash(eq_lanes)
-        )
+        got = CscCircuit(a_rows, b_rows, k).fold_alpha_batched(alpha, eq_g)
         want = alpha * ghash.to_ghash(
             _ref_matvec_lanes(a_rows, eq_lanes, k)
         ) + ghash.to_ghash(_ref_matvec_lanes(b_rows, eq_lanes, k))

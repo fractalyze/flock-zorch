@@ -1,8 +1,9 @@
 # Copyright 2026 The Flock-Zorch Authors. SPDX-License-Identifier: Apache-2.0
-"""Shared timing helper for the bench scripts.
+"""Shared helpers for the suites under `**/testing/`: the random-ghash draw the
+native tests use, and the timing methodology the bench scripts use.
 
-Factored out of the per-bench copies so the timing methodology (warmup-excluded
-best-of-n) lives in one place.
+Each is factored out of per-file copies so the convention lives in one place —
+what "a random ghash" means, and warmup-excluded best-of-n timing.
 """
 from __future__ import annotations
 
@@ -10,6 +11,25 @@ import dataclasses
 import time
 
 import frx
+import frx.numpy as fnp
+import numpy as np
+
+from flock_zorch import ghash
+
+
+def rand_ghash(rng: np.random.Generator, n: int):
+    """`binary_field_ghash [n]` drawn from `rng`, uniform over GF(2^128).
+
+    The lane bound is the full `2**64` — `Generator.integers` accepts it as the
+    exclusive high for `dtype=uint64` — so every bit of both limbs is uniform
+    and the draw covers the whole field. The per-file copies this consolidates
+    had drifted between this and `1 << 63`, which always cleared the top bit of
+    each limb; no recorded reason for the narrower bound survives (the dtype is
+    uint64 end-to-end, so int64 signedness never enters), and the full-bound
+    draw was already in use elsewhere in the suite.
+    """
+    lanes = rng.integers(0, 2**64, size=(n, 2), dtype=np.uint64)
+    return ghash.to_ghash(fnp.asarray(lanes))
 
 
 def deep_leaves(x):

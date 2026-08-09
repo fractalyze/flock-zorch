@@ -24,6 +24,7 @@ import frx.numpy as fnp  # noqa: E402
 from absl.testing import absltest, parameterized  # noqa: E402
 
 from flock_zorch import ghash, sumcheck  # noqa: E402
+from flock_zorch.testing._util import rand_ghash  # noqa: E402
 from flock_zorch.zerocheck import _urm  # noqa: E402
 
 K_SKIP = 6
@@ -38,9 +39,7 @@ def _inputs(seed: int):
     )
     a, b, c = rows(), rows(), rows()
     n_challenges = K_SKIP + N_ROWS.bit_length() - 1
-    r = ghash.to_ghash(
-        fnp.asarray(rng.integers(0, 2**64, size=(n_challenges, 2), dtype=np.uint64))
-    )
+    r = rand_ghash(rng, n_challenges)
     return a, b, c, r
 
 

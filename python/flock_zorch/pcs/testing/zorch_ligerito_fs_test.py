@@ -39,6 +39,7 @@ from flock_zorch.pcs.ligerito import (  # noqa: E402
     flock_ligerito_config,
     flock_transcript,
 )
+from flock_zorch.testing._util import rand_ghash  # noqa: E402
 
 DOMAIN = b"flock-ligerito-test"
 
@@ -47,11 +48,6 @@ def _ghash(lohi) -> fnp.ndarray:
     return lax.bitcast_convert_type(
         fnp.asarray(np.asarray(lohi, np.uint64)), fnp.binary_field_ghash
     )
-
-
-def _rand_ghash(seed: int, n: int) -> fnp.ndarray:
-    rng = np.random.default_rng(seed)
-    return _ghash(rng.integers(0, 1 << 63, size=(n, 2), dtype=np.uint64))
 
 
 def _lohi(x) -> np.ndarray:
@@ -119,7 +115,7 @@ def check(name: str, ok: bool):
 def test_observe_framing():
     """observe: ghash scalar == observe_f128, vector == per-element observe_f128,
     uint8 == observe_bytes — buffer-exact vs the Challenger-side ops."""
-    vs = _rand_ghash(1, 3)
+    vs = rand_ghash(np.random.default_rng(1), 3)
     root = np.arange(32, dtype=np.uint8)
 
     t = flock_transcript(DOMAIN)
@@ -248,8 +244,8 @@ def test_round_trip_ghash():
     prover = LigeritoProver(make_code, merkle.GHASH_TREE, config, chor)
     verifier = LigeritoVerifier(make_code, merkle.GHASH_TREE, config, chor)
 
-    f = _rand_ghash(7, 1 << config.num_vars)
-    z = _rand_ghash(11, config.num_vars)
+    f = rand_ghash(np.random.default_rng(7), 1 << config.num_vars)
+    z = rand_ghash(np.random.default_rng(11), config.num_vars)
     root, pdata = prover.commit([f])
     claim = OpeningClaim(root, [z])
     opened = prover.prove(claim, OpeningWitness(pdata), flock_transcript(DOMAIN))

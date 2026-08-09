@@ -21,20 +21,11 @@ import numpy as np
 
 frx.config.update("jax_enable_x64", True)
 
-import frx.numpy as fnp  # noqa: E402
 from absl.testing import absltest  # noqa: E402
 
 from flock_zorch import ghash  # noqa: E402
 from flock_zorch.sumcheck import eq  # noqa: E402
-
-
-def _lanes(x) -> np.ndarray:
-    return np.asarray(ghash.to_lanes(x))
-
-
-def _rand_ghash(rng, n):
-    lanes = rng.integers(0, 1 << 63, size=(n, 2), dtype=np.uint64)
-    return ghash.to_ghash(fnp.asarray(lanes))
+from flock_zorch.testing._util import rand_ghash  # noqa: E402
 
 
 class BuildEqSuffixTablesTest(absltest.TestCase):
@@ -42,13 +33,15 @@ class BuildEqSuffixTablesTest(absltest.TestCase):
         # Below the split: every table — the empty-suffix scalar tail included —
         # equals an independent `build_eq` over its suffix.
         n = 5
-        cs = _rand_ghash(np.random.default_rng(7), n)
+        cs = rand_ghash(np.random.default_rng(7), n)
         tables = eq.build_eq_suffix_tables(cs)
         self.assertLen(tables, n + 1)
         for i in range(n + 1):
             self.assertEqual(tables[i].shape, (1 << (n - i),))
             np.testing.assert_array_equal(
-                _lanes(tables[i]), _lanes(eq.build_eq(cs[i:])), err_msg=f"i={i}"
+                ghash.to_lanes(tables[i]),
+                ghash.to_lanes(eq.build_eq(cs[i:])),
+                err_msg=f"i={i}",
             )
 
     def test_outer_split_matches_chain(self) -> None:
@@ -56,12 +49,14 @@ class BuildEqSuffixTablesTest(absltest.TestCase):
         # of a shared high half; they must stay byte-equal to the doubling
         # chain for every suffix, not just the largest.
         n = eq._OUTER_SPLIT_MIN
-        cs = _rand_ghash(np.random.default_rng(11), n)
+        cs = rand_ghash(np.random.default_rng(11), n)
         split = eq.build_eq_suffix_tables(cs)
         chain = eq._suffix_chain(cs)
         self.assertLen(split, n + 1)
         for i, (s, c) in enumerate(zip(split, chain)):
-            np.testing.assert_array_equal(_lanes(s), _lanes(c), err_msg=f"i={i}")
+            np.testing.assert_array_equal(
+                ghash.to_lanes(s), ghash.to_lanes(c), err_msg=f"i={i}"
+            )
 
 
 if __name__ == "__main__":
