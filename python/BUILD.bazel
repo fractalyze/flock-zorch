@@ -182,6 +182,21 @@ py_test(
     ],
 )
 
+# No golden: one composed round pair reproduces two single rounds exactly —
+# messages, sampled challenges, folded arrays, threaded transcript — on both
+# the generic and the equal-factor (four-sum basis) ladder. Software-mul, so
+# it runs on CPU.
+py_test(
+    name = "round_pair_cascade_test",
+    size = "medium",
+    srcs = ["flock_zorch/zerocheck/testing/round_pair_cascade_test.py"],
+    deps = [
+        ":flock_zorch",
+        ":test_support",
+        requirement("absl-py"),
+    ],
+)
+
 # No golden: `build_eq_suffix_tables` — every table equals per-suffix
 # `build_eq`, and the outer-product emission past `_OUTER_SPLIT_MIN` is
 # byte-equal to the doubling chain. Software-mul, so it runs on CPU; medium
