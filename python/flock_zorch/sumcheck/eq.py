@@ -26,7 +26,7 @@ Requires `jax_enable_x64`.
 from __future__ import annotations
 
 import frx.numpy as fnp
-from zorch.poly.eq import expand_eq_to_hypercube
+from zorch.poly.eq import expand_eq_to_hypercube, expand_hypercube_step
 from zorch.sumcheck.domain import compressed_domain, split_pairs, summand_evals
 from zorch.sumcheck.prover import ProductSummand
 
@@ -55,34 +55,41 @@ def build_eq(rg):
 # factors (zorch#609's finding for the concatenate form of the same chain), so
 # every large layer pays several GF(2^128) muls per element plus a full
 # read-back of its predecessor; an outer product is one mul per element over
-# two small inputs — a pure streaming write.
+# two small inputs — a pure streaming write. Same rationale as zorch's
+# `poly.eq._OUTER_SPLIT_MIN` but an independent knob: this one gates a family
+# emission whose high half is amortized across every larger suffix, so the
+# crossovers need not track each other.
 _OUTER_SPLIT_MIN = 16
 
 
 def _suffix_chain(cs_g):
     """The doubling chain: absorbing `cs_g[i]` as the low bit of
-    `eq(cs_g[i+1:])` yields `eq(cs_g[i:])`, one interleave-mul layer per
+    `eq(cs_g[i+1:])` yields `eq(cs_g[i:])`, one interleave layer per
     challenge. Returns `[T_0 .. T_n]` like `build_eq_suffix_tables`."""
     t = _ONE_G.reshape(1)
     out = [t]
     for i in range(int(cs_g.shape[0]) - 1, -1, -1):
-        c = cs_g[i]
-        t = fnp.stack([t * (c + _ONE_G), t * c], axis=1).reshape(-1)
+        t = expand_hypercube_step(t, cs_g[i], msb=False)
         out.append(t)
     return out[::-1]
 
 
 def build_eq_suffix_tables(cs_g):
     """eq tables for every challenge suffix, sharing work across the family:
-    all n+1 tables cost one doubling chain's worth of small layers — instead of
-    n separate `build_eq` builds (each layer is a fat clmul kernel XLA compiles
-    for ~0.7 s, so a per-round rebuild multiplied that by the round count) —
-    and every table past `_OUTER_SPLIT_MIN` is emitted as ONE outer product:
-    with a split point j, `T_i = T_j ⊗ eq(cs_g[i:j])` for every `i < j` — the
-    high half `T_j` is one table shared by all larger suffixes, and the low
-    factors `eq(cs_g[i:j])` are the suffix family of `cs_g[:j]`, so both sides
-    recurse on half-size chains. Values match per-suffix `build_eq` exactly:
-    GF mul is exact, associative, commutative.
+    the small layers are shared chains instead of n separate `build_eq` builds
+    (each layer is a fat clmul kernel XLA compiles for ~0.7 s, so a per-round
+    rebuild multiplied that by the round count), and every table past
+    `_OUTER_SPLIT_MIN` is emitted as ONE outer product: with a split point j,
+    `T_i = T_j ⊗ eq(cs_g[i:j])` for every `i < j` — the high half `T_j` is one
+    table shared by all larger suffixes, and the low factors `eq(cs_g[i:j])`
+    are the suffix family of `cs_g[:j]`, so both sides recurse on half-size
+    chains. Values match per-suffix `build_eq` exactly: GF mul is exact,
+    associative, commutative.
+
+    The dual build — one `build_eq(cs_g)` then `contract_hypercube_step` down —
+    spends fewer muls (contraction is XOR-only) but re-reads each large
+    predecessor, ~1.5x the traffic of these write-only emissions; the ML window
+    is bandwidth-bound, so traffic is the currency.
 
     cs_g: `[n]` ghash challenges. Returns `[T_0 .. T_n]`, `T_i = eq(cs_g[i:])`
     of shape `[2^(n-i)]`; `T_n = [1]`."""
