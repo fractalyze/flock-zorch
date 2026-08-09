@@ -49,24 +49,53 @@ def build_eq(rg):
     return expand_eq_to_hypercube(rg, _ONE_G, msb=True)
 
 
-def build_eq_suffix_tables(cs_g):
-    """eq tables for every challenge suffix: absorbing `cs_g[i]` as the low bit
-    of `eq(cs_g[i+1:])` yields `eq(cs_g[i:])`, so all n+1 tables cost one
-    doubling chain — n mul layers — instead of n separate `build_eq` builds
-    (each layer is a fat clmul kernel XLA compiles for ~0.7 s, so a per-round
-    rebuild multiplied that by the round count). Values match per-suffix
-    `build_eq` exactly: GF mul is exact, associative, commutative.
+# Above this suffix length, tables are emitted as outer products of two half
+# tables instead of extending one doubling chain. XLA fuses a chain's tail
+# layers into interleave fusions that recompute each output element's ancestor
+# factors (zorch#609's finding for the concatenate form of the same chain), so
+# every large layer pays several GF(2^128) muls per element plus a full
+# read-back of its predecessor; an outer product is one mul per element over
+# two small inputs — a pure streaming write.
+_OUTER_SPLIT_MIN = 16
 
-    cs_g: `[n]` ghash challenges. Returns `[T_0 .. T_n]`, `T_i = eq(cs_g[i:])`
-    of shape `[2^(n-i)]`; `T_n = [1]`."""
-    n = int(cs_g.shape[0])
+
+def _suffix_chain(cs_g):
+    """The doubling chain: absorbing `cs_g[i]` as the low bit of
+    `eq(cs_g[i+1:])` yields `eq(cs_g[i:])`, one interleave-mul layer per
+    challenge. Returns `[T_0 .. T_n]` like `build_eq_suffix_tables`."""
     t = _ONE_G.reshape(1)
     out = [t]
-    for i in range(n - 1, -1, -1):
+    for i in range(int(cs_g.shape[0]) - 1, -1, -1):
         c = cs_g[i]
         t = fnp.stack([t * (c + _ONE_G), t * c], axis=1).reshape(-1)
         out.append(t)
     return out[::-1]
+
+
+def build_eq_suffix_tables(cs_g):
+    """eq tables for every challenge suffix, sharing work across the family:
+    all n+1 tables cost one doubling chain's worth of small layers — instead of
+    n separate `build_eq` builds (each layer is a fat clmul kernel XLA compiles
+    for ~0.7 s, so a per-round rebuild multiplied that by the round count) —
+    and every table past `_OUTER_SPLIT_MIN` is emitted as ONE outer product:
+    with a split point j, `T_i = T_j ⊗ eq(cs_g[i:j])` for every `i < j` — the
+    high half `T_j` is one table shared by all larger suffixes, and the low
+    factors `eq(cs_g[i:j])` are the suffix family of `cs_g[:j]`, so both sides
+    recurse on half-size chains. Values match per-suffix `build_eq` exactly:
+    GF mul is exact, associative, commutative.
+
+    cs_g: `[n]` ghash challenges. Returns `[T_0 .. T_n]`, `T_i = eq(cs_g[i:])`
+    of shape `[2^(n-i)]`; `T_n = [1]`."""
+    n = int(cs_g.shape[0])
+    if n < _OUTER_SPLIT_MIN:
+        return _suffix_chain(cs_g)
+    j = n // 2
+    low = build_eq_suffix_tables(cs_g[:j])  # low[i] = eq(cs_g[i:j])
+    high = build_eq_suffix_tables(cs_g[j:])  # high[i-j] = T_i, i in [j, n]
+    t_j = high[0]
+    # T_i places cs_g[i] at bit 0, so bits [j-i, n-i) of T_i are exactly T_j's
+    # index — T_j is the slow axis, the low factor the fast axis.
+    return [(t_j[:, None] * low[i][None, :]).reshape(-1) for i in range(j)] + high
 
 
 def round_pair_eq(ag, bg, eq, r0g):
