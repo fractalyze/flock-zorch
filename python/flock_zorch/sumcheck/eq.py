@@ -94,34 +94,37 @@ def build_eq_suffix_tables(cs_g, keep=None):
     cs_g: `[n]` ghash challenges. Returns `[T_0 .. T_n]`, `T_i = eq(cs_g[i:])`
     of shape `[2^(n-i)]`; `T_n = [1]`.
 
-    keep: optional predicate on the suffix index. A consumer that reads only a
-    subset of the family (the sq pair schedule reads the odd-index tables plus
-    the tail — `round_pair_eq_sq_basis`) passes the indices it will touch and
-    the outer-product regime skips the other emissions entirely, returning
-    None in their slots; since the even-index total is 2/3 of the family's
-    element count, that is most of the emission cost. Kept indices are always
-    present and exact. Chain layers and shared high halves that exist as
-    building blocks anyway may still be returned — any non-None entry is the
-    exact table."""
+    keep: optional predicate on the suffix index — the indices the caller
+    will read. Kept slots are always present and exact; un-kept slots come
+    back as None, and past the outer-product split their emissions are
+    skipped entirely (below it the chain computes every layer anyway and XLA
+    drops what nothing consumes). Why a consumer can afford to drop tables
+    is the consumer's story — e.g. `round_pair_eq_sq_basis` for the sq pair
+    schedule."""
+    tables = _suffix_family(cs_g, (lambda i: True) if keep is None else keep)
+    if keep is None:
+        return tables
+    return [t if keep(i) else None for i, t in enumerate(tables)]
+
+
+def _suffix_family(cs_g, keep):
+    """The recursion behind `build_eq_suffix_tables`. May return un-kept
+    entries that exist as building blocks anyway (chain layers, shared high
+    halves) — the public wrapper masks those to None, so the keep contract
+    stays predicate-defined rather than split-regime-defined."""
     n = int(cs_g.shape[0])
     if n < _OUTER_SPLIT_MIN:
         return _suffix_chain(cs_g)
     j = n // 2
-    # The recursions drop what the parent won't touch: a low factor is read
-    # only for kept i < j, and of the high family the parent always needs the
-    # shared high half T_j (local 0) besides the kept globals.
-    high_keep = None if keep is None else (lambda i: i == 0 or keep(j + i))
-    low = build_eq_suffix_tables(cs_g[:j], keep)  # low[i] = eq(cs_g[i:j])
-    high = build_eq_suffix_tables(cs_g[j:], high_keep)  # high[i-j] = T_i
+    low = _suffix_family(cs_g[:j], keep)  # low[i] = eq(cs_g[i:j])
+    # Of the high family the parent needs the shared high half T_j (local 0)
+    # as a building block besides the kept globals.
+    high = _suffix_family(cs_g[j:], lambda i: i == 0 or keep(j + i))
     t_j = high[0]
     # T_i places cs_g[i] at bit 0, so bits [j-i, n-i) of T_i are exactly T_j's
     # index — T_j is the slow axis, the low factor the fast axis.
     return [
-        (
-            (t_j[:, None] * low[i][None, :]).reshape(-1)
-            if keep is None or keep(i)
-            else None
-        )
+        (t_j[:, None] * low[i][None, :]).reshape(-1) if keep(i) else None
         for i in range(j)
     ] + high
 
@@ -234,7 +237,12 @@ def round_pair_eq_deferred_sq(ag, eq_sqrt_next):
         G(∞):  C = Σ √eq_next·e,   D = Σ √eq_next·(e+o)
 
     Evaluate with `eval_deferred_sq` once ρ_i is drawn; the caller scales
-    G(1) by its r₀ as usual."""
+    G(1) by its r₀ as usual.
+
+    Superseded on the pair schedule by `round_pair_eq_sq_basis`, which
+    derives the same four values from its shared base sums; retained as the
+    independently-computed exactness oracle (`RoundPairEqSqBasisTest`) — do
+    NOT re-express this over those sums, or the test stops testing."""
     a4 = ag.reshape(-1, 4)
     g_one = (
         fnp.sum(eq_sqrt_next * a4[:, 2]),
@@ -246,9 +254,10 @@ def round_pair_eq_deferred_sq(ag, eq_sqrt_next):
 
 
 def eval_deferred_sq(pair, rho):
-    """Evaluate a `round_pair_eq_deferred_sq` coefficient pair at the sampled
-    ρ: `(A + ρB)² = A² + ρ²·B²` — char-2 squaring distributes, no cross
-    term."""
+    """Evaluate a deferred sq coefficient pair (`round_pair_eq_sq_basis` on
+    the production path, `round_pair_eq_deferred_sq` as its oracle) at the
+    sampled ρ: `(A + ρB)² = A² + ρ²·B²` — char-2 squaring distributes, no
+    cross term."""
     a, b = pair
     return a * a + (rho * rho) * (b * b)
 
@@ -273,8 +282,9 @@ def round_pair_eq_sq_basis(ag, eq_sqrt_next, sqrt_c, r0g):
     √T_{i+1})`. Exact GF reassociation — same bytes — at half the weighting
     muls (four n/4 sums against the split forms' 2n) and with round i's table
     unread: on the pair schedule the even-index √eq tables (the largest
-    included) go dead entirely, so their emissions can be skipped at the
-    source (`build_eq_suffix_tables(keep=...)`).
+    included) go dead entirely — ~2/3 of the family's element count — so
+    their emissions are skipped at the source
+    (`build_eq_suffix_tables(keep=...)`).
 
     Equal-factor-specific: the generic pair's two bases share only the w_hi
     product, so re-basing there buys ~nothing — this is the sq squaring

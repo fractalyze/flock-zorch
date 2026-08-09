@@ -45,12 +45,11 @@ class BuildEqSuffixTablesTest(absltest.TestCase):
             )
 
     def test_keep_skips_dead_emissions(self) -> None:
-        # A keep predicate drops the un-kept OUTER-PRODUCT emissions (the
-        # heavy ones) — returned as None — while every kept table stays
-        # byte-equal to the full build. Chain layers and shared high halves
-        # that exist as building blocks anyway may still be returned; any
-        # non-None entry must be exact. The predicate here is the sq pair
-        # schedule's shape: odd indices plus the tail.
+        # The keep contract is predicate-defined, not split-regime-defined:
+        # every kept table stays byte-equal to the full build, every un-kept
+        # slot is None — the heavy outer-product emissions among them are
+        # skipped at the source. The predicate here is the sq pair schedule's
+        # shape: odd indices plus the tail.
         n = eq._OUTER_SPLIT_MIN + 1
 
         def keep(i: int) -> bool:
@@ -62,16 +61,13 @@ class BuildEqSuffixTablesTest(absltest.TestCase):
         self.assertLen(kept, n + 1)
         for i in range(n + 1):
             if keep(i):
-                self.assertIsNotNone(kept[i], msg=f"i={i}")
-            if kept[i] is not None:
                 np.testing.assert_array_equal(
                     ghash.to_lanes(kept[i]),
                     ghash.to_lanes(full[i]),
                     err_msg=f"i={i}",
                 )
-        # The below-split even emissions — the largest tables — are gone.
-        for i in range(0, n // 2, 2):
-            self.assertIsNone(kept[i], msg=f"i={i}")
+            else:
+                self.assertIsNone(kept[i], msg=f"i={i}")
 
     def test_outer_split_matches_chain(self) -> None:
         # At _OUTER_SPLIT_MIN the large tables are emitted as outer products
