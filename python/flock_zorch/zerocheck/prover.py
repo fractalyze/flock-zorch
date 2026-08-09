@@ -183,13 +183,15 @@ def _mlv_round_sq(a_g, eq_sqrt_g, r0_g, t):
 
 
 @frx.jit
-def _mlv_round_pair_sq(a_g, eq_sqrt_g, eq_sqrt_next_g, r0_g, t):
-    """`_mlv_round_pair` for the equal-factor ladder (b ≡ a): round i+1's
-    squared-sum message rides round i's array read as a deferred coefficient
-    pair (`sumcheck.round_pair_eq_deferred_sq`), and the two folds compose
-    into one quartering pass of the single factor state."""
-    m1, minf = sumcheck.round_pair_eq_sq(a_g, eq_sqrt_g, r0_g)
-    g_one, g_inf = sumcheck.round_pair_eq_deferred_sq(a_g, eq_sqrt_next_g)
+def _mlv_round_pair_sq(a_g, eq_sqrt_next_g, sqrt_c_g, r0_g, t):
+    """`_mlv_round_pair` for the equal-factor ladder (b ≡ a), on the four-sum
+    basis: all six pair scalars come from `sumcheck.round_pair_eq_sq_basis`'s
+    base sums over round i+1's SMALLER table (√c_i beside it) — round i's own
+    table is never read. The two folds compose into one quartering pass of
+    the single factor state."""
+    m1, minf, g_one, g_inf = sumcheck.round_pair_eq_sq_basis(
+        a_g, eq_sqrt_next_g, sqrt_c_g, r0_g
+    )
 
     t = t.observe_scalar(m1).observe_scalar(minf)
     t, rho = t.sample_scalar()
@@ -204,22 +206,28 @@ def _mlv_round_pair_sq(a_g, eq_sqrt_g, eq_sqrt_next_g, r0_g, t):
 
 
 @frx.jit
-def _mlv_sumcheck_sq(a_g, eq_sqrt_tables, r0_g, t):
+def _mlv_sumcheck_sq(a_g, eq_sqrt_tables, cs_sqrt_g, r0_g, t):
     """`_mlv_sumcheck` on the equal-factor path — the same wire: message values
     are exact field identities of the generic pair's, and the final b̂ observe
     repeats â's value, which is what the generic path serializes too.
 
     Rounds trace in composed pairs (`_mlv_round_pair_sq`) with the odd tail on
-    the single round — the same schedule as the generic ladder."""
+    the single round — the same schedule as the generic ladder. A pair reads
+    ONLY round i+1's table plus √c_i (= `cs_sqrt_g[i]`, the challenge its
+    table chain absorbed); slots outside `_sq_pair_reads` may arrive as None.
+    The asserts fail at trace time, next to the schedule, if the emission
+    keep ever drifts from the reads."""
     rounds, rhos = [], []
     n_mlv = len(eq_sqrt_tables)
     for i in range(0, n_mlv - 1, 2):
+        assert eq_sqrt_tables[i + 1] is not None, f"pair table T_{i + 1} not emitted"
         a_g, t, msgs, pair_rhos = _mlv_round_pair_sq(
-            a_g, eq_sqrt_tables[i], eq_sqrt_tables[i + 1], r0_g, t
+            a_g, eq_sqrt_tables[i + 1], cs_sqrt_g[i], r0_g, t
         )
         rounds.extend(msgs)
         rhos.extend(pair_rhos)
     if n_mlv % 2:
+        assert eq_sqrt_tables[-1] is not None, "tail table not emitted"
         a_g, t, m1, minf, rho = _mlv_round_sq(a_g, eq_sqrt_tables[-1], r0_g, t)
         rounds.append((m1, minf))
         rhos.append(rho)
@@ -235,6 +243,26 @@ def _observe_finals(t, final_a, final_b):
 
 _EQ_TABLES = frx.jit(sumcheck.build_eq_suffix_tables)
 _SQRT = frx.jit(sumcheck.sqrt_ghash)
+
+
+def _sq_pair_reads(n_mlv):
+    """The sq pair schedule's table read set: round i+1's table per pair (the
+    odd indices) plus the tail round's own T_{n_mlv-1}. The single source of
+    truth — `_sq_pair_suffix_tables` emits exactly this set and
+    `_mlv_sumcheck_sq` asserts it before reading. Why the rest is dead is
+    `sumcheck.round_pair_eq_sq_basis`'s doubling identity."""
+    return lambda i: i % 2 == 1 or i == n_mlv - 1
+
+
+def _sq_pair_suffix_tables(cs_sqrt_g):
+    """The √eq suffix family restricted to `_sq_pair_reads` — the dead
+    tables, the largest included, are never emitted."""
+    return sumcheck.build_eq_suffix_tables(
+        cs_sqrt_g, keep=_sq_pair_reads(int(cs_sqrt_g.shape[0]) + 1)
+    )
+
+
+_EQ_TABLES_SQ = frx.jit(_sq_pair_suffix_tables)
 
 
 def sample_challenge_coords(transcript, m: int, k_skip: int):
@@ -329,12 +357,15 @@ class _MultilinearRound:
         # squared-sum ladder: every product is a square and char-2 squaring
         # distributes over the XOR-sum, so the message needs √eq tables (the
         # same doubling chain over √challenges) and half the muls, and the
-        # second fold disappears. Byte-identical wire either way — see
-        # sumcheck.round_pair_eq_sq.
+        # second fold disappears — and the pair schedule collapses further
+        # onto the four-sum basis (sumcheck.round_pair_eq_sq_basis), which is
+        # what lets _sq_pair_suffix_tables drop the tables it makes dead.
+        # Byte-identical wire either way.
         if carry.b_rows is carry.a_rows:
-            eq_tables = _EQ_TABLES(_SQRT(r_g[k_skip + 1 :]))
+            cs_sqrt = _SQRT(r_g[k_skip + 1 :])
+            eq_tables = _EQ_TABLES_SQ(cs_sqrt)
             transcript._t, rounds, rhos, final_a = _mlv_sumcheck_sq(
-                a_g, eq_tables, sumcheck.eq._ONE_G, transcript._t
+                a_g, eq_tables, cs_sqrt, sumcheck.eq._ONE_G, transcript._t
             )
             final_b = final_a
         else:

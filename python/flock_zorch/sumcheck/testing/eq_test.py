@@ -44,6 +44,31 @@ class BuildEqSuffixTablesTest(absltest.TestCase):
                 err_msg=f"i={i}",
             )
 
+    def test_keep_skips_dead_emissions(self) -> None:
+        # The keep contract is predicate-defined, not split-regime-defined:
+        # every kept table stays byte-equal to the full build, every un-kept
+        # slot is None — the heavy outer-product emissions among them are
+        # skipped at the source. The predicate here is the sq pair schedule's
+        # shape: odd indices plus the tail.
+        n = eq._OUTER_SPLIT_MIN + 1
+
+        def keep(i: int) -> bool:
+            return i % 2 == 1 or i == n
+
+        cs = rand_ghash(np.random.default_rng(13), n)
+        full = eq.build_eq_suffix_tables(cs)
+        kept = eq.build_eq_suffix_tables(cs, keep=keep)
+        self.assertLen(kept, n + 1)
+        for i in range(n + 1):
+            if keep(i):
+                np.testing.assert_array_equal(
+                    ghash.to_lanes(kept[i]),
+                    ghash.to_lanes(full[i]),
+                    err_msg=f"i={i}",
+                )
+            else:
+                self.assertIsNone(kept[i], msg=f"i={i}")
+
     def test_outer_split_matches_chain(self) -> None:
         # At _OUTER_SPLIT_MIN the large tables are emitted as outer products
         # of a shared high half; they must stay byte-equal to the doubling

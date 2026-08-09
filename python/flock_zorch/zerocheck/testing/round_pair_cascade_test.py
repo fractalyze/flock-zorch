@@ -84,16 +84,19 @@ class RoundPairCascadeTest(parameterized.TestCase):
         a = rand_ghash(np.random.default_rng(2 * log_n), n)
         cs = rand_ghash(np.random.default_rng(3 * log_n), log_n - 1)
         # The sq ladder runs on the √eq suffix chain (√ of the challenges).
-        eq_tables = sumcheck.build_eq_suffix_tables(sumcheck.sqrt_ghash(cs))
+        sqrt_cs = sumcheck.sqrt_ghash(cs)
+        eq_tables = sumcheck.build_eq_suffix_tables(sqrt_cs)
         one = sumcheck.eq._ONE_G
 
         t0 = Challenger(DOMAIN)._t
         a1, t1, m1_a, minf_a, rho_a = _mlv_round_sq(a, eq_tables[0], one, t0)
         a2, t2, m1_b, minf_b, rho_b = _mlv_round_sq(a1, eq_tables[1], one, t1)
 
+        # The basis-form pair reads only round i+1's table plus √c_i — round
+        # i's table (the singles' first operand) never enters.
         tp0 = Challenger(DOMAIN)._t
         ap, tp, pair_msgs, pair_rhos = _mlv_round_pair_sq(
-            a, eq_tables[0], eq_tables[1], one, tp0
+            a, eq_tables[1], sqrt_cs[0], one, tp0
         )
         (p1_a, pinf_a), (p1_b, pinf_b) = pair_msgs
         prho_a, prho_b = pair_rhos
