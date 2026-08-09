@@ -54,6 +54,21 @@ callback's thunk range. The enqueue anchor fixes both.
 `--cuda-graph-trace=node` is mandatory in the capture: without it XLA's
 CUDA-graph dispatches under-report kernels ~50x.
 
+Where this lives, and when to move it. Everything above the window registry is
+flock-agnostic — it knows CUPTI, NVTX, sqlite and XLA thunk ranges, nothing
+about this prover. Only the registry entries do, and they reach into private
+internals to do it. So the file is deliberately split along that line, and the
+split is the whole cost of promoting it later.
+
+It stays here because the demand is here: at the time of writing the sibling
+frx consumers (hash-frx, sig-frx, enc-frx) carry no profiling code at all, and
+the accumulated nsys method notes came almost entirely from this repo. **When a
+second repo needs this, promote the machinery** — `zkbench-py` is the natural
+home, since it is already a shared benchmarking package and lands the tool
+without adding Fractalyze-only surface to the frx fork or forcing a dependency
+on zorch's SNARK spine for what is only a profiling helper. Leave the window
+registry behind; it is flock's by nature.
+
 Run (the toolchain preamble is load-bearing — ptxas 12.9 silently selects
 soft-GHASH, 5.5x on the prove; `commit` at tens of ms instead of ~1.3 ms at
 m28 is the tell. See docs/measurement.md, which also says NOT to set
