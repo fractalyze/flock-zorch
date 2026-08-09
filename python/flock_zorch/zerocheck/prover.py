@@ -133,11 +133,39 @@ def _mlv_sumcheck(a_g, b_g, eq_tables, r0_g, t):
 
 
 @frx.jit
+def _mlv_round_sq(a_g, eq_sqrt_g, r0_g, t):
+    """`_mlv_round` for the equal-factor ladder (b ≡ a): the squared-sum message
+    (`sumcheck.round_pair_eq_sq`, 2 muls/pair against 4) over a √eq suffix table,
+    and ONE fold — the two factor states are the same vector, folded at the same
+    ρ, so they stay the same vector."""
+    m1, minf = sumcheck.round_pair_eq_sq(a_g, eq_sqrt_g, r0_g)
+    t = t.observe_scalar(m1).observe_scalar(minf)
+    t, rho = t.sample_scalar()
+    return fold(a_g, rho, msb=False), t, m1, minf, rho
+
+
+@frx.jit
+def _mlv_sumcheck_sq(a_g, eq_sqrt_tables, r0_g, t):
+    """`_mlv_sumcheck` on the equal-factor path — the same wire: message values
+    are exact field identities of the generic pair's, and the final b̂ observe
+    repeats â's value, which is what the generic path serializes too."""
+    rounds, rhos = [], []
+    for eq_g in eq_sqrt_tables:
+        a_g, t, m1, minf, rho = _mlv_round_sq(a_g, eq_g, r0_g, t)
+        rounds.append((m1, minf))
+        rhos.append(rho)
+    final_a = a_g[0]
+    t = t.observe_scalar(final_a).observe_scalar(final_a)
+    return t, tuple(rounds), fnp.stack(rhos), final_a
+
+
+@frx.jit
 def _observe_finals(t, final_a, final_b):
     return t.observe_scalar(final_a).observe_scalar(final_b)
 
 
 _EQ_TABLES = frx.jit(sumcheck.build_eq_suffix_tables)
+_SQRT = frx.jit(sumcheck.sqrt_ghash)
 
 
 def sample_challenge_coords(transcript, m: int, k_skip: int):
@@ -184,10 +212,17 @@ class _UrmRound:
             if _urm.is_packed_witness(carry.a_bits)
             else _urm.witness_to_rows(carry.a_bits, m, k_skip)
         )
+        # Alias, don't recompute, when both factors are the same witness (the
+        # identity-instance call a = b = ẑ): `a_rows is b_rows` is what routes
+        # the multilinear tail onto its equal-factor path.
         b_fold = (
-            carry.b_bits
-            if _urm.is_packed_witness(carry.b_bits)
-            else _urm.witness_to_rows(carry.b_bits, m, k_skip)
+            a_fold
+            if carry.b_bits is carry.a_bits
+            else (
+                carry.b_bits
+                if _urm.is_packed_witness(carry.b_bits)
+                else _urm.witness_to_rows(carry.b_bits, m, k_skip)
+            )
         )
         carry = replace(
             carry,
@@ -216,15 +251,29 @@ class _MultilinearRound:
         # only reappear where a proof message is serialized.
         weights = _lagrange_weights(k_skip, carry.z, 0)  # S-domain, ghash [ell]
         a_g = _fold_at_z(carry.a_rows, weights)
-        b_g = _fold_at_z(carry.b_rows, weights)
         r_g = carry.r
 
         # All rounds' eq suffix tables in one program (round i reads
         # eq(r[k_skip+1+i:])); r[0] of every round's message is fixed to one.
-        eq_tables = _EQ_TABLES(r_g[k_skip + 1 :])
-        transcript._t, rounds, rhos, final_a, final_b = _mlv_sumcheck(
-            a_g, b_g, eq_tables, sumcheck.eq._ONE_G, transcript._t
-        )
+        # Equal factors (the identity instance a = b = ẑ, aliased by _UrmRound;
+        # hash circuits carry distinct Az/Bz and stay generic) take the
+        # squared-sum ladder: every product is a square and char-2 squaring
+        # distributes over the XOR-sum, so the message needs √eq tables (the
+        # same doubling chain over √challenges) and half the muls, and the
+        # second fold disappears. Byte-identical wire either way — see
+        # sumcheck.round_pair_eq_sq.
+        if carry.b_rows is carry.a_rows:
+            eq_tables = _EQ_TABLES(_SQRT(r_g[k_skip + 1 :]))
+            transcript._t, rounds, rhos, final_a = _mlv_sumcheck_sq(
+                a_g, eq_tables, sumcheck.eq._ONE_G, transcript._t
+            )
+            final_b = final_a
+        else:
+            b_g = _fold_at_z(carry.b_rows, weights)
+            eq_tables = _EQ_TABLES(r_g[k_skip + 1 :])
+            transcript._t, rounds, rhos, final_a, final_b = _mlv_sumcheck(
+                a_g, b_g, eq_tables, sumcheck.eq._ONE_G, transcript._t
+            )
 
         final_a_eval = final_a
         final_b_eval = final_b
@@ -260,7 +309,13 @@ def prove_packed(
     A `zerocheck_steps` sequence (URM → multilinear) threading one
     `Challenger`; pass a shared `ch` (the e2e challenger carrying commit/bind state)
     to thread Fiat-Shamir through the fused prover, else a fresh Challenger(domain)
-    is made."""
+    is made.
+
+    Passing the SAME array object as `a_bits` and `b_bits` (the identity R1CS
+    instance a = b = c = ẑ — ZerocheckProver's call) routes the multilinear
+    ladder onto the equal-factor squared-sum path — the same wire bytes at half
+    the GF muls (sumcheck.round_pair_eq_sq). Hash circuits pass distinct
+    Az / Bz tracks and keep the generic ladder."""
     k_skip = K_SKIP
     assert m >= k_skip + N_INNER, f"m must be >= {k_skip + N_INNER}"
     if ch is None:
