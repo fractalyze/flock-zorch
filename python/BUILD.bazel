@@ -181,6 +181,21 @@ py_test(
     ],
 )
 
+# No golden: `build_eq_suffix_tables` — every table equals per-suffix
+# `build_eq`, and the outer-product emission past `_OUTER_SPLIT_MIN` is
+# byte-equal to the doubling chain. Software-mul, so it runs on CPU; medium
+# because the eager chain reference at the split size is what busts a small
+# budget on a loaded runner (the zorch#609 lesson).
+py_test(
+    name = "eq_test",
+    size = "medium",
+    srcs = ["flock_zorch/sumcheck/testing/eq_test.py"],
+    deps = [
+        ":flock_zorch",
+        requirement("absl-py"),
+    ],
+)
+
 # No golden: round-1's row blocking is byte-exact at every block count — the
 # partition argument the m32 footprint fix (#179) rests on. Pure host.
 py_test(
