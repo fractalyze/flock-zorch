@@ -230,3 +230,50 @@ def eval_deferred_sq(pair, rho):
     term."""
     a, b = pair
     return a * a + (rho * rho) * (b * b)
+
+
+def round_pair_eq_sq_basis(ag, eq_sqrt_next, sqrt_c, r0g):
+    """The whole equal-factor pair — round i's message AND the deferred
+    coefficient pairs — from FOUR base sums over the SMALLER table only.
+
+    The √eq suffix chain doubles as `√T_i[2z] = (1+√c_i)·√T_{i+1}[z]`,
+    `√T_i[2z+1] = √c_i·√T_{i+1}[z]` (√ distributes over + and · in char 2), so
+    round i's √T_i-weighted sums split by z-parity into √T_{i+1}-weighted sums
+    of the same groups of four the deferred coefficients already read. With
+    `s_j = Σ √T_{i+1}·v_j` (v0..v3 = ag[4z..4z+4]), all six pair scalars are
+    linear in s0..s3:
+
+        G(1)_i  = (1+√c_i)·s1 + √c_i·s3          A = s2
+        G(∞)_i  = (1+√c_i)·(s0+s1) + √c_i·(s2+s3) B = s2+s3
+                                                  C = s0+s2
+                                                  D = s0+s1+s2+s3
+
+    against `round_pair_eq_sq(ag, √T_i)` + `round_pair_eq_deferred_sq(ag,
+    √T_{i+1})`. Exact GF reassociation — same bytes — at half the weighting
+    muls (four n/4 sums against the split forms' 2n) and with round i's table
+    unread: on the pair schedule the even-index √eq tables (the largest
+    included) go dead entirely, so their emissions can be skipped at the
+    source (`build_eq_suffix_tables(keep=...)`).
+
+    Equal-factor-specific: the generic pair's two bases share only the w_hi
+    product, so re-basing there buys ~nothing — this is the sq squaring
+    (messages are squares of LINEAR functionals of the array) paying out a
+    second time.
+
+    Returns `(m1, minf, g_one, g_inf)`: the wire message pair (G(1) already
+    scaled by r₀ and squared) plus the two `eval_deferred_sq` coefficient
+    pairs."""
+    a4 = ag.reshape(-1, 4)
+    s0 = fnp.sum(eq_sqrt_next * a4[:, 0])
+    s1 = fnp.sum(eq_sqrt_next * a4[:, 1])
+    s2 = fnp.sum(eq_sqrt_next * a4[:, 2])
+    s3 = fnp.sum(eq_sqrt_next * a4[:, 3])
+    w = sqrt_c + _ONE_G
+    g_one = w * s1 + sqrt_c * s3
+    g_inf = w * (s0 + s1) + sqrt_c * (s2 + s3)
+    return (
+        r0g * (g_one * g_one),
+        g_inf * g_inf,
+        (s2, s2 + s3),
+        (s0 + s2, s0 + s1 + s2 + s3),
+    )

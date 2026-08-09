@@ -70,6 +70,41 @@ class RoundPairEqSqTest(parameterized.TestCase):
         np.testing.assert_array_equal(ghash.to_lanes(got[1]), ghash.to_lanes(want[1]))
 
 
+class RoundPairEqSqBasisTest(parameterized.TestCase):
+
+    @parameterized.parameters(2, 5, 8)
+    def test_reproduces_all_six_pair_scalars(self, n: int):
+        """The composed sq pair factors through FOUR base sums over the SMALLER
+        table: the √eq chain's doubling step (√T_i[2z] = (1+√c_i)·√T_{i+1}[z],
+        √T_i[2z+1] = √c_i·√T_{i+1}[z]) makes round i's message a linear
+        combination of the same s_j = Σ √T_{i+1}·v_j the deferred coefficient
+        pairs read — so the basis form must equal `round_pair_eq_sq` over √T_i
+        AND `round_pair_eq_deferred_sq` over √T_{i+1}, byte for byte."""
+        rng = np.random.default_rng(100 + n)
+        a = rand_ghash(rng, 1 << (n + 1))
+        sqrt_cs = sumcheck.sqrt_ghash(rand_ghash(rng, n))
+        tables = sumcheck.build_eq_suffix_tables(sqrt_cs)
+        r0 = rand_ghash(rng, 1)[0]
+
+        want_m1, want_minf = sumcheck.round_pair_eq_sq(a, tables[0], r0)
+        want_one, want_inf = sumcheck.round_pair_eq_deferred_sq(a, tables[1])
+
+        m1, minf, g_one, g_inf = sumcheck.round_pair_eq_sq_basis(
+            a, tables[1], sqrt_cs[0], r0
+        )
+        for name, got, want in (
+            ("m1", m1, want_m1),
+            ("minf", minf, want_minf),
+            ("one_lo", g_one[0], want_one[0]),
+            ("one_hi", g_one[1], want_one[1]),
+            ("inf_lo", g_inf[0], want_inf[0]),
+            ("inf_hi", g_inf[1], want_inf[1]),
+        ):
+            np.testing.assert_array_equal(
+                ghash.to_lanes(got), ghash.to_lanes(want), err_msg=name
+            )
+
+
 class SquaredLadderWireTest(parameterized.TestCase):
 
     @parameterized.parameters(13, 14)
