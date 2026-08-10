@@ -242,7 +242,7 @@ def _throughput_rows(
             name,
             "throughput",
             throughput=n_hash * 1e3 / wall_ms,
-            latency=wall_ms / 1e3,
+            latency=wall_ms,
             compile_time=compile_ms / 1e3 if compile_ms is not None else None,
             memory=peak_bytes,
         )
@@ -270,7 +270,7 @@ def _phase_rows(
             "prove_phase_bench",
             name,
             phase,
-            latency=parts[phase] / 1e3,
+            latency=parts[phase],
             compile_time=compile_time,
             memory=peak_bytes,
         )

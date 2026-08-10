@@ -48,7 +48,9 @@ class JsonRowTest(absltest.TestCase):
 class ThroughputRowsTest(absltest.TestCase):
     def test_shape_and_values(self):
         # n_hash=1000 hashes in wall_ms=200ms -> 5000 hash/s; compile_ms=50ms
-        # warmup, peak=1234 bytes.
+        # warmup, peak=1234 bytes. latency is ms (the platform's convention,
+        # src/lib/metrics.ts: latency unit "ms"), same units as wall_ms in --
+        # only compile_time converts ms -> s.
         rows = ppb._throughput_rows("blake3_m24", 1000, 200.0, 50.0, 1234)
         self.assertLen(rows, 1)
         row = rows[0]
@@ -59,7 +61,7 @@ class ThroughputRowsTest(absltest.TestCase):
             row["metrics"],
             {
                 "throughput": 5000.0,
-                "latency": 0.2,
+                "latency": 200.0,
                 "compile_time": 0.05,
                 "memory": 1234,
             },
@@ -67,7 +69,7 @@ class ThroughputRowsTest(absltest.TestCase):
 
     def test_missing_compile_time_and_memory_are_omitted_not_null(self):
         row = ppb._throughput_rows("blake3_m24", 1000, 200.0, None, None)[0]
-        self.assertEqual(row["metrics"], {"throughput": 5000.0, "latency": 0.2})
+        self.assertEqual(row["metrics"], {"throughput": 5000.0, "latency": 200.0})
 
     def test_json_roundtrips(self):
         """The platform reads this off disk, not off a live Python object —
@@ -89,7 +91,9 @@ class PhaseRowsTest(absltest.TestCase):
             # variant produced here may carry a "throughput" metric key —
             # that key is reserved for _throughput_rows's own row.
             self.assertNotIn("throughput", row["metrics"])
-            self.assertEqual(row["metrics"]["latency"], parts[phase] / 1e3)
+            # latency is ms, same units as `parts` (already ms) -- only
+            # compile_time converts ms -> s.
+            self.assertEqual(row["metrics"]["latency"], parts[phase])
             self.assertEqual(row["metrics"]["compile_time"], 0.05)
             self.assertEqual(row["metrics"]["memory"], 1234)
 
