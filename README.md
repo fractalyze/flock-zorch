@@ -99,10 +99,12 @@ build:
 
 **Prerequisites** — an NVIDIA GPU (CUDA; RTX 5090 / sm_120 reference), a Rust
 toolchain (`flock-core` is edition 2024), Python 3.11. For the GPU fast path, a **CUDA 13.3
-`ptxas`** (the reference machine uses `/usr/local/cuda/bin/ptxas`): with it on
-`PATH` the pinned frx wheel's
-compiler emits the hardware `clmad` GF(2¹²⁸) multiply; without it, the software
-`binary_field_ghash` multiply — same output, just slower.
+`ptxas`** (the reference machine uses `/usr/local/cuda/bin/ptxas`): with
+`CUDA_ROOT` pointed at it the compiler emits the hardware `clmad` GF(2¹²⁸)
+multiply; without it, the software `binary_field_ghash` multiply — same output,
+just slower. `CUDA_ROOT` is what selects it, not `PATH` — see
+[`docs/measurement.md`](docs/measurement.md), which also covers why a stale
+compilation cache can hide the fix.
 
 ```bash
 git clone https://github.com/fractalyze/flock-zorch.git && cd flock-zorch
@@ -172,8 +174,8 @@ export FRX_ENABLE_X64=1                    # required by packed F128 witnesses
 unset JAX_PLATFORMS JAX_ENABLE_X64         # avoid overriding the frx settings
 export XLA_PYTHON_CLIENT_PREALLOCATE=false   # don't grab ~75% of VRAM up front
 export PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"
-export CUDA_ROOT=/usr/local/cuda            # CUDA 13.3 on the reference machine
-export PATH="$CUDA_ROOT/bin:$PATH"           # ptxas 13.3 -> compiler emits clmad
+export CUDA_ROOT=/usr/local/cuda            # MUST be 13.3; this is what selects clmad
+export PATH="$CUDA_ROOT/bin:$PATH"           # for your own ptxas --version checks
 VENV=.venv/bin/python
 scripts/dump_goldens.sh all                  # + the real hash circuits
 $VENV python/flock_zorch/testing/e2e_ligerito_oracle_test.py    # fused prove (identity R1CS)
@@ -261,10 +263,12 @@ Reproduce all three GPU points with the shared goldens:
 export FLOCK_ZORCH_ARTIFACTS="$PWD/artifacts"   # where dump_goldens.sh writes
 export FRX_PLATFORMS=cuda,cpu FRX_ENABLE_X64=1
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
-# Must be a 13.3 toolchain — /usr/local/cuda is not necessarily one, and 12.9
-# silently selects the software GF(2¹²⁸) multiply (~5.5× on the whole prove).
+# CUDA_ROOT must be a 13.3 toolchain — /usr/local/cuda is not necessarily one,
+# and 12.9 silently selects the software GF(2¹²⁸) multiply (~5.5× at m28). XLA
+# uses CUDA_ROOT's ptxas, so check that one rather than whatever PATH resolves.
 export CUDA_ROOT=/usr/local/cuda PATH="$CUDA_ROOT/bin:$PATH"
-ptxas --version | grep -q 'release 13.3' || echo 'WARNING: ptxas is not 13.3'
+"$CUDA_ROOT/bin/ptxas" --version | grep -q 'release 13.3' ||
+  echo 'WARNING: CUDA_ROOT ptxas is not 13.3'
 export PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"
 VENV=.venv/bin/python
 # Needed when the host does not already provide CUDA 12 user-space libraries.
