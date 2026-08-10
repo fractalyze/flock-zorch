@@ -13,6 +13,9 @@ Windows (`--window`, default `open`):
 - **`open`** — the Ligerito recursive open, with sub-step ranges around
   `ring_switch.prove_batched`, `_combine_claims`, `_open_jitted` and
   `_flock_proof_dict`, plus a per-recursion-level breakdown.
+- **`commit`** — the L0 commit, with no sub-step ranges: it is one jitted
+  program, so its encode / layout-assembly / SHA-256 groups have to be read
+  off the kernel names in the report rather than fenced by NVTX.
 - **`zerocheck-urm`**, **`zerocheck-ml`** — one zerocheck `ProverRound` each.
   Zerocheck is why a window is round-level and not phase-level: its two rounds
   turned out to have OPPOSITE bindings — the round-1 URM composite
@@ -210,6 +213,40 @@ def _build_open(golden: str):
     return open_once, meta
 
 
+def _build_commit(golden: str):
+    """Run only the ingest, then return a replayable thunk for the `commit`
+    phase — `commit_flock_ligerito`, the same call `prove_phase_bench` times.
+
+    No sub-steps, deliberately. `zorch.pcs.ligerito.prover._commit` is one
+    `frx.jit` program, so encode / layout-assembly / SHA-256 compression are
+    fused into a single dispatch and no Python-level NVTX range can separate
+    them. The decomposition has to come from grouping the window's kernels by
+    name in the report, which is how #205 produced its 40.2 / 50.9 / 7.8 split
+    and is what makes this window's numbers comparable to it.
+
+    commit is the one phase with no prior state to rebuild: it consumes the
+    witness straight off the golden, so unlike the open/zerocheck windows this
+    needs no transcript snapshot to replay.
+    """
+    import frx
+
+    frx.config.update("jax_enable_x64", True)
+
+    from flock_zorch.pcs import ligerito as zorch_ligerito
+    from flock_zorch.testing._util import await_all
+    from flock_zorch.testing.prove_phase_bench import Circuit
+
+    circ = Circuit("blake3")
+    g = circ.ingest(golden)
+    meta, cfg = g["meta"], g["cfg"]
+    z = frx.device_put(g["z"])
+
+    def commit_once():
+        return await_all(zorch_ligerito.commit_flock_ligerito(cfg, z))
+
+    return commit_once, meta
+
+
 def _build_zerocheck(golden: str, which: str, equal_factors: bool = False):
     """Run the prove up to one zerocheck `ProverRound` and return a replayable
     thunk for that round — `urm` for round-1's univariate skip, `ml` for the
@@ -332,6 +369,7 @@ _SUBSTEPS: dict[str, tuple[tuple[str, str, str], ...]] = {
 # window-agnostic; only these two entries differ per window.
 WINDOWS: dict[str, tuple[Any, tuple[tuple[str, str, str], ...]]] = {
     "open": (lambda golden: _build_open(golden), _SUBSTEPS["open"]),
+    "commit": (lambda golden: _build_commit(golden), ()),
     "zerocheck-urm": (
         lambda golden: _build_zerocheck(golden, "urm"),
         _SUBSTEPS["zerocheck-urm"],
