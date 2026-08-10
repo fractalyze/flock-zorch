@@ -7,15 +7,44 @@ of them is discoverable by reading the code.
 The benchmark itself — how to run it and what it has published — is in
 [`README.md`](../README.md).
 
-- **Verify `ptxas --version` says 13.3 before trusting any number.** With a 13.3
-  `ptxas` on `PATH` the pinned frx wheel emits the hardware `clmad` GF(2¹²⁸)
-  multiply; without it, the software `binary_field_ghash` multiply — same proof,
-  no warning, and **5.5× on the whole prove**. `/usr/local/cuda` is not
-  necessarily 13.3. The damage is non-uniform, so there is a cheap tell: `commit`
-  degrades ~45× (it is almost pure F128 multiplies) while `zerocheck` moves only
-  ~4×. **If `commit` is tens of ms at m28 instead of ~1.3 ms, that is a toolchain
-  bug, not a perf finding.** Self-check by reproducing the README's published
-  m28 baseline.
+- **The `ptxas` that decides `clmad` is `CUDA_ROOT`'s, not `PATH`'s — so
+  `ptxas --version` is not the check.** With a 13.3 `ptxas` the compiler emits
+  the hardware `clmad` GF(2¹²⁸) multiply; without it, the software
+  `binary_field_ghash` multiply — same proof, no warning, and **5.5× on the
+  whole prove at m28, more as `m` grows** (measured ~16× at m32). The damage is
+  non-uniform, so there is a cheap tell: `commit` degrades ~45× (it is almost
+  pure F128 multiplies) while `zerocheck` moves only ~4×. **If `commit` is tens
+  of ms at m28 instead of ~1.3 ms, that is a toolchain bug, not a perf finding.**
+  Self-check by reproducing the README's published m28 baseline.
+
+  frx sets XLA's `xla_gpu_cuda_data_dir` from `CUDA_ROOT` itself, and XLA
+  prefers `<that dir>/bin/ptxas` over anything on `PATH`. Three consequences,
+  each of which has burned a session:
+  - Unset, it falls back to the venv's bundled CUDA (`nvidia/cuda_nvcc`,
+    currently 12.9) — so `ptxas --version` can say 13.3 while XLA compiles 12.9.
+    `/usr/local/cuda` is not necessarily 13.3 either.
+  - `--xla_gpu_cuda_data_dir` in `XLA_FLAGS` does **not** work: the flag parses,
+    then frx overwrites the field. And `CUDA_ROOT` is read when frx is imported,
+    so setting it from inside Python after `import frx` is a no-op — export it
+    before the process starts.
+  - `xla_gpu_cuda_data_dir` is deliberately excluded from the persistent
+    compilation-cache key, so after fixing `CUDA_ROOT` a cached executable built
+    on the software path is still a hit. Clear the cache (or run without one)
+    before re-measuring.
+
+  `TF_CPP_MIN_LOG_LEVEL=0 TF_CPP_MAX_VLOG_LEVEL=1` dumps every debug option by
+  name: grep the log for `xla_gpu_cuda_data_dir` (must be your 13.3 tree) and
+  `Targeting PTX version: 93`. Both gates read that one ptxas probe, so a 9.3
+  header proves the toolchain is wired right. `XLA_FLAGS=--xla_dump_to=<dir>`
+  then confirms the kernel itself contains `clmad.{lo,hi}.u64` — absent there
+  means you dumped a kernel with no GHASH multiplies, not a toolchain problem.
+  (A `libdevice not found` warning is separate and only fatal if a fusion needs
+  one; a 13.3 tree without `nvvm/libdevice` wants one merged in from a 12.x.)
+
+  All of this is identical for the shipped wheel and a self-built plugin — the
+  path lives in frx's Python layer, not the `.so`. A plugin built against
+  hermetic CUDA 12.9 is **not** capped, because the PTX header is raised off the
+  runtime ptxas alone; rebuilding it against 13.3 is not the fix.
 - **A `.bazelrc.user` `--override_module=zorch=...` silently substitutes the
   zorch you are measuring.** Before trusting any wall number, `git log` the
   override checkout against the `MODULE.bazel` pin. A stale override once hid a
