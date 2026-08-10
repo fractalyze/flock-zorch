@@ -235,8 +235,9 @@ def _extend_folded_c(v, k_skip: int):
 
 @functools.partial(frx.jit, static_argnums=(3,))
 def _round1_core(a, b, c, k_skip, r):
-    """Fused round-1 core: build eqx, then accumulate `_round1_partial` over the
-    row axis. `build_eq` is in-kernel (no `build_eq_fused`).
+    """Fused round-1 core: build the eq weights, then accumulate
+    `_round1_partial` over the row axis. `build_eq` is in-kernel (no
+    `build_eq_fused`).
 
     **Blocked over rows above `_ROUND1_BLOCK_ROWS`.** Round-1 is a map-reduce:
     `_extend_rows` transforms along the LAST axis (ell = 2^k_skip), so rows are
@@ -268,7 +269,19 @@ def _round1_core(a, b, c, k_skip, r):
         p_ab, folded_c = _round1_partial(a, b, c, outer_point, k_skip)
         return p_ab, _extend_folded_c(folded_c, k_skip)
 
-    eqx = sumcheck.build_eq(outer_point)[:, None]
+    # eq factors across the block split: `build_eq` pairs challenge i with row
+    # bit i, and a block is the high bits of the row index, so
+    # `eqx[blk·rows + j] = row_eq[j] · block_eq[blk]`. Give every step the
+    # SAME loop-invariant `row_eq` table and move the block's scalar onto the
+    # 1 KiB partials: GHASH multiply distributes exactly over the XOR
+    # accumulation, so `s·Σ where(sel, t, 0)·φ == Σ where(sel, s·t, 0)·φ` and
+    # the message bytes cannot move. Materializing the full eqx and scanning
+    # slices of it instead paid a per-step 64 MiB device copy (the scan's xs
+    # slicing runs as a real DtoD serialized against the composite — the
+    # "non-kernel" bucket of flock-zorch#200) plus the 2^(m-k_skip) build.
+    n_block_bits = n_blocks.bit_length() - 1
+    row_eq = sumcheck.build_eq(outer_point[:-n_block_bits])
+    block_eq = sumcheck.build_eq(outer_point[-n_block_bits:])
 
     rows = _ROUND1_BLOCK_ROWS
     packed = is_packed_witness(a)
@@ -280,19 +293,15 @@ def _round1_core(a, b, c, k_skip, r):
         return x.reshape(n_blocks, rows, ell)
 
     def step(acc, xs):
-        part = _round1_partial(*xs[:3], xs[3], k_skip)
-        return (acc[0] + part[0], acc[1] + part[1]), None
+        a_blk, b_blk, c_blk, s = xs
+        part = _round1_partial(a_blk, b_blk, c_blk, row_eq, k_skip)
+        return (acc[0] + s * part[0], acc[1] + s * part[1]), None
 
     zero = fnp.zeros(ell, fnp.binary_field_ghash)
     (acc_ab, acc_c), _ = lax.scan(
         step,
         (zero, zero),
-        (
-            blocked_witness(a),
-            blocked_witness(b),
-            blocked_witness(c),
-            eqx.reshape(n_blocks, rows, 1),
-        ),
+        (blocked_witness(a), blocked_witness(b), blocked_witness(c), block_eq),
     )
     return acc_ab, _extend_folded_c(acc_c, k_skip)
 
