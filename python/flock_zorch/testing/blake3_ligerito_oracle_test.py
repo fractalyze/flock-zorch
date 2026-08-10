@@ -14,6 +14,7 @@ artifacts/blake3_ligerito_golden.bin):
       python/flock_zorch/testing/blake3_ligerito_oracle_test.py
 """
 
+import argparse
 import sys
 
 import frx
@@ -79,8 +80,8 @@ def load(golden: str = "blake3_ligerito_golden.bin"):
     return g
 
 
-def run():
-    g = load()
+def run(golden: str = "blake3_ligerito_golden.bin"):
+    g = load(golden)
     meta = g["meta"]
     cfg = g["cfg"]
     m = meta["m"]
@@ -121,6 +122,7 @@ def run():
     _lr, lc_zp, lc_claim = lincheck.prove(
         g["zlc"], None, None, x_ab, m, k_log, k_skip, ch=ch, circuit=csc
     )
+    assert lc_claim is not None, "full lincheck prove always yields a claim"
     results.append(
         ("lincheck z_partial", np.array_equal(ghash.to_lanes(lc_zp), g["lc"]["zp"]))
     )
@@ -143,8 +145,15 @@ def run():
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(
+        "--golden",
+        default="blake3_ligerito_golden.bin",
+        help="golden filename under artifacts/ (the m-variant dumps)",
+    )
+    args = ap.parse_args()
     print(f"device {frx.devices()[0]}")
-    m, results = run()
+    m, results = run(args.golden)
     return report(
         results,
         f"blake3 LIGERITO full prove (R1csProofLigerito) vs flock "
