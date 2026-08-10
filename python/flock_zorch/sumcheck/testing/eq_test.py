@@ -5,11 +5,13 @@ Two exact claims, asserted as byte equality on `binary_field_ghash`:
 
 * The suffix family means what it says: `T_i == build_eq(cs[i:])` for every
   suffix — the semantic contract every consumer (the ML round loop, the
-  squared-ladder weighting) relies on.
-* Past `_OUTER_SPLIT_MIN` the outer-product emission stays exactly equal to
-  the pure doubling chain. GF mul is exact, associative, commutative, so the
-  re-association cannot change a byte — the same argument zorch#609 pins for
-  `expand_eq_to_hypercube`.
+  squared-ladder weighting) relies on. This is the list-plumbing pin for the
+  wrapper over zorch's `expand_eq_family` (ordering, shapes, trivial tail).
+* At zorch's `_OUTER_SPLIT_MIN` the outer-product emission stays exactly
+  equal to the pure doubling chain, on the ghash dtype and the proof-relevant
+  `(suffix=True, msb=False)` combination. GF mul is exact, associative,
+  commutative, so the re-association cannot change a byte — the same argument
+  zorch#614 pins dtype-generically; this keeps a flock-side gate on it.
 
 The split case runs at `_OUTER_SPLIT_MIN` exactly — the minimum that exercises
 the split — and the per-suffix `build_eq` cross-check stays below it.
@@ -21,11 +23,25 @@ import numpy as np
 
 frx.config.update("jax_enable_x64", True)
 
+import frx.numpy as fnp  # noqa: E402
 from absl.testing import absltest  # noqa: E402
+from zorch.poly import eq as zorch_eq  # noqa: E402
 
 from flock_zorch import ghash  # noqa: E402
 from flock_zorch.sumcheck import eq  # noqa: E402
 from flock_zorch.testing._util import rand_ghash  # noqa: E402
+
+
+def _suffix_chain(cs):
+    """Pure doubling-chain reference: absorbing `cs[i]` as the low bit of
+    `eq(cs[i+1:])` yields `eq(cs[i:])`. Returns `[T_0 .. T_n]` like
+    `build_eq_suffix_tables`."""
+    t = fnp.ones(1, dtype=cs.dtype)
+    out = [t]
+    for i in range(int(cs.shape[0]) - 1, -1, -1):
+        t = zorch_eq.expand_hypercube_step(t, cs[i], msb=False)
+        out.append(t)
+    return out[::-1]
 
 
 class BuildEqSuffixTablesTest(absltest.TestCase):
@@ -48,9 +64,9 @@ class BuildEqSuffixTablesTest(absltest.TestCase):
         # The keep contract is predicate-defined, not split-regime-defined:
         # every kept table stays byte-equal to the full build, every un-kept
         # slot is None — the heavy outer-product emissions among them are
-        # skipped at the source. The predicate here is the sq pair schedule's
-        # shape: odd indices plus the tail.
-        n = eq._OUTER_SPLIT_MIN + 1
+        # skipped at the source, in zorch's emitter. The predicate here is the
+        # sq pair schedule's shape: odd indices plus the tail.
+        n = zorch_eq._OUTER_SPLIT_MIN + 1
 
         def keep(i: int) -> bool:
             return i % 2 == 1 or i == n
@@ -70,13 +86,13 @@ class BuildEqSuffixTablesTest(absltest.TestCase):
                 self.assertIsNone(kept[i], msg=f"i={i}")
 
     def test_outer_split_matches_chain(self) -> None:
-        # At _OUTER_SPLIT_MIN the large tables are emitted as outer products
-        # of a shared high half; they must stay byte-equal to the doubling
+        # At zorch's _OUTER_SPLIT_MIN the large tables are emitted as outer
+        # products of a shared half; they must stay byte-equal to the doubling
         # chain for every suffix, not just the largest.
-        n = eq._OUTER_SPLIT_MIN
+        n = zorch_eq._OUTER_SPLIT_MIN
         cs = rand_ghash(np.random.default_rng(11), n)
         split = eq.build_eq_suffix_tables(cs)
-        chain = eq._suffix_chain(cs)
+        chain = _suffix_chain(cs)
         self.assertLen(split, n + 1)
         for i, (s, c) in enumerate(zip(split, chain)):
             np.testing.assert_array_equal(
