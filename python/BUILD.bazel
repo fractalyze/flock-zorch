@@ -17,8 +17,6 @@ py_library(
         "@zorch//zorch/sumcheck",
         "@zorch//zorch/coding:reed_solomon",
         "@zorch//zorch/commit:merkle",
-        "@zorch//zorch/hash:byte_hash",
-        "@zorch//zorch/hash:sha256",
         "@zorch//zorch/pcs:fold",
         "@zorch//zorch/pcs:ring_switch",
         "@zorch//zorch/pcs/ligerito",
@@ -29,6 +27,7 @@ py_library(
         # not declare absl-py, so the hermetic env must.
         requirement("absl-py"),
         requirement("frx"),
+        requirement("hash_frx"),
         requirement("numpy"),
         requirement("zk_dtypes"),
     ],
