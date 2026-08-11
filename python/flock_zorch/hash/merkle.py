@@ -16,14 +16,15 @@ from __future__ import annotations
 import frx
 import frx.numpy as fnp
 import numpy as np
+from hash_frx.sha256 import INITIAL_STATE, block_to_words, sha256_merkle_damgard
 from zorch.commit.merkle import MerkleTree
-from zorch.hash.sha256 import INITIAL_STATE, block_to_words, sha256_chain
 
 
 def _pad_device(msg, length: int):
     """Device SHA-256 pad: uint8 [B, length] -> uint32 [B, nblocks, 16] BE, all-fnp
     (no host round-trip) so Merkle nodes stay device-resident across levels. flock-
-    local; `length` is static and the compression itself is zorch's `sha256_chain`.
+    local; `length` is static and the compression itself is hash-frx's
+    `sha256_merkle_damgard`.
 
     `length` being static makes every byte past the message identical for all rows
     and known here, so the suffix is a host constant broadcast onto the batch.
@@ -42,8 +43,9 @@ def _pad_device(msg, length: int):
 
 
 def _digest(msgs, length: int):
-    """Marked batched SHA-256: uint8 [B, length] -> uint8 [B, 32] (`zorch.sha256`)."""
-    return sha256_chain(INITIAL_STATE, _pad_device(msgs, length))
+    """Marked batched SHA-256: uint8 [B, length] -> uint8 [B, 32]
+    (the `hash_frx.sha256` marker)."""
+    return sha256_merkle_damgard(INITIAL_STATE, _pad_device(msgs, length))
 
 
 class _Sha256LeafHasher:
@@ -103,7 +105,7 @@ class _Sha256MerkleTree(MerkleTree):
     """`MerkleTree` with whole levels hashed batch-native: SHA-256's block schedule
     reads the batch axis from the shape, so the base `vmap(single-hash)` would
     retrace the marker decomposition at the wrong rank — override the two batching
-    hooks with the [B, L] contract `zorch.hash.sha256` is written for. Row-major
+    hooks with the [B, L] contract `hash_frx.sha256` is written for. Row-major
     only (both hooks hash rows); the leaf hasher's `as_bytes` picks the uint8
     preimage, so one class serves both the uint8 and GHASH codeword trees."""
 

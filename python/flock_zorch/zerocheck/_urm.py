@@ -26,7 +26,7 @@ import frx.numpy as fnp
 import numpy as np
 import zk_dtypes
 from frx import lax
-from zorch.fusion import fused_region
+from hash_frx.fusion import fused_region
 from zorch.poly.eq import expand_eq_to_hypercube
 
 from flock_zorch import ghash, sumcheck

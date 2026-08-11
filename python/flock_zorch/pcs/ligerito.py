@@ -37,8 +37,8 @@ import frx.numpy as fnp
 import numpy as np
 from frx import Array, lax
 from frx.tree_util import register_dataclass
+from hash_frx.sha256 import Sha256State
 from zorch.coding.reed_solomon import ReedSolomon
-from zorch.hash.sha256 import Sha256State
 from zorch.pcs.ligerito.choreography import LigeritoChoreography
 from zorch.pcs.ligerito.config import LigeritoConfig
 from zorch.pcs.ligerito.prover import LigeritoProver, LigeritoProverData
