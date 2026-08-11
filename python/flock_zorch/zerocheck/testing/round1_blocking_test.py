@@ -1,17 +1,18 @@
 # Copyright 2026 The Flock-Zorch Authors. SPDX-License-Identifier: Apache-2.0
-"""Native unit test for round-1's row blocking (no golden).
+"""Native unit test for round-1's row partitioning (no golden).
 
 Round-1 is a map-reduce over the row axis: `_extend_rows` transforms along the
 LAST axis, so rows are independent, and the reduction collapses them to `[ell]`.
-Blocking that axis is what lets m=32 — the benchmark instance — fit on a 32 GB
-card at all (#179), and it is only admissible because the accumulation is `+` on
-`binary_field_ghash`, i.e. XOR: associative and commutative, so partitioning the
-rows cannot change the result.
+Above `_ROUND1_BLOCK_ROWS` the production path exploits that by weighting rows
+from a periodic eq window and applying each block's eq scalar to the partial
+sums afterwards. It is admissible because the accumulation is `+` on
+`binary_field_ghash`, i.e. XOR — associative and commutative, and the scalar
+distributes over it — so regrouping the rows cannot change the result.
 
 "Cannot change the result" is the claim under test, and it is exact rather than
 approximate, so the assertion is byte equality at several block counts. The
-full-proof byte gate covers the production block size against flock; this covers
-the partition argument itself, cheaply and on CPU.
+full-proof byte gate covers the production window against flock; this covers
+the regrouping argument itself, cheaply and on CPU.
 """
 from __future__ import annotations
 
@@ -41,6 +42,12 @@ def _inputs(seed: int):
     n_challenges = K_SKIP + N_ROWS.bit_length() - 1
     r = rand_ghash(rng, n_challenges)
     return a, b, c, r
+
+
+def _pack(x):
+    """Bit rows -> the packed F128 witness form (uint64 [n/2, 2])."""
+    raw = np.packbits(np.asarray(x), axis=None, bitorder="little")
+    return fnp.asarray(raw.view(np.uint64).reshape(-1, 2))
 
 
 def _round1_at(block_rows: int, a, b, c, r, n_partials: int | None = None):
@@ -87,9 +94,21 @@ class Round1BlockingTest(parameterized.TestCase):
         got = _round1_at(block_rows, a, b, c, r)
         _assert_messages_equal(ref, got, f"at {N_ROWS // block_rows} blocks")
 
+    @parameterized.named_parameters(("4_blocks", 1 << 12), ("16_blocks", 1 << 10))
+    def test_windowed_packed_witness_matches_unblocked_exactly(
+        self, block_rows: int
+    ) -> None:
+        # The windowed path hands the packed F128 witness to the composite
+        # whole (no per-block reshape survives), so pin packed x windowed
+        # explicitly — the unpacked cases above cannot cover that spelling.
+        a, b, c, r = _inputs(seed=23)
+        ref = _round1_at(N_ROWS << 1, a, b, c, r)
+        got = _round1_at(block_rows, _pack(a), _pack(b), _pack(c), r)
+        _assert_messages_equal(ref, got, f"packed at {N_ROWS // block_rows} blocks")
+
     def test_production_block_size_leaves_small_instances_unblocked(self) -> None:
         # The threshold exists so an instance that already fits keeps its exact
-        # program rather than becoming a scan of length 1. m<=28 is below it.
+        # program rather than taking the windowed one. m<=28 is below it.
         self.assertGreaterEqual(_urm._ROUND1_BLOCK_ROWS, 1 << 22)
 
 
@@ -150,13 +169,9 @@ class Round1CFoldFirstTest(absltest.TestCase):
             np.asarray(ghash.to_lanes(x)) for x in _urm._round1_core(a, b, c, K_SKIP, r)
         ]
 
-        def pack(x):
-            raw = np.packbits(np.asarray(x), axis=None, bitorder="little")
-            return fnp.asarray(raw.view(np.uint64).reshape(-1, 2))
-
         got = [
             np.asarray(ghash.to_lanes(x))
-            for x in _urm._round1_core(pack(a), pack(b), pack(c), K_SKIP, r)
+            for x in _urm._round1_core(_pack(a), _pack(b), _pack(c), K_SKIP, r)
         ]
         _assert_messages_equal(ref, got, "packed witness")
 

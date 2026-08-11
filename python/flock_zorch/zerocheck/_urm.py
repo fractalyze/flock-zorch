@@ -73,8 +73,9 @@ _PHI_BASIS_DEV_G = ghash.to_ghash(fnp.asarray(_PHI8_BASIS))
 _AES = np.dtype(zk_dtypes.binary_field_gf8_aes)
 URM_MARKER = "zorch.zerocheck_urm"
 # Partials count for the round-1 map-reduce, per eq form (measured m28/m32,
-# RTX 5090, ptxas 13.3): with the eq block pre-materialized 16384 is faster —
-# 833 -> 792 us per `_ROUND1_BLOCK_ROWS`-row block (the two constants were
+# RTX 5090, ptxas 13.3, on the pre-window blocked scan — the counts are
+# per-launch and carry over): with the eq block pre-materialized 16384 is
+# faster — 833 -> 792 us per `_ROUND1_BLOCK_ROWS` rows (the two constants were
 # measured together) against a +7 us partials-sum, ~ -0.5 ms on the m32 URM
 # window (flock-zorch#200) — while the point-form composite (eq built
 # in-fusion) regresses 915 -> 1010 us at the same doubling. Byte-safe for any
@@ -103,10 +104,10 @@ def _to_u8(x):
 def is_packed_witness(bits) -> bool:
     """Is this the packed F128 witness (uint64 [2^(m-7), 2]) rather than bits?
 
-    The one authority on that question: round-1, the multilinear fold and the
-    block reshape all branch on it, and open-coding the three clauses per site
-    is how they drift. `getattr` rather than `.ndim` so a host list or a scalar
-    answers False instead of raising."""
+    The one authority on that question: round-1's input normalize, the
+    multilinear fold and `witness_to_rows` all branch on it, and open-coding
+    the three clauses per site is how they drift. `getattr` rather than `.ndim`
+    so a host list or a scalar answers False instead of raising."""
     return (
         getattr(bits, "ndim", 0) == 2
         and bits.shape[-1] == 2
@@ -150,36 +151,55 @@ def _round1_input_rows(x, n_rows: int):
     return x
 
 
-# Rows per block once round-1 blocks (see `_round1_core`). 2**22 is the row
-# count m=28 runs at unblocked, so a block reproduces a working set the stack is
-# already measured on: 256 MiB per track, ~1.8 GiB for the whole core.
+# Rows one eq window covers once round-1 goes windowed, and — deliberately the
+# same number — the row count above which round-1 windows at all (see
+# `_round1_core`). 2**22 is the row count m=28 runs unwindowed, so a window
+# reproduces a working set the stack is already measured on. Retuning the
+# window size therefore also moves the cutoff; split the two if that stops
+# being what you want.
 _ROUND1_BLOCK_ROWS = 1 << 22
 
 
-def _round1_partial_decomp(a, b, c, eq_or_point, phi_basis, *, k_skip: int):
+def _round1_partial_decomp(
+    a, b, c, eq_or_point, phi_basis, *, k_skip: int, rows: int | None = None
+):
     """Portable decomposition of the fused bit-sliced URM map-reduce.
 
     The custom GPU emitter keeps the transformed AES bit planes on chip and
     emits only GHASH partials.  This decomposition spells the same operation in
     ordinary array primitives for CPU and marker fallback.
+
+    `rows` (a composite attribute, so it rides to this fallback) selects the
+    window form: the weights operand covers only `rows / len(weights)` periods
+    and tiles across the witness — the contract the GPU emitter implements as
+    `weights[row mod window]`. Without it the weights either span every row or
+    are a challenge point, and the row count is derived as before.
     """
 
-    def matches_rows(rows: int) -> bool:
+    def matches_rows(n: int) -> bool:
         if a.ndim == 3 and a.shape[-2:] == (2, 8):
-            return a.shape[0] * 2 == rows
+            return a.shape[0] * 2 == n
         if is_packed_witness(a):
-            return a.shape[0] * 2 == rows
+            return a.shape[0] * 2 == n
         if a.ndim == 1 and np.dtype(a.dtype) == np.uint8:
-            return a.shape[0] in (rows * 8, rows * 64)
-        return a.shape[0] == rows
+            return a.shape[0] in (n * 8, n * 64)
+        return a.shape[0] == n
 
+    # The point form is a version-1 shape only: under the window contract the
+    # weights operand is an eq window by definition, so `rows` answers the
+    # question the shape heuristic would otherwise have to guess at.
     point_rows = 1 << eq_or_point.shape[0]
-    point_weights = eq_or_point.shape[0] < 63 and matches_rows(point_rows)
+    point_weights = (
+        rows is None and eq_or_point.shape[0] < 63 and matches_rows(point_rows)
+    )
     eqx = (
         expand_eq_to_hypercube(eq_or_point, fnp.ones((), eq_or_point.dtype), msb=True)
         if point_weights
         else eq_or_point.reshape(-1)
     )
+    if rows is not None:
+        assert rows % eqx.shape[0] == 0, "window must divide the row count"
+        eqx = fnp.tile(eqx, rows // eqx.shape[0])
     n_rows = eqx.shape[0]
     a = _round1_input_rows(a, n_rows)
     b = _round1_input_rows(b, n_rows)
@@ -203,9 +223,17 @@ def _round1_partial_decomp(a, b, c, eq_or_point, phi_basis, *, k_skip: int):
     return fnp.stack([partial_ab, partial_c], axis=1)
 
 
-def _round1_partial(a, b, c, eq_or_point, k_skip):
-    """One row block's canonical zerocheck URM composite."""
-    partials = fused_region(
+def _round1_partials(a, b, c, eq_or_point, k_skip, rows: int | None = None):
+    """The fused URM composite, as raw `[n_partials, 2, ell]` partial sums.
+
+    Partial p covers the contiguous row range `[p·rows_per_partial,
+    (p+1)·rows_per_partial)` — part of the contract, since a windowed caller
+    regroups this axis by block.
+
+    `rows` widens the call to the window contract (version 2); the weights
+    operand is then an eq window, per `_round1_partial_decomp`."""
+    contract = {"version": 1} if rows is None else {"version": 2, "rows": rows}
+    return fused_region(
         _round1_partial_decomp,
         a,
         b,
@@ -213,11 +241,9 @@ def _round1_partial(a, b, c, eq_or_point, k_skip):
         eq_or_point.reshape(-1),
         _PHI_BASIS_DEV_G,
         name=URM_MARKER,
-        version=1,
         k_skip=k_skip,
+        **contract,
     )
-    out = fnp.sum(partials, axis=0)
-    return out[0], out[1]
 
 
 def _extend_folded_c(v, k_skip: int):
@@ -235,28 +261,20 @@ def _extend_folded_c(v, k_skip: int):
 
 @functools.partial(frx.jit, static_argnums=(3,))
 def _round1_core(a, b, c, k_skip, r):
-    """Fused round-1 core: build the eq weights, then accumulate
-    `_round1_partial` over the row axis. `build_eq` is in-kernel (no
+    """Fused round-1 core: build the eq weights, then reduce the composite's
+    partial sums over the row axis. `build_eq` is in-kernel (no
     `build_eq_fused`).
 
-    **Blocked over rows above `_ROUND1_BLOCK_ROWS`.** Round-1 is a map-reduce:
+    **Windowed over rows above `_ROUND1_BLOCK_ROWS`.** Round-1 is a map-reduce:
     `_extend_rows` transforms along the LAST axis (ell = 2^k_skip), so rows are
     independent, and the reduction is over the row axis down to `[ell]` — 64
-    ghash elements, 1 KiB, out of a 4 GiB-per-track input at m=32. Holding all
-    N rows live is therefore a property of the traced program, not of the
-    algorithm, and it is what puts round-1 at 28.06 GiB on a 32 GB card at m=32
-    (a 16.06 GiB temp arena plus three 4 GiB `u8[N, ell]` tracks) — the OOM in
-    #179. Blocking divides the arena by the block count.
+    ghash elements, 1 KiB. Above the threshold ONE composite launch covers
+    every row under the version-2 window contract; the mechanism and why it is
+    bit-identical are in the inline comment below. Every instance that already
+    fits keeps its exact program (threshold rationale at
+    `_ROUND1_BLOCK_ROWS`).
 
-    Bit-identical, not merely close: the accumulation is `+` on
-    `binary_field_ghash`, i.e. XOR, which is associative and commutative, so
-    partitioning the rows cannot change the result — the same argument
-    `sumcheck.build_eq_suffix_tables` relies on.
-
-    One block (N <= block rows) takes the unblocked path unchanged, so every
-    instance that already fits keeps its exact program, not a scan of length 1.
-
-    The C track folds first and extends once (`_round1_partial` /
+    The C track folds first and extends once (`_round1_partials` /
     `_extend_folded_c`): its per-row S→Λ NTT passes, φ8 gather and clmul
     accumulate are replaced by one select-XOR reduce plus a 64-point extension
     of the reduced vector. Equal by linearity — valid for ANY c rows, not an
@@ -266,44 +284,33 @@ def _round1_core(a, b, c, k_skip, r):
     n_rows, ell = 1 << outer_point.shape[0], 1 << k_skip
     n_blocks = n_rows // _ROUND1_BLOCK_ROWS
     if n_blocks <= 1:
-        p_ab, folded_c = _round1_partial(a, b, c, outer_point, k_skip)
-        return p_ab, _extend_folded_c(folded_c, k_skip)
+        out = fnp.sum(_round1_partials(a, b, c, outer_point, k_skip), axis=0)
+        return out[0], _extend_folded_c(out[1], k_skip)
 
     # eq factors across the block split: `build_eq` pairs challenge i with row
     # bit i, and a block is the high bits of the row index, so
-    # `eqx[blk·rows + j] = row_eq[j] · block_eq[blk]`. Give every step the
-    # SAME loop-invariant `row_eq` table and move the block's scalar onto the
-    # 1 KiB partials: GHASH multiply distributes exactly over the XOR
-    # accumulation, so `s·Σ where(sel, t, 0)·φ == Σ where(sel, s·t, 0)·φ` and
-    # the message bytes cannot move. Materializing the full eqx and scanning
-    # slices of it instead paid a per-step 64 MiB device copy (the scan's xs
-    # slicing runs as a real DtoD serialized against the composite — the
-    # "non-kernel" bucket of flock-zorch#200) plus the 2^(m-k_skip) build.
+    # `eqx[blk·rows + j] = row_eq[j] · block_eq[blk]`. The composite's window
+    # contract (version 2) reads `row_eq[row mod window]` on chip, so ONE
+    # launch covers every block with one shared table — no per-block witness
+    # slices (the 16-step scan ran them as 96 MiB of DtoD per step,
+    # flock-zorch#200's "non-kernel" bucket) and no full-eqx build. The block
+    # scalar then lands on the per-block partial sums. Bit-identical, not
+    # merely close: accumulation is `+` on `binary_field_ghash`, i.e. XOR, so
+    # regrouping rows is free, and the GHASH multiply distributes exactly over
+    # it — `s·Σ where(sel, t, 0)·φ == Σ where(sel, s·t, 0)·φ` — so the message
+    # bytes cannot move. The same argument `sumcheck.build_eq_suffix_tables`
+    # relies on.
     n_block_bits = n_blocks.bit_length() - 1
     row_eq = sumcheck.build_eq(outer_point[:-n_block_bits])
     block_eq = sumcheck.build_eq(outer_point[-n_block_bits:])
 
-    rows = _ROUND1_BLOCK_ROWS
-    packed = is_packed_witness(a)
-
-    def blocked_witness(x):
-        if packed:
-            # One packed F128 element holds two consecutive 64-bit rows.
-            return x.reshape(n_blocks, rows // 2, 2)
-        return x.reshape(n_blocks, rows, ell)
-
-    def step(acc, xs):
-        a_blk, b_blk, c_blk, s = xs
-        part = _round1_partial(a_blk, b_blk, c_blk, row_eq, k_skip)
-        return (acc[0] + s * part[0], acc[1] + s * part[1]), None
-
-    zero = fnp.zeros(ell, fnp.binary_field_ghash)
-    (acc_ab, acc_c), _ = lax.scan(
-        step,
-        (zero, zero),
-        (blocked_witness(a), blocked_witness(b), blocked_witness(c), block_eq),
-    )
-    return acc_ab, _extend_folded_c(acc_c, k_skip)
+    partials = _round1_partials(a, b, c, row_eq, k_skip, rows=n_rows)
+    # Regrouping partials by block requires whole partials per block, i.e. at
+    # least as many partials as blocks (both are powers of two).
+    assert partials.shape[0] % n_blocks == 0
+    per_block = fnp.sum(partials.reshape(n_blocks, -1, 2, ell), axis=1)
+    acc = fnp.sum(per_block * block_eq[:, None, None], axis=0)
+    return acc[0], _extend_folded_c(acc[1], k_skip)
 
 
 @functools.partial(frx.jit, static_argnums=(1, 2))
