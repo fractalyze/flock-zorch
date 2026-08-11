@@ -76,6 +76,33 @@ The benchmark itself — how to run it and what it has published — is in
   while a phase wall spreads several percent, so read busy for small deltas.
   Use `--throughput` for any number compared against a goal — the barriered
   phase-split mode runs ~14% slower and is for attribution only.
+
+  Three rules follow from that, each of which has now cost a session:
+  - **Compare busy and wall within the SAME iteration.** A profiled capture's
+    busy against a clean `--walls` number mixes two execution modes and can
+    manufacture an idle bucket that is not there. Gate the capture first: the
+    profiled iteration's own wall must land near the clean wall before anything
+    derived from it is trusted.
+  - **Profile ≥2 iterations and discard the first.** The first pays a one-time
+    driver cost that is indistinguishable from a workload stall — m32 `open`
+    measured 85.0 / 23.3 / 21.7 ms across three, the first carrying a single
+    47 ms contiguous device-idle gap during which the host issued *no* CUDA
+    calls. `nsys_capture.py --window` profiles exactly one, so drive its
+    internals (`WINDOWS`, `_Nvtx`, `_Profiler`, `_wrap_substeps`) for a
+    multi-iteration capture.
+  - **A profiler cannot answer launch-structure questions at all.** XLA runs a
+    command buffer as a plain thunk sequence whenever a profiler session is
+    active (`xla_enable_command_buffers_during_profiling` defaults false —
+    upstream TODO b/290773547), so every capture of this prover executes
+    kernel-by-kernel and any "which op splits the command buffer" or
+    per-boundary cost describes the fallback, not production. Setting the flag
+    does not rescue it: `--cuda-graph-trace=node` instruments each node and
+    gives the graph's advantage back (m32 `open` 25.1 / 22.5 ms with the flag
+    vs 23.3 / 21.7 without). Use an un-profiled A/B instead —
+    `XLA_FLAGS=--xla_gpu_enable_command_buffer=` against the default. On the
+    m32 `open` window that is p10 19.647 (graphs on) vs 19.727 ms (off), i.e.
+    CUDA graphs are worth ~0 there, which refuted a launch-collapse plan before
+    any code was written.
 - **A/B knobs in combination, not one at a time.** Tiling the elements reduce
   measured flat and a mask-select measured *slower*, which read as "not
   tunable" — then zorch#590 combined both with a per-program parity fold for
