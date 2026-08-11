@@ -154,11 +154,18 @@ def paths_to_multi_proof(paths: np.ndarray, num_leaves: int, positions) -> np.nd
         second_of_pair = np.zeros(active.size, dtype=np.bool_)
         second_of_pair[1:] = paired[:-1]
         emit = ~paired & ~second_of_pair
-        if np.any(emit):
+        if emit.any():
             proof.append(paths[first_qi[emit], level])
 
+        # `active` is sorted, so the parents are non-decreasing and dedup is an
+        # adjacent-difference scan. `np.unique` would argsort an already-ordered
+        # array once per tree level — the dominant cost of the whole wire
+        # assembly at m32 (six openings x ~16 levels).
         parents = active >> np.uint64(1)
-        active, parent_first = np.unique(parents, return_index=True)
-        first_qi = first_qi[parent_first]
+        keep = np.empty(parents.size, np.bool_)
+        keep[0] = True
+        np.not_equal(parents[1:], parents[:-1], out=keep[1:])
+        active = parents[keep]
+        first_qi = first_qi[keep]
 
     return np.concatenate(proof, axis=0) if proof else np.zeros((0, 32), np.uint8)

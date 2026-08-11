@@ -127,6 +127,10 @@ def main() -> int:
     ok = _check(16, 64, [2, 5, 11], "spread") and ok
     ok = _check(64, 32, [0, 1, 2, 3, 40, 41], "dense-clusters") and ok
     ok = _check(256, 16, [7, 7, 100, 255], "with-dup") and ok
+    # The active-set walk dedups by adjacent difference, which is only valid
+    # because the set enters sorted. Pin that the entry `np.unique` still
+    # establishes it when the caller's positions do not arrive in order.
+    ok = _check(256, 16, [255, 7, 100, 7], "unsorted-dup") and ok
     ok = _check(8, 16, [1, 2, 3, 4, 5, 6], "near-full") and ok
     return 0 if ok else 1
 
