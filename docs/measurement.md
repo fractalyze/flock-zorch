@@ -81,13 +81,44 @@ The benchmark itself — how to run it and what it has published — is in
   tunable" — then zorch#590 combined both with a per-program parity fold for
   −18%. Each measurement was right and the conclusion was wrong. One knob at a
   time can only refute one knob.
+- **Never derive DRAM traffic from HLO shapes. `ERR_NVGPUCTRPERM` does not mean
+  ncu is blocked — it means ncu needs one `sudo` (see the ncu bullet below), so
+  ask for it.**
+
+  This matters because the substitute is worse than it looks, and reaching for
+  it has cost **three** sessions. A one-read-one-write shape model under-counts
+  whenever a kernel re-reads, over-fetches, or writes a buffer its root op does
+  not imply — and the error direction is systematic: fewer bytes over the same
+  wall reads as *low efficiency*, which manufactures headroom that is not there.
+  #213 priced a reduce at 56% of peak from shapes, corrected itself to 47%, and
+  was wrong both times; ncu measured **95%**, with the kernel moving 2.00× the
+  required bytes. Reading that as a redundant pass rather than an efficiency gap
+  is what produced the actual fix (#215). The commit-phase work then repeated it
+  twice in one table — a per-launch byte count charged against two launches'
+  aggregate time (40% claimed, 76–86% measured), and a fusion emitting a tuple
+  output the model did not know about (54% claimed, 81.9% measured) — after
+  recording "ncu is blocked on this box" as the reason. It was not blocked.
+
+  When you genuinely cannot measure (someone else's box, a shipped wheel), the
+  derived number is a **lower bound on efficiency / upper bound on headroom**,
+  never evidence that a kernel is slow. Three checks, in order: count bytes
+  **per launch** and multiply by the launch count nsys reports; open the fused
+  computation and check whether it emits more buffers than its name implies; and
+  when one kernel reads as far off peak while its same-shape neighbours do not,
+  suspect the byte count before the kernel.
 - **A profiler's stall reason says where warps wait, not what is fixable.** Read
   Speed-of-Light first: it named instruction count on a kernel whose loudest
   stall line pointed at loads. And profile the slow kernel's *neighbours in the
   same capture* — siblings at 76–86% DRAM turn "is 707 GB/s good?" from a
   judgement call into a measurement.
 - **ncu needs `sudo` on the build box** (`ERR_NVGPUCTRPERM`, all-or-nothing —
-  it refuses even `--section LaunchStats`). nsys is unaffected because it uses
-  CUPTI tracing rather than hardware counters. Under sudo, pin `HOME` and use
-  absolute paths, or the env reset sends `CUDA_ROOT` and the venv to root's
-  home and you measure the software-GHASH path.
+  it refuses even `--section LaunchStats`). Confirm it in one line rather than
+  inferring it from a failed run: `grep RmProfilingAdminOnly
+  /proc/driver/nvidia/params`, where `1` means counters are admin-only. nsys is
+  unaffected because it uses CUPTI tracing rather than hardware counters.
+  Under sudo, pin `HOME` and use absolute paths, or the env reset sends
+  `CUDA_ROOT` and the venv to root's home and you measure the software-GHASH
+  path. Two more, once it runs: `--profile-from-start no` honours
+  `nsys_capture.py`'s `cuProfilerStart/Stop`, so warm-up and autotune are
+  excluded by construction; and `ncu --csv` emits a **units row after the
+  header**, so parsing the header alone reads every metric as zero.
