@@ -205,14 +205,7 @@ def _mlv_round_pair_sq(a_g, eq_sqrt_next_g, sqrt_c_g, r0_g, t):
     return a2, t, ((m1, minf), (m1_next, minf_next)), (rho, rho_next)
 
 
-# NOT jitted as one program: XLA's GPU multi-output reduce fusion miscompiles
-# the whole-loop trace — the four-sum base reduces of the second pair onward
-# come back with wrong bytes (CPU, the per-pair programs, and the pre-s-basis
-# whole-loop fusion are all byte-correct; disabling priority-fusion or
-# multi_output_fusion also fixes it). The pairs stay individually jitted;
-# restore the decorator when the XLA emitter fix ships (tracked on the xla
-# work board: "fix(gpu): multi-output reduce fusion over binary_field_ghash
-# miscompiles").
+@frx.jit
 def _mlv_sumcheck_sq(a_g, eq_sqrt_tables, cs_sqrt_g, r0_g, t):
     """`_mlv_sumcheck` on the equal-factor path — the same wire: message values
     are exact field identities of the generic pair's, and the final b̂ observe

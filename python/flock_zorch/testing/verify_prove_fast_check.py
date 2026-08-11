@@ -5,7 +5,7 @@ Builds the identity R1CS in Python (packers, no golden), proves it, then runs th
 full verify — bind → zerocheck → lincheck → ring-switch → Ligerito open — on a fresh
 challenger. Not a bazel target (frx GPU plugin + the Ligerito recursion). Run:
     cd .../flock-zorch.worktrees/agent0
-    CUDA_VISIBLE_DEVICES=0 JAX_PLATFORMS=cuda XLA_PYTHON_CLIENT_PREALLOCATE=false \
+    CUDA_VISIBLE_DEVICES=0 JAX_PLATFORMS=cuda,cpu XLA_PYTHON_CLIENT_PREALLOCATE=false \
         PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" .venv/bin/python \
         python/flock_zorch/testing/verify_prove_fast_check.py
 """
