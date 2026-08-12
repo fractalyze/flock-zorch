@@ -63,7 +63,7 @@ frx.config.update("jax_enable_x64", True)
 
 import frx.numpy as fnp  # noqa: E402
 
-from flock_zorch import lincheck, prover, zerocheck  # noqa: E402
+from flock_zorch import lincheck, prover, witgen, zerocheck  # noqa: E402
 from flock_zorch.challenger import Challenger  # noqa: E402
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
 from flock_zorch.testing._golden import unpack_bits  # noqa: E402
@@ -71,6 +71,12 @@ from flock_zorch.testing._util import await_all, best, best_of  # noqa: E402
 from flock_zorch.types import ProveFastResult  # noqa: E402
 
 PHASES = ("commit", "zerocheck", "lincheck", "open")
+
+
+def _phases(args):
+    """Phase columns for this invocation: seed mode owns an extra leading
+    `witgen` phase (seed->blocks->witness->stripe)."""
+    return (("witgen",) + PHASES) if args.seed is not None else PHASES
 
 
 # ---------------------------------------------------------------- GPU provenance
@@ -230,7 +236,7 @@ class Circuit:
 # -------------------------------------------------------------------- timing
 
 
-def make_prove(circ: Circuit, g, unpacked: bool):
+def make_prove(circ: Circuit, g, unpacked: bool, seed: int | None = None):
     """Returns a `prove(times) -> result` running one full prove.
 
     With `times`, every phase is awaited and recorded into it. There is exactly
@@ -244,21 +250,32 @@ def make_prove(circ: Circuit, g, unpacked: bool):
     stmt, zlc = g["stmt"], g["zlc"]
     circuit = circ.build(g)
 
-    if unpacked:
+    seed_dev = None
+    if seed is not None:
+        # The witness comes from the device chain inside prove(); the golden
+        # supplies only the circuit constants (cfg, statement digest, CSC
+        # rows — all witness-independent). Only the 8-byte seed is uploaded.
+        a_bits = b_bits = c_bits = z = zlc = None
+        seed_dev = frx.device_put(fnp.uint64(seed))
+    elif unpacked:
         witness = (
             unpack_bits(g["a"], m),
             unpack_bits(g["b"], m),
             unpack_bits(g["z"], m),
         )
+        a_bits, b_bits, c_bits = (frx.device_put(x) for x in witness)
+        z = frx.device_put(g["z"])
+        zlc = lincheck.stripe_to_device(zlc, m, k_log)
     else:
-        # Packed F128 — witness_to_rows unpacks on device (8x less host transfer).
+        # Packed F128 — witness_to_rows unpacks on device (8x less host
+        # transfer). Upload once — the lincheck stripe included. Left as host
+        # numpy/bytes these re-cross PCIe every iteration, and the cost lands
+        # on whichever phase touches them first — skewing the very split this
+        # harness exists to report.
         witness = (g["a"], g["b"], g["z"])
-    # Upload once — the lincheck stripe included. Left as host numpy/bytes these
-    # re-cross PCIe every iteration, and the cost lands on whichever phase
-    # touches them first — skewing the very split this harness exists to report.
-    a_bits, b_bits, c_bits = (frx.device_put(x) for x in witness)
-    z = frx.device_put(g["z"])
-    zlc = lincheck.stripe_to_device(zlc, m, k_log)
+        a_bits, b_bits, c_bits = (frx.device_put(x) for x in witness)
+        z = frx.device_put(g["z"])
+        zlc = lincheck.stripe_to_device(zlc, m, k_log)
 
     def prove(times=None):
         def phase(name, fn):
@@ -269,8 +286,21 @@ def make_prove(circ: Circuit, g, unpacked: bool):
             times[name] = (time.perf_counter() - t0) * 1e3
             return r
 
+        if seed_dev is None:
+            wit_a, wit_b, wit_c, wit_z, wit_zlc = a_bits, b_bits, c_bits, z, zlc
+        else:
+
+            def _witgen():
+                blocks = witgen.blocks_from_seed(seed_dev, m - k_log)
+                z3, a3, b3 = witgen.witness_blake3(*blocks)
+                zlc3 = witgen.lincheck_stripe(z3)
+                return a3.reshape(-1, 2), b3.reshape(-1, 2), z3.reshape(-1, 2), zlc3
+
+            wit_a, wit_b, wit_c, wit_zlc = phase("witgen", _witgen)
+            wit_z = wit_c
+
         def _commit():
-            root, pdata = zorch_ligerito.commit_flock_ligerito(cfg, z)
+            root, pdata = zorch_ligerito.commit_flock_ligerito(cfg, wit_z)
             ch = Challenger(circ.domain)
             prover.bind_statement(ch, stmt, root)
             return pdata, ch
@@ -278,14 +308,14 @@ def make_prove(circ: Circuit, g, unpacked: bool):
         def _lincheck(zc):
             x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, ir)
             lc = lincheck.prove(
-                zlc, None, None, x_ab, m, k_log, k_skip, ch=ch, circuit=circuit
+                wit_zlc, None, None, x_ab, m, k_log, k_skip, ch=ch, circuit=circuit
             )
             return x_ab, lc
 
         def _open(zc, x_ab, lc):
             ab = fnp.concatenate([lc.claim.r_inner_rest, x_ab.x_outer], axis=0)
             cc = fnp.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
-            return prover.open_batch_ligerito(cfg, z, pdata, [ab, cc], ch)
+            return prover.open_batch_ligerito(cfg, wit_z, pdata, [ab, cc], ch)
 
         pdata, ch = phase("commit", _commit)
         # The claim, not the wire proof: `ZerocheckProof` holds wire fields
@@ -293,7 +323,7 @@ def make_prove(circ: Circuit, g, unpacked: bool):
         # `mlv_challenges`, `r_rest`) lives on `ZerocheckClaim`.
         zc_proof, zc = phase(
             "zerocheck",
-            lambda: zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch),
+            lambda: zerocheck.prove_packed(wit_a, wit_b, wit_c, m, ch=ch),
         )
         x_ab, lc = phase("lincheck", lambda: _lincheck(zc))
         opening = phase("open", lambda: _open(zc, x_ab, lc))
@@ -317,7 +347,8 @@ def bench(circ: Circuit, args) -> None:
     g = circ.ingest(args.golden)
     meta = g["meta"]
     n_hash = circ.hashes_per_proof(meta)
-    prove = make_prove(circ, g, args.unpacked)
+    prove = make_prove(circ, g, args.unpacked, seed=args.seed)
+    phases = _phases(args)
 
     if args.throughput:
         wall = best(lambda: prove(), args.runs)
@@ -341,10 +372,10 @@ def bench(circ: Circuit, args) -> None:
 
     print(
         f"{circ.name:>8} {meta['m']:>3} {n_hash:>8} "
-        + " ".join(f"{parts[p]:>9.2f}ms" for p in PHASES)
+        + " ".join(f"{parts[p]:>9.2f}ms" for p in phases)
         + f" {total:>7.1f}ms {wall:>7.1f}ms {n_hash * 1e3 / wall:>10.0f}"
     )
-    print("  " + "  ".join(f"{p} {100 * parts[p] / total:.0f}%" for p in PHASES))
+    print("  " + "  ".join(f"{p} {100 * parts[p] / total:.0f}%" for p in phases))
     if args.cpu_ms:
         print(
             f"  {args.cpu_ms / wall:.2f}x vs same-instance flock CPU "
@@ -388,11 +419,29 @@ def main() -> int:
         help="send witness as uint8 bits (8x host transfer) not packed F128",
     )
     ap.add_argument(
+        "--seed",
+        type=int,
+        help="blake3 only: generate the witness on device from this challenge "
+        "seed (seed->blocks->witness->stripe inside the timed window) instead "
+        "of ingesting the golden's; the golden still supplies the circuit "
+        "constants. The window is then snark.fast-comparable minus proof "
+        "serialization.",
+    )
+    ap.add_argument(
         "--allow-contended",
         action="store_true",
         help="measure even with another compute process on the card",
     )
     args = ap.parse_args()
+
+    if args.seed is not None:
+        if args.circuits != ["blake3"]:
+            ap.error("--seed drives the device blake3 witgen; blake3 only")
+        if args.unpacked:
+            ap.error(
+                "--seed and --unpacked conflict: the witness never "
+                "crosses the host in seed mode"
+            )
 
     if len(args.circuits) > 1:
         for flag, val in (("--golden", args.golden), ("--cpu-ms", args.cpu_ms)):
@@ -423,7 +472,7 @@ def main() -> int:
     else:
         hdr = (
             f"{'circuit':>8} {'m':>3} {'hashes':>8} "
-            + " ".join(f"{p:>10}" for p in PHASES)
+            + " ".join(f"{p:>10}" for p in _phases(args))
             + f" {'sum':>9} {'wall':>9} {'hash/s':>10}"
         )
     print(hdr)
