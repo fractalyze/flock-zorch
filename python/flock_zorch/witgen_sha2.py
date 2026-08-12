@@ -36,23 +36,15 @@ single-bit selectors. And because the constant wire is not mid-block, nothing
 here needs BLAKE3's `extract_inputs` one-bit unshift: `H_in` and `M_in` are
 word-aligned and read straight out of the packed z.
 
-The R1CS is `a AND b = z` per bit, in three row forms:
+The R1CS is `a AND b = z` per bit, in the row forms `witgen_pack` documents;
+sha2 is the circuit that uses all three.
 
-    ADD carry (31 b)   z = left & right   a = left   b = right
-    lin-id    (32 b)   z = v              a = v      b = 0xFFFF_FFFF
-    AND       (32 b)   z = x & y          a = x      b = y
-
-where `left` and `right` are the addends with the carry-in folded in. flock
-writes those as `x ^ cin` and `y ^ cin` for `cin = sum ^ x ^ y`; the XOR
-self-cancels, so they are just `sum ^ y` and `sum ^ x` and `cin` never needs
-computing. Bit 31 is the discarded mod-2^32 carry-out and gets no slot, which
-is what the 31-bit mask drops.
-
-Emission is offset-addressed rather than a bit cursor, which is the one
-structural difference from `witgen._emit`. sha2's computation order is not its
-bit order: `ch_and` for every round lives at bits [1024, 3072) but is produced
-interleaved with that round's carries at 5,120 and up. Each field therefore
-carries its own offset and lands with shifts fixed at trace time.
+Emission is `witgen_pack.emit`, shared with BLAKE3, and sha2 is the reason it
+addresses fields by offset rather than walking a bit cursor: sha2's computation
+order is not its bit order, with `ch_and` for every round living at bits
+[1024, 3072) but produced interleaved with that round's carries at 5,120 and
+up. Each field therefore carries its own offset and lands with shifts fixed at
+trace time.
 """
 
 from __future__ import annotations
@@ -62,12 +54,12 @@ import frx.numpy as fnp
 import numpy as np
 from hash_frx.word import rotr
 
+from flock_zorch.witgen_pack import CARRY_BITS, ONES32, WORD_BITS, add_row, emit
+
 K_LOG = 15
 K = 1 << K_LOG
 WORDS_PER_BLOCK = K // 64  # 512 u64 per block per stream
 
-WORD_BITS = 32
-CARRY_BITS = 31
 SLOT_BITS = 256
 H_WORDS = 8
 M_WORDS = 16
@@ -99,9 +91,6 @@ USEFUL_BITS = Z_CONST_POS + 1  # 31,401
 assert (W_BASE, T1_BASE, Z_CONST_POS) == (19008, 25008, 31400)
 assert USEFUL_BITS == 31401
 
-_ONES32 = 0xFFFF_FFFF
-_MASK31 = fnp.uint32(0x7FFF_FFFF)
-
 # FIPS 180-4 section 4.2.2. Transcribed rather than imported: hash-frx keeps its
 # copy private, and the test anchors H_out against its compression, which fails
 # loudly on a typo here.
@@ -128,63 +117,6 @@ _K = (
 assert len(_K) == N_ROUNDS
 
 
-def _emit(fields, n: int):
-    """Assemble one packed stream: [(offset, width, value)] -> u64 [N, 512].
-
-    `value` is a uint32 [N] array (pre-masked to `width` bits, as the row
-    builders guarantee) or a Python int constant. Array fields contribute to one
-    output word, or two when they straddle a boundary, with shifts fixed at
-    trace time; int fields accumulate into a single K-bit literal that seeds the
-    constant words. Offsets are explicit because sha2 produces its fields out of
-    bit order.
-    """
-    pos = 0
-    for off, width, _ in sorted(fields, key=lambda f: f[0]):
-        # The cursor `witgen._emit` gets for free: offsets are explicit here, so
-        # a gap or an overlap in the field list would otherwise emit a silently
-        # wrong stream instead of failing.
-        assert off == pos, f"field list leaves bit {pos} unwritten (next at {off})"
-        pos += width
-    assert pos == USEFUL_BITS, pos
-
-    const_acc = 0
-    contrib: list[list[tuple]] = [[] for _ in range(WORDS_PER_BLOCK)]
-    for off, width, value in fields:
-        if isinstance(value, int):
-            const_acc |= (value & ((1 << width) - 1)) << off
-            continue
-        w, s = divmod(off, 64)
-        contrib[w].append((value, s, False))
-        if s + width > 64:
-            contrib[w + 1].append((value, 64 - s, True))
-
-    # A straddling field converts the same array in two adjacent words; widen
-    # each distinct value once instead.
-    widened: dict[int, object] = {}
-
-    def as_u64(value):
-        # Not `setdefault` — it evaluates its default eagerly, so the convert
-        # would still be traced on every hit and the cache would buy nothing.
-        key = id(value)
-        if key not in widened:
-            widened[key] = value.astype(fnp.uint64)
-        return widened[key]
-
-    cols = []
-    for w in range(WORDS_PER_BLOCK):
-        cw = (const_acc >> (64 * w)) & ((1 << 64) - 1)
-        acc = None
-        for value, shift, is_high in contrib[w]:
-            v = as_u64(value)
-            v = (v >> fnp.uint64(shift)) if is_high else (v << fnp.uint64(shift))
-            acc = v if acc is None else acc | v
-        if acc is None:
-            cols.append(fnp.full((n,), cw, dtype=fnp.uint64))
-        else:
-            cols.append((acc | fnp.uint64(cw)) if cw else acc)
-    return fnp.stack(cols, axis=1)
-
-
 @frx.jit
 def witness_sha2(h_in, m):
     """Packed z/a/b witness streams for a batch of SHA-256 compressions.
@@ -193,7 +125,7 @@ def witness_sha2(h_in, m):
     three uint64 [N, 512] arrays (z, a, b).
 
     The three streams are appended in lockstep so they cannot diverge; the
-    b-stream's lin rows are int constants, so they fold into `_emit`'s K-bit
+    b-stream's lin rows are int constants, so they fold into `emit`'s K-bit
     literal instead of costing device work.
     """
     n = h_in.shape[0]
@@ -206,7 +138,7 @@ def witness_sha2(h_in, m):
 
     def put_lin(off, v):
         """A wire pinned by identity, against the all-ones mask."""
-        put(off, WORD_BITS, v, v, _ONES32)
+        put(off, WORD_BITS, v, v, ONES32)
 
     def put_and(off, x, y):
         """An AND-output row: Ch and Maj are materialized, not folded.
@@ -219,16 +151,9 @@ def witness_sha2(h_in, m):
         return z
 
     def add(off, x, y):
-        """An ADD with its carry row; returns the mod-2^32 sum.
-
-        `left`/`right` are flock's `x ^ cin` / `y ^ cin` with `cin` cancelled
-        out (see the module docstring) — worth keeping folded, because XLA's
-        simplifier does not reassociate it back and `add` runs 600 times per
-        block. Bit 31 is the discarded carry-out, hence the 31-bit mask.
-        """
-        s = x + y
-        left, right = (s ^ y) & _MASK31, (s ^ x) & _MASK31
-        put(off, CARRY_BITS, left & right, left, right)
+        """An ADD with its carry row; returns the mod-2^32 sum."""
+        s, left, right, carry = add_row(x, y)
+        put(off, CARRY_BITS, carry, left, right)
         return s
 
     for w in range(H_WORDS):
@@ -269,14 +194,14 @@ def witness_sha2(h_in, m):
         kr = fnp.uint32(_K[r])
 
         base = ROUND_CARRY_BASE + r * ROUND_CARRY_STRIDE
-        carry = lambda i: base + i * CARRY_BITS  # noqa: E731
-        t1 = add(carry(0), hh, s1e)
-        t1 = add(carry(1), t1, ch_out)
-        t1 = add(carry(2), t1, kr)
-        t1 = add(carry(3), t1, w_sched[r])
-        t2 = add(carry(4), s0a, maj_out)
-        e_new = add(carry(5), dd, t1)
-        a_new = add(carry(6), t1, t2)
+        slot = lambda i: base + i * CARRY_BITS  # noqa: E731
+        t1 = add(slot(0), hh, s1e)
+        t1 = add(slot(1), t1, ch_out)
+        t1 = add(slot(2), t1, kr)
+        t1 = add(slot(3), t1, w_sched[r])
+        t2 = add(slot(4), s0a, maj_out)
+        e_new = add(slot(5), dd, t1)
+        a_new = add(slot(6), t1, t2)
 
         put_lin(T1_BASE + WORD_BITS * r, t1)
         put_lin(E_NEW_BASE + WORD_BITS * r, e_new)
@@ -290,7 +215,11 @@ def witness_sha2(h_in, m):
         put_lin(H_OUT_BASE + WORD_BITS * w, out)
 
     put(Z_CONST_POS, 1, 1, 1, 1)
-    return _emit(zf, n), _emit(af, n), _emit(bf, n)
+
+    def pack(fields):
+        return emit(fields, n, words=WORDS_PER_BLOCK, useful_bits=USEFUL_BITS)
+
+    return pack(zf), pack(af), pack(bf)
 
 
 def read_words(z_lanes, base: int, count: int):
@@ -305,7 +234,7 @@ def read_words(z_lanes, base: int, count: int):
     out = np.zeros((zw.shape[0], count), np.uint32)
     for i in range(count):
         w, s = divmod(base + WORD_BITS * i, 64)
-        out[:, i] = ((zw[:, w] >> np.uint64(s)) & np.uint64(_ONES32)).astype(np.uint32)
+        out[:, i] = ((zw[:, w] >> np.uint64(s)) & np.uint64(ONES32)).astype(np.uint32)
     return out
 
 

@@ -4,11 +4,12 @@
 Byte-identical to `witgen.witness_blake3`, produced by a single Pallas program
 per tile of compressions instead of an XLA fusion per slice of the output.
 
-Why a kernel. `witgen._emit` stacks all 256 output words of a stream at once,
-which makes the stream one fusion, and that fusion has to keep the sequential
-336-row chain live while it assembles them: `ptxas` puts 11 of the module's 19
-kernels at the 255-register cap with up to 716 B/thread spilled, so 8 warps/SM,
-and the emit runs at 289 GB/s against a 1453 GB/s store roofline. XLA cannot
+Why a kernel. `witgen_pack.emit` assembles all 256 output words of a stream in
+one expression, which makes the stream one fusion, and that fusion has to keep
+the sequential 336-row chain live while it assembles them: `ptxas` puts 11 of
+the module's 19 kernels at the 255-register cap with up to 716 B/thread
+spilled, so 8 warps/SM, and the emit runs at 289 GB/s against a 1453 GB/s store
+roofline. XLA cannot
 express "write word `w` and forget it" -- its emitters materialize
 per-output-element expressions -- so the liveness is structural rather than a
 tuning miss (fractalyze/xla#495).
@@ -39,11 +40,11 @@ from hash_frx.blake3.compress import IV, ROUNDS
 from flock_zorch.witgen import (
     _G_LANES,
     _SCHEDULE,
-    CARRY_BITS,
     STRIPE_BYTES_PER_GROUP,
     STRIPE_USEFUL_WORDS,
     WORDS_PER_BLOCK,
 )
+from flock_zorch.witgen_pack import CARRY_BITS, ONES32, add_row
 
 # Rows per program. Measured on an RTX 5090 writing this [N, 256] u64 shape
 # with the per-word store this kernel uses: 16 rows reaches 1254 GB/s against a
@@ -52,8 +53,6 @@ from flock_zorch.witgen import (
 _BLOCK_ROWS = 16
 _NUM_WARPS = 8
 
-_MASK31 = 0x7FFF_FFFF
-_ONES32 = 0xFFFF_FFFF
 _MASK64 = (1 << 64) - 1
 
 # `out_lo` covers bits [256, 512) = words 4..7 exactly, so skipping it costs no
@@ -147,7 +146,7 @@ def _u64(v: int):
     v &= _MASK64
     if v < (1 << 63):
         return fnp.uint64(v)
-    return fnp.uint64(v & _ONES32) | (fnp.uint64(v >> 32) << fnp.uint64(32))
+    return fnp.uint64(v & ONES32) | (fnp.uint64(v >> 32) << fnp.uint64(32))
 
 
 def _rotr(x, k: int):
@@ -169,20 +168,17 @@ def _kernel(cv_ref, m_ref, ctr_ref, bl_ref, fl_ref, z_ref, a_ref, b_ref):
     w = _Writer((z_ref, a_ref, b_ref))
 
     for v in cv:  # words 0..3
-        w.put((v, v, _ONES32), 32)
+        w.put((v, v, ONES32), 32)
     w.skip(_OUT_LO_BITS)  # words 4..7, stored after the chain
     w.put((1, 1, 1), 1)  # the constant-1 wire at bit 512
     for v in m:
-        w.put((v, v, _ONES32), 32)
+        w.put((v, v, ONES32), 32)
     for v in (t_lo, t_hi, block_len, flags):
-        w.put((v, v, _ONES32), 32)
+        w.put((v, v, ONES32), 32)
 
     def add(x, y):
-        s = x + y
-        cin = s ^ x ^ y
-        left = (x ^ cin) & fnp.uint32(_MASK31)
-        right = (y ^ cin) & fnp.uint32(_MASK31)
-        w.put((left & right, left, right), CARRY_BITS)
+        s, left, right, carry = add_row(x, y)
+        w.put((carry, left, right), CARRY_BITS)
         return s
 
     for r in range(ROUNDS):
@@ -201,19 +197,19 @@ def _kernel(cv_ref, m_ref, ctr_ref, bl_ref, fl_ref, z_ref, a_ref, b_ref):
             c2 = add(c1, d2)
             b_new = _rotr(b1 ^ c2, 7)
             for v in (b_new, d2):
-                w.put((v, v, _ONES32), 32)
+                w.put((v, v, ONES32), 32)
 
             state[la], state[lb], state[lc], state[ld] = a2, b_new, c2, d2
 
     for i in range(8):  # out_hi
         v = state[i + 8] ^ cv[i]
-        w.put((v, v, _ONES32), 32)
+        w.put((v, v, ONES32), 32)
     w.finish()
 
     # out_lo, deferred: words 4..7, two u32 halves each. b carries the all-ones
     # mask here exactly as it does for every other value field.
     out_lo = [state[i] ^ state[i + 8] for i in range(8)]
-    ones = fnp.full((_BLOCK_ROWS,), _ONES32, fnp.uint32)
+    ones = fnp.full((_BLOCK_ROWS,), ONES32, fnp.uint32)
     for j in range(4):
         lo, hi = out_lo[2 * j], out_lo[2 * j + 1]
         packed = lo.astype(fnp.uint64) | (hi.astype(fnp.uint64) << fnp.uint64(32))

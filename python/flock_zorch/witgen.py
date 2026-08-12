@@ -20,22 +20,19 @@ words; every offset is a compile-time constant):
     [15153, 15409)  out_hi[w] = state[w+8] ^ cv[w]
     [15409, 16384)  zero padding
 
-The R1CS is `a AND b = z` per bit. An ADD row for `sum = x + y` (mod 2^32)
-stores `carry = left AND right` where `left = (x ^ cin) & 0x7FFF_FFFF`,
-`right = (y ^ cin) & 0x7FFF_FFFF`, `cin = sum ^ x ^ y` — bit 31 is the
-discarded mod-2^32 carry-out and gets no slot. A lin-id row pins a wire `v`
-via `z = a = v`, `b = 0xFFFF_FFFF`. Only `b_new`/`d_new` need lin rows:
-`a_2`/`c_2` are already pinned as ADD-row sums.
+The R1CS is `a AND b = z` per bit, in the row forms `witgen_pack` documents.
+Only `b_new`/`d_new` need lin rows: `a_2`/`c_2` are already pinned as ADD-row
+sums.
 
-Emission assembles each of the 256 output words directly from the u32 field
-values: every field's bit offset is a compile-time constant, so a field
-lands in one word (or straddles two) with static shifts, and all-constant
-regions (the b-stream's lin masks, the constant wire, the padding) fold
-into one host-side K-bit literal per stream. Nothing per-bit is ever
-materialized, which is what lets a 2^18 batch emit at output size instead
-of 8x it. The streaming-writer word tricks in the Rust source (the
-shift-by-one from the constant wire, the flags>>31 pending bit) are
-artifacts of its sequential emission and fall out of the same offsets.
+Emission is `witgen_pack.emit`, shared with sha2: each of the 256 output words
+is assembled directly from the u32 field values, every bit offset a
+compile-time constant, so a field lands in one word (or straddles two) with
+static shifts and all-constant regions (the b-stream's lin masks, the constant
+wire, the padding) fold into one host-side K-bit literal per stream. Nothing
+per-bit is ever materialized, which is what lets a 2^18 batch emit at output
+size instead of 8x it. The streaming-writer word tricks in the Rust source (the
+shift-by-one from the constant wire, the flags>>31 pending bit) are artifacts
+of its sequential emission and fall out of the same offsets.
 """
 
 from __future__ import annotations
@@ -49,15 +46,28 @@ from frx import lax
 from hash_frx.blake3.compress import IV, MSG_PERMUTATION, ROUNDS
 from hash_frx.word import rotr
 
+from flock_zorch.witgen_pack import CARRY_BITS, ONES32, WORD_BITS, add_row, emit
+
 K_LOG = 14
 K = 1 << K_LOG
 WORDS_PER_BLOCK = K // 64  # 256 u64 per block per stream
 
+CV_WORDS = 8  # the chaining value, and each half of the output
+M_WORDS = 16
 N_G = ROUNDS * 8
-CARRY_BITS = 31
-G_STRIDE = 6 * CARRY_BITS + 2 * 32  # 250
-USEFUL_BITS = 2 * 256 + 1 + 16 * 32 + 4 * 32 + N_G * G_STRIDE + 8 * 32  # 15,409
-PAD_BITS = K - USEFUL_BITS  # 975
+G_STRIDE = 6 * CARRY_BITS + 2 * WORD_BITS  # 250
+
+CV_BASE = 0
+OUT_LO_BASE = CV_BASE + CV_WORDS * WORD_BITS  # 256
+Z_CONST_POS = OUT_LO_BASE + CV_WORDS * WORD_BITS  # 512
+M_BASE = Z_CONST_POS + 1  # 513
+COUNTER_BASE = M_BASE + M_WORDS * WORD_BITS  # 1,025
+# counter_lo, counter_hi, block_len, flags.
+G_BASE = COUNTER_BASE + 4 * WORD_BITS  # 1,153
+OUT_HI_BASE = G_BASE + N_G * G_STRIDE  # 15,153
+USEFUL_BITS = OUT_HI_BASE + CV_WORDS * WORD_BITS  # 15,409
+
+assert (Z_CONST_POS, G_BASE, OUT_HI_BASE, USEFUL_BITS) == (512, 1153, 15153, 15409)
 
 # The lincheck stripe transposes whole words, so it covers ceil(USEFUL_BITS/64)
 # words = 15,424 bit columns; the remaining 960 bytes per group are the honest
@@ -83,55 +93,6 @@ _G_LANES = (
 _SCHEDULE = [tuple(range(16))]
 for _ in range(ROUNDS - 1):
     _SCHEDULE.append(tuple(_SCHEDULE[-1][i] for i in MSG_PERMUTATION))
-
-_MASK31 = fnp.uint32(0x7FFF_FFFF)
-
-
-def _add_row(x, y):
-    """One 32-bit ADD with its R1CS row parts: (sum, left, right, carry)."""
-    s = x + y
-    cin = s ^ x ^ y
-    left = (x ^ cin) & _MASK31
-    right = (y ^ cin) & _MASK31
-    return s, left, right, left & right
-
-
-def _emit(fields, n: int):
-    """Assemble one packed stream: [(value, width)] in bit order -> u64 [N, 256].
-
-    `value` is a uint32 [N] array (pre-masked to `width` bits, as the row
-    builders guarantee) or a Python int constant of any width. Array fields
-    contribute to one output word, or two when they straddle a boundary,
-    with shifts fixed at trace time; int fields accumulate into a single
-    K-bit literal that seeds the constant words.
-    """
-    const_acc = 0
-    contrib: list[list[tuple]] = [[] for _ in range(WORDS_PER_BLOCK)]
-    pos = 0
-    for value, width in fields:
-        if isinstance(value, int):
-            const_acc |= (value & ((1 << width) - 1)) << pos
-        else:
-            w, s = divmod(pos, 64)
-            contrib[w].append((value, s, False))
-            if s + width > 64:
-                contrib[w + 1].append((value, 64 - s, True))
-        pos += width
-    assert pos == K, pos
-
-    cols = []
-    for w in range(WORDS_PER_BLOCK):
-        cw = (const_acc >> (64 * w)) & ((1 << 64) - 1)
-        acc = None
-        for value, shift, is_high in contrib[w]:
-            v = value.astype(fnp.uint64)
-            v = (v >> fnp.uint64(shift)) if is_high else (v << fnp.uint64(shift))
-            acc = v if acc is None else acc | v
-        if acc is None:
-            cols.append(fnp.full((n,), cw, dtype=fnp.uint64))
-        else:
-            cols.append(acc | fnp.uint64(cw) if cw else acc)
-    return fnp.stack(cols, axis=1)
 
 
 def witness_blake3(cv, m, counter, block_len, flags):
@@ -159,7 +120,7 @@ def witness_blake3(cv, m, counter, block_len, flags):
 
 @frx.jit
 def _witness_blake3_xla(cv, m, counter, block_len, flags):
-    """The portable emission: assemble every output word as one stacked stream.
+    """The portable emission: every output word assembled in one expression.
 
     Kept as the CPU path and as the kernel's independent reference. It is also
     the slower one on GPU by 2.6x — one fusion per stream has to keep the
@@ -170,24 +131,37 @@ def _witness_blake3_xla(cv, m, counter, block_len, flags):
     t_lo = counter.astype(fnp.uint32)
     t_hi = (counter >> fnp.uint64(32)).astype(fnp.uint32)
 
-    state = [cv[:, i] for i in range(8)]
+    state = [cv[:, i] for i in range(CV_WORDS)]
     state += [fnp.full((n,), c, dtype=fnp.uint32) for c in IV[:4]]
     state += [t_lo, t_hi, block_len, flags]
 
     # The three streams are appended in lockstep so they cannot diverge; the
-    # b-stream's lin rows are int constants, so they fold into _emit's K-bit
+    # b-stream's lin rows are int constants, so they fold into `emit`'s K-bit
     # literal instead of costing device work.
-    zg, ag, bg = [], [], []
+    zf, af, bf = [], [], []
 
-    def put(zv, av, bv, width):
-        zg.append((zv, width))
-        ag.append((av, width))
-        bg.append((bv, width))
+    def put(off, width, zv, av, bv):
+        zf.append((off, width, zv))
+        af.append((off, width, av))
+        bf.append((off, width, bv))
 
-    def add(x, y):
-        s, left, right, carry = _add_row(x, y)
-        put(carry, left, right, CARRY_BITS)
+    def put_lin(off, v):
+        """A wire pinned by identity, against the all-ones mask."""
+        put(off, WORD_BITS, v, v, ONES32)
+
+    def add(off, x, y):
+        """An ADD with its carry row; returns the mod-2^32 sum."""
+        s, left, right, carry = add_row(x, y)
+        put(off, CARRY_BITS, carry, left, right)
         return s
+
+    for w in range(CV_WORDS):
+        put_lin(CV_BASE + WORD_BITS * w, cv[:, w])
+    put(Z_CONST_POS, 1, 1, 1, 1)
+    for i in range(M_WORDS):
+        put_lin(M_BASE + WORD_BITS * i, m[:, i])
+    for i, v in enumerate((t_lo, t_hi, block_len, flags)):
+        put_lin(COUNTER_BASE + WORD_BITS * i, v)
 
     for r in range(ROUNDS):
         sched = _SCHEDULE[r]
@@ -197,38 +171,32 @@ def _witness_blake3_xla(cv, m, counter, block_len, flags):
             my = m[:, sched[2 * g + 1]]
             a0, b0, c0, d0 = state[la], state[lb], state[lc], state[ld]
 
-            a1 = add(add(a0, b0), mx)
+            base = G_BASE + (r * 8 + g) * G_STRIDE
+            slot = lambda i: base + i * CARRY_BITS  # noqa: E731
+            a1 = add(slot(1), add(slot(0), a0, b0), mx)
             d1 = rotr(d0 ^ a1, 16)
-            c1 = add(c0, d1)
+            c1 = add(slot(2), c0, d1)
             b1 = rotr(b0 ^ c1, 12)
-            a2 = add(add(a1, b1), my)
+            a2 = add(slot(4), add(slot(3), a1, b1), my)
             d2 = rotr(d1 ^ a2, 8)
-            c2 = add(c1, d2)
+            c2 = add(slot(5), c1, d2)
             b_new = rotr(b1 ^ c2, 7)
-            for v in (b_new, d2):
-                put(v, v, 0xFFFF_FFFF, 32)
+            lin = slot(6)  # the two lin rows close the G block
+            put_lin(lin, b_new)
+            put_lin(lin + WORD_BITS, d2)
 
             state[la], state[lb], state[lc], state[ld] = a2, b_new, c2, d2
 
-    out_lo = [state[w] ^ state[w + 8] for w in range(8)]
-    out_hi = [state[w + 8] ^ cv[:, w] for w in range(8)]
+    # out_lo is the field out of bit order: it sits at bit 256 but is only known
+    # after the last round, which is exactly what the offset form absorbs.
+    for w in range(CV_WORDS):
+        put_lin(OUT_LO_BASE + WORD_BITS * w, state[w] ^ state[w + 8])
+        put_lin(OUT_HI_BASE + WORD_BITS * w, state[w + 8] ^ cv[:, w])
 
-    head = [(cv[:, i], 32) for i in range(8)]
-    head += [(v, 32) for v in out_lo]
-    head += [(1, 1)]
-    head += [(m[:, i], 32) for i in range(16)]
-    head += [(t_lo, 32), (t_hi, 32), (block_len, 32), (flags, 32)]
-    tail = [(v, 32) for v in out_hi]
-    pad = [(0, PAD_BITS)]
+    def pack(fields):
+        return emit(fields, n, words=WORDS_PER_BLOCK, useful_bits=USEFUL_BITS)
 
-    def ones(fields):
-        # b carries the lin-row all-ones mask exactly where z/a carry values.
-        return [((1 << w) - 1, w) for _, w in fields]
-
-    z = _emit(head + zg + tail + pad, n)
-    a = _emit(head + ag + tail + pad, n)
-    b = _emit(ones(head) + bg + ones(tail) + pad, n)
-    return z, a, b
+    return pack(zf), pack(af), pack(bf)
 
 
 _SPLITMIX_GOLDEN = 0x9E37_79B9_7F4A_7C15
