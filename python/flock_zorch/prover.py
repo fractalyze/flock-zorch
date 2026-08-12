@@ -12,12 +12,16 @@ re-transfer). Gated by `testing/e2e_ligerito_oracle_test.py` against flock
 
 from __future__ import annotations
 
+import dataclasses
+
 import frx
 import frx.numpy as fnp
 from frx import Array
 from zorch.stage import ProveResult, ProverStage, TrivialClaim
 
 from flock_zorch import ghash
+from flock_zorch.blake3_challenger import Blake3CallbackChallenger
+from flock_zorch.hash import merkle
 
 # noqa: F401  (re-exported for callers)
 from flock_zorch.lincheck.prover import LincheckProver
@@ -36,6 +40,25 @@ from flock_zorch.types import (
     R1csWitness,
 )
 from flock_zorch.zerocheck.prover import ZerocheckProver
+
+
+@dataclasses.dataclass(frozen=True)
+class ProveProfile:
+    """Which Fiat-Shamir and Merkle arms a prove runs.
+
+    `FLOCK_PROFILE` is flock's default (device SHA-256 FS, SHA-256 Merkle) —
+    the arm every golden byte-gates. `BENCHMARK_PROFILE` is the
+    flock-challenge harness's (BLAKE3 FS via the callback transcript, BLAKE3
+    non-root-CV Merkle) — what their verifier accepts. The profile changes
+    WHICH bytes the proof is, not the protocol: both run the same reductions
+    and the same open."""
+
+    challenger_cls: type
+    tree: object
+
+
+FLOCK_PROFILE = ProveProfile(Sha256Challenger, merkle.GHASH_SHA256_TREE)
+BENCHMARK_PROFILE = ProveProfile(Blake3CallbackChallenger, merkle.GHASH_BLAKE3_TREE)
 
 
 @frx.jit
@@ -80,17 +103,19 @@ def _combine_claims(
     return b_combined, target  # native ghash: [2^L], scalar
 
 
-def open_batch_ligerito(config, z_packed, pdata, x_outers, ch) -> BatchOpenProof:
+def open_batch_ligerito(
+    config, z_packed, pdata, x_outers, ch, tree=None
+) -> BatchOpenProof:
     """Batched dual-claim PCS open with the LIGERITO backend — the headline path.
     The no-packed-direct case of `open_batch_mixed_ligerito`: N ring-switched
     claims (x_outers, e.g. ab+c), zero direct ẑ-evaluation claims. `pdata` is the
     ligerito commit from `zorch_ligerito.commit_flock_ligerito`. Returns
     {ring_switches, ligerito: LigeritoProof}."""
-    return open_batch_mixed_ligerito(config, z_packed, pdata, x_outers, (), ch)
+    return open_batch_mixed_ligerito(config, z_packed, pdata, x_outers, (), ch, tree)
 
 
 def open_batch_mixed_ligerito(
-    config, z_packed, pdata, x_outers, packed_direct, ch
+    config, z_packed, pdata, x_outers, packed_direct, ch, tree=None
 ) -> BatchOpenProof:
     """Mixed batched open (flock `open_batch_mixed_ligerito_with_precomputed_s_hat_v`)
     — the HASH-CHAIN open, and the general Ligerito open. Combines N ring-switched
@@ -124,7 +149,7 @@ def open_batch_mixed_ligerito(
     # FS seam, reusing the commit-phase `pdata` directly. The ghash algebra rides
     # the dtype, so `mul` is not threaded.
     lig, lig_obj = zorch_ligerito.prove_flock_ligerito(
-        config, pdata, b_combined, target, ch, return_proof=True
+        config, pdata, b_combined, target, ch, return_proof=True, tree=tree
     )
     return BatchOpenProof(ring_switches=s_hat_vs, ligerito=lig, ligerito_obj=lig_obj)
 
@@ -142,11 +167,14 @@ class FlockLigeritoPcs:
     chain.
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, tree=None):
         self._cfg = cfg
+        self._tree = tree
 
     def commit(self, witness: R1csWitness) -> LigeritoCommitData:
-        root, pdata = zorch_ligerito.commit_flock_ligerito(self._cfg, witness.z_packed)
+        root, pdata = zorch_ligerito.commit_flock_ligerito(
+            self._cfg, witness.z_packed, self._tree
+        )
         return LigeritoCommitData(root=root, pdata=pdata)
 
     def prove(
@@ -162,6 +190,7 @@ class FlockLigeritoPcs:
             commit_data.pdata,
             [claim.ab_point, claim.c_point],
             transcript,
+            self._tree,
         )
         return ProveResult(TrivialClaim(), proof, transcript)
 
@@ -175,8 +204,8 @@ class FlockProver(ProverStage[R1csClaim, R1csWitness, TrivialClaim, ProveFastRes
     because it belongs to neither claim.
     """
 
-    def __init__(self, cfg, m, k_log, k_skip, circuit=None):
-        self.pcs = FlockLigeritoPcs(cfg)
+    def __init__(self, cfg, m, k_log, k_skip, circuit=None, tree=None):
+        self.pcs = FlockLigeritoPcs(cfg, tree)
         self.zerocheck = ZerocheckProver(m)
         self.lincheck = LincheckProver(m, k_log, k_skip, circuit)
 
@@ -217,6 +246,7 @@ def prove_fast(
     cfg,
     circuit=None,
     domain: bytes = b"flock-test-v0",
+    profile: ProveProfile | None = None,
 ) -> ProveFastResult:
     """Fused single-call R1CS prover on the Ligerito PCS, byte-identical to flock
     `prover::prove_fast_ligerito`. Drives `FlockProver` — the Ligerito commit and
@@ -225,9 +255,10 @@ def prove_fast(
     re-transfer). `cfg` is the flock Ligerito config; `circuit` a
     `LincheckCircuit` for real hash R1CS (None uses the dense a0/b0 path — the
     identity gate). a = A·z, b = B·z; for the identity R1CS a = b = c = z."""
-    prover = FlockProver(cfg, m, k_log, k_skip, circuit)
+    profile = FLOCK_PROFILE if profile is None else profile
+    prover = FlockProver(cfg, m, k_log, k_skip, circuit, tree=profile.tree)
     return prover.prove(
         R1csClaim(statement_digest=statement_digest),
         R1csWitness(z_packed=z_packed, z_lincheck=z_lincheck, a0=a0, b0=b0),
-        Sha256Challenger(domain),
+        profile.challenger_cls(domain),
     ).reduction_proof
