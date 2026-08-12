@@ -42,14 +42,16 @@ from __future__ import annotations
 
 import frx
 import frx.numpy as fnp
+import numpy as np
 from frx import lax
+from hash_frx.blake3.compress import IV, MSG_PERMUTATION, ROUNDS
+from hash_frx.word import rotr
 
 K_LOG = 14
 K = 1 << K_LOG
 WORDS_PER_BLOCK = K // 64  # 256 u64 per block per stream
 
-N_ROUNDS = 7
-N_G = N_ROUNDS * 8
+N_G = ROUNDS * 8
 CARRY_BITS = 31
 G_STRIDE = 6 * CARRY_BITS + 2 * 32  # 250
 USEFUL_BITS = 2 * 256 + 1 + 16 * 32 + 4 * 32 + N_G * G_STRIDE + 8 * 32  # 15,409
@@ -62,8 +64,6 @@ PAD_BITS = K - USEFUL_BITS  # 975
 STRIPE_USEFUL_WORDS = -(-USEFUL_BITS // 64)  # 241
 STRIPE_BYTES_PER_GROUP = K  # one byte per bit column, 8 blocks per byte
 
-_IV = (0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A)
-
 _G_LANES = (
     (0, 4, 8, 12),
     (1, 5, 9, 13),
@@ -75,23 +75,14 @@ _G_LANES = (
     (3, 4, 9, 14),
 )
 
-# Message index per (round, G): the per-round permutation pre-applied, exactly
-# as flock-prover unrolls it. G `g` consumes entries 2g (mx) and 2g+1 (my).
-_SCHEDULE = (
-    (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15),
-    (2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8),
-    (3, 4, 10, 12, 13, 2, 7, 14, 6, 5, 9, 0, 11, 15, 8, 1),
-    (10, 7, 12, 9, 14, 3, 13, 15, 4, 0, 11, 2, 5, 8, 1, 6),
-    (12, 13, 9, 11, 15, 10, 14, 8, 7, 2, 5, 3, 0, 1, 6, 4),
-    (9, 14, 11, 5, 8, 12, 15, 1, 13, 3, 0, 10, 2, 6, 4, 7),
-    (11, 15, 5, 0, 1, 9, 8, 6, 14, 10, 2, 12, 3, 4, 7, 13),
-)
+# Message index per (round, G): the per-round permutation pre-applied so round r
+# reads the ORIGINAL message — the same composition flock-prover unrolls into
+# literals. G `g` consumes entries 2g (mx) and 2g+1 (my).
+_SCHEDULE = [tuple(range(16))]
+for _ in range(ROUNDS - 1):
+    _SCHEDULE.append(tuple(_SCHEDULE[-1][i] for i in MSG_PERMUTATION))
 
 _MASK31 = fnp.uint32(0x7FFF_FFFF)
-
-
-def _ror(x, n: int):
-    return (x >> fnp.uint32(n)) | (x << fnp.uint32(32 - n))
 
 
 def _add_row(x, y):
@@ -101,9 +92,6 @@ def _add_row(x, y):
     left = (x ^ cin) & _MASK31
     right = (y ^ cin) & _MASK31
     return s, left, right, left & right
-
-
-_M64 = (1 << 64) - 1
 
 
 def _emit(fields, n: int):
@@ -131,7 +119,7 @@ def _emit(fields, n: int):
 
     cols = []
     for w in range(WORDS_PER_BLOCK):
-        cw = (const_acc >> (64 * w)) & _M64
+        cw = (const_acc >> (64 * w)) & ((1 << 64) - 1)
         acc = None
         for value, shift, is_high in contrib[w]:
             v = value.astype(fnp.uint64)
@@ -156,14 +144,25 @@ def witness_blake3(cv, m, counter, block_len, flags):
     t_hi = (counter >> fnp.uint64(32)).astype(fnp.uint32)
 
     state = [cv[:, i] for i in range(8)]
-    state += [fnp.full((n,), c, dtype=fnp.uint32) for c in _IV]
+    state += [fnp.full((n,), c, dtype=fnp.uint32) for c in IV[:4]]
     state += [t_lo, t_hi, block_len, flags]
 
-    # Per-G row values in emission order; (value, nbits) per field. The
-    # b-stream's lin rows are int constants, so they fold into _emit's
-    # K-bit literal instead of costing device work.
+    # The three streams are appended in lockstep so they cannot diverge; the
+    # b-stream's lin rows are int constants, so they fold into _emit's K-bit
+    # literal instead of costing device work.
     zg, ag, bg = [], [], []
-    for r in range(N_ROUNDS):
+
+    def put(zv, av, bv, width):
+        zg.append((zv, width))
+        ag.append((av, width))
+        bg.append((bv, width))
+
+    def add(x, y):
+        s, left, right, carry = _add_row(x, y)
+        put(carry, left, right, CARRY_BITS)
+        return s
+
+    for r in range(ROUNDS):
         sched = _SCHEDULE[r]
         for g in range(8):
             la, lb, lc, ld = _G_LANES[g]
@@ -171,31 +170,22 @@ def witness_blake3(cv, m, counter, block_len, flags):
             my = m[:, sched[2 * g + 1]]
             a0, b0, c0, d0 = state[la], state[lb], state[lc], state[ld]
 
-            tmp0, l0, r0, cy0 = _add_row(a0, b0)
-            a1, l1, r1, cy1 = _add_row(tmp0, mx)
-            d1 = _ror(d0 ^ a1, 16)
-            c1, l2, r2, cy2 = _add_row(c0, d1)
-            b1 = _ror(b0 ^ c1, 12)
-            tmp1, l3, r3, cy3 = _add_row(a1, b1)
-            a2, l4, r4, cy4 = _add_row(tmp1, my)
-            d2 = _ror(d1 ^ a2, 8)
-            c2, l5, r5, cy5 = _add_row(c1, d2)
-            b_new = _ror(b1 ^ c2, 7)
-
-            zg += [(cy0, 31), (cy1, 31), (cy2, 31), (cy3, 31), (cy4, 31), (cy5, 31)]
-            ag += [(l0, 31), (l1, 31), (l2, 31), (l3, 31), (l4, 31), (l5, 31)]
-            bg += [(r0, 31), (r1, 31), (r2, 31), (r3, 31), (r4, 31), (r5, 31)]
-            zg += [(b_new, 32), (d2, 32)]
-            ag += [(b_new, 32), (d2, 32)]
-            bg += [(0xFFFF_FFFF, 32), (0xFFFF_FFFF, 32)]
+            a1 = add(add(a0, b0), mx)
+            d1 = rotr(d0 ^ a1, 16)
+            c1 = add(c0, d1)
+            b1 = rotr(b0 ^ c1, 12)
+            a2 = add(add(a1, b1), my)
+            d2 = rotr(d1 ^ a2, 8)
+            c2 = add(c1, d2)
+            b_new = rotr(b1 ^ c2, 7)
+            for v in (b_new, d2):
+                put(v, v, 0xFFFF_FFFF, 32)
 
             state[la], state[lb], state[lc], state[ld] = a2, b_new, c2, d2
 
     out_lo = [state[w] ^ state[w + 8] for w in range(8)]
     out_hi = [state[w + 8] ^ cv[:, w] for w in range(8)]
 
-    # z and a share every non-G field; b is all-ones through bit 1153 (its
-    # prefix lin rows) and over out_hi, zero over the padding.
     head = [(cv[:, i], 32) for i in range(8)]
     head += [(v, 32) for v in out_lo]
     head += [(1, 1)]
@@ -204,10 +194,45 @@ def witness_blake3(cv, m, counter, block_len, flags):
     tail = [(v, 32) for v in out_hi]
     pad = [(0, PAD_BITS)]
 
+    def ones(fields):
+        # b carries the lin-row all-ones mask exactly where z/a carry values.
+        return [((1 << w) - 1, w) for _, w in fields]
+
     z = _emit(head + zg + tail + pad, n)
     a = _emit(head + ag + tail + pad, n)
-    b = _emit([((1 << 1153) - 1, 1153)] + bg + [((1 << 256) - 1, 256)] + pad, n)
+    b = _emit(ones(head) + bg + ones(tail) + pad, n)
     return z, a, b
+
+
+def extract_inputs(z_lanes):
+    """Recover every block's compression inputs from a packed z stream.
+
+    z_lanes: host uint64 [N*128, 2] (the golden loader's lane form) ->
+    (cv, m, counter, block_len, flags) exactly as `witness_blake3` takes
+    them. Inverts the prefix packing: the constant-1 wire at bit 512 shifts
+    words 8..17 up by one bit, so each u64 holds 1+32+31 bits and every odd
+    value's top bit sits in the following word (flags' in word 18). Lets a
+    golden gate regenerate its own witness with no extra fixture.
+    """
+    zw = np.asarray(z_lanes, dtype=np.uint64).reshape(-1, WORDS_PER_BLOCK)
+    n = zw.shape[0]
+    if not np.all(zw[:, 8] & 1):
+        raise ValueError("constant-1 wire missing — not a packed blake3 z stream")
+    cv = np.zeros((n, 8), np.uint32)
+    for i in range(4):
+        w = zw[:, i]
+        cv[:, 2 * i] = w.astype(np.uint32)
+        cv[:, 2 * i + 1] = (w >> np.uint64(32)).astype(np.uint32)
+    vals = np.zeros((n, 20), np.uint32)
+    for i in range(10):
+        w = zw[:, 8 + i]
+        nxt = zw[:, 9 + i]
+        vals[:, 2 * i] = (w >> np.uint64(1)).astype(np.uint32)
+        vals[:, 2 * i + 1] = (
+            (w >> np.uint64(33)) | ((nxt & np.uint64(1)) << np.uint64(31))
+        ).astype(np.uint32)
+    counter = vals[:, 16].astype(np.uint64) | (vals[:, 17].astype(np.uint64) << 32)
+    return cv, vals[:, :16].copy(), counter, vals[:, 18].copy(), vals[:, 19].copy()
 
 
 def _transpose_8x8_bits(x):
@@ -229,7 +254,9 @@ def lincheck_stripe(z):
     z: uint64 [N, 256] with N divisible by 8 -> uint8 [N/8, 16384].
     Byte `g*16384 + i*64 + c*8 + t` holds, in bit r, bit `i*64 + c*8 + t`
     of block `8g + r`'s z — flock's stripe layout, one byte per bit column
-    covering all 8 blocks of the group.
+    covering all 8 blocks of the group. The device twin of the host port
+    `flock_zorch.pcs.pack.pack_z_lincheck_from_packed`; witgen_test pins
+    the two byte-identical.
     """
     n = z.shape[0]
     if n % 8:

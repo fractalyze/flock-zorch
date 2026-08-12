@@ -28,6 +28,7 @@ from flock_zorch import (  # noqa: E402
     ghash,  # noqa: E402
     lincheck,
     prover,
+    witgen,
     zerocheck,
 )
 from flock_zorch.challenger import Challenger  # noqa: E402
@@ -80,14 +81,41 @@ def load(golden: str = "blake3_ligerito_golden.bin"):
     return g
 
 
-def run(golden: str = "blake3_ligerito_golden.bin"):
+def substitute_device_witness(g):
+    """Regenerate the witness on device from the golden's own blocks and swap
+    it into `g`, so the standard gates below exercise the witgen path.
+
+    The compression inputs come out of the golden's z prefix
+    (`witgen.extract_inputs`), so no extra fixture exists to go stale. The
+    proof gates then transitively pin witgen against flock: one diverging
+    witness bit flips every Fiat-Shamir draw after it. This is what catches
+    witgen drifting from flock's layout across a pin bump + golden re-dump —
+    an event every golden-fed gate is green through by construction.
+    """
+    z, a, b = witgen.witness_blake3(*witgen.extract_inputs(g["z"]))
+    # Dispatch the stripe before the blocking D2H compare pulls below, so it
+    # overlaps them instead of serializing after ~1.5 GiB of transfer.
+    zlc = witgen.lincheck_stripe(z)
+    z, a, b = (x.reshape(-1, 2) for x in (z, a, b))
+    checks = [
+        (f"witgen {k} vs golden", np.array_equal(np.asarray(v), g[k]))
+        for k, v in zip("zab", (z, a, b))
+    ]
+    ref = np.frombuffer(g["zlc"], np.uint8).reshape(-1, witgen.STRIPE_BYTES_PER_GROUP)
+    checks.append(("witgen zlc vs golden", np.array_equal(np.asarray(zlc), ref)))
+    g["z"], g["a"], g["b"] = z, a, b
+    g["zlc"] = zlc
+    return checks
+
+
+def run(golden: str = "blake3_ligerito_golden.bin", device_witness: bool = False):
     g = load(golden)
     meta = g["meta"]
     cfg = g["cfg"]
     m = meta["m"]
     k_log, k_skip = meta["k_log"], meta["k_skip"]
     ir = k_log - k_skip
-    results = []
+    results = substitute_device_witness(g) if device_witness else []
 
     root, pdata = zorch_ligerito.commit_flock_ligerito(cfg, g["z"])
     results.append(("commit root", np.array_equal(root, g["root"])))
@@ -151,9 +179,15 @@ def main() -> int:
         default="blake3_ligerito_golden.bin",
         help="golden filename under artifacts/ (the m-variant dumps)",
     )
+    ap.add_argument(
+        "--witgen",
+        action="store_true",
+        help="regenerate the witness on device from the golden's own blocks "
+        "(gates flock_zorch.witgen against flock end to end)",
+    )
     args = ap.parse_args()
     print(f"device {frx.devices()[0]}")
-    m, results = run(args.golden)
+    m, results = run(args.golden, device_witness=args.witgen)
     return report(
         results,
         f"blake3 LIGERITO full prove (R1csProofLigerito) vs flock "
