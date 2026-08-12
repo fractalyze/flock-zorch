@@ -76,6 +76,18 @@ py_test(
     ],
 )
 
+# Fork-fixture byte gate for the benchmark profile's BLAKE3 Fiat-Shamir arm:
+# every draw and grind nonce vs transcripts dumped from flock-challenge's own
+# FsChallenger, plus the existing SHA-256 challenger as the sequence control.
+py_test(
+    name = "blake3_challenger_test",
+    size = "small",
+    srcs = ["flock_zorch/testing/blake3_challenger_test.py"],
+    deps = [
+        ":flock_zorch",
+    ],
+)
+
 # Pure-host unit test (no golden) for `merkle.paths_to_multi_proof`: it is
 # proof-format encoding, not field math, so it needs no GPU and no golden.
 py_test(
