@@ -43,6 +43,23 @@ The rules every change must respect:
   predates the fix, so an empty result means "absent" and not "grep is wrong".
   Skipping this reads a still-broken wheel as the fix having failed.
 
+## Porting a witness layout from flock
+
+- **The `*_BASE` / `*_POS` constants are the spec; the `//!` header diagram is
+  not.** They disagree in `r1cs_hashes/sha2.rs` at the pinned rev (the header
+  puts `Z_CONST` at bit 512, the constants at 31,400 — so every field from `M`
+  on is off by one if you trust the header). `USEFUL_BITS` can match while every
+  interior boundary is wrong, so agreeing totals prove nothing.
+- **Check a transcription against the golden before writing device code.** The
+  goldens carry z/a/b, so a numpy reference built from the field list can be
+  compared directly in seconds. A mismatch then names a region instead of
+  surfacing as "the proof diverges" after a kernel exists.
+- **The packing model differs by circuit family.** blake3 and sha2 pack fields
+  tightly, so values straddle 64-bit words and the emitter needs a bit cursor.
+  keccak and keccak3 place each state in a 2,048-bit aligned slot and write
+  whole u64 lanes, so their "field list" is a lane map with no shift arithmetic
+  at all. Parameterizing by `K_LOG` alone does not cover this.
+
 ## Native `binary_field_ghash` dtype gotchas
 
 Compute on the dtype (`*`→clmul, `+`→XOR, `jnp.sum`→XOR-sum). The uint64[lo,hi]
