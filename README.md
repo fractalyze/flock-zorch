@@ -95,7 +95,8 @@ build:
 | dep | how |
 |---|---|
 | **flock** — the reference prover + byte-compare oracle | a cargo **git rev dep** (`flock-core` / `flock-prover` in [`Cargo.toml`](https://github.com/fractalyze/flock-zorch/blob/main/Cargo.toml)); `cargo build` fetches it at the pinned rev, and `examples/dump_*.rs` drive it to dump the golden fixtures |
-| **zorch** — the scheme-agnostic spine (`zorch.hash.sha256`, the device Fiat-Shamir transcript, the `ProverRound`/`VerifierRound` protocols and their drivers, the `ProverStage`/`VerifierStage` claim-reduction roles, `pcs.ligerito`) | a bazel **`git_override`** in [`MODULE.bazel`](https://github.com/fractalyze/flock-zorch/blob/main/MODULE.bazel); bazel fetches it |
+| **zorch** — the scheme-agnostic spine (the device Fiat-Shamir transcript, the `ProverRound`/`VerifierRound` protocols and their drivers, the `ProverStage`/`VerifierStage` claim-reduction roles, `pcs.ligerito`) | a bazel **`git_override`** in [`MODULE.bazel`](https://github.com/fractalyze/flock-zorch/blob/main/MODULE.bazel); bazel fetches it |
+| **hash-frx** — the symmetric hash layer (`hash_frx.sha256` behind the Merkle leaves, `hash_frx.blake3` behind witness generation) | a pinned wheel in [`requirements.in`](https://github.com/fractalyze/flock-zorch/blob/main/requirements.in), from the Fractalyze package index |
 
 **Prerequisites** — an NVIDIA GPU (CUDA; RTX 5090 / sm_120 reference), a Rust
 toolchain (`flock-core` is edition 2024), Python 3.11. For the GPU fast path, a **CUDA 13.3
