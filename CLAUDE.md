@@ -59,6 +59,19 @@ The rules every change must respect:
   keccak and keccak3 place each state in a 2,048-bit aligned slot and write
   whole u64 lanes, so their "field list" is a lane map with no shift arithmetic
   at all. Parameterizing by `K_LOG` alone does not cover this.
+- **A named intermediate wire in the Rust is a spec artifact, not a
+  computation.** flock's ADD row stores `x ^ cin` / `y ^ cin` for
+  `cin = sum ^ x ^ y`; the XOR self-cancels to `sum ^ y` / `sum ^ x`, and XLA
+  does **not** reassociate it back — optimized HLO keeps 10 xor instructions
+  against 4 for the folded form. Transcribing it literally cost a third of the
+  sha2 emitter's XORs at runtime. Check whether a named wire cancels before
+  carrying it into the emitter.
+- **Whole-grid, never lane-by-lane.** Writing a permutation's rounds as one op
+  per lane is the shape `hash_frx.keccak.permutation` documents at ~9,800 HLO
+  lines for a *single* round; the keccak port reached 31 GB of compiler memory
+  that way before it was killed. Carry the state as one array with the lane
+  count as an axis. A batch dimension does not rescue the lane form — op count
+  is what binds.
 
 ## Native `binary_field_ghash` dtype gotchas
 
