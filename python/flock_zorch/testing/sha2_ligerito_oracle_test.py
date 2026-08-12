@@ -11,8 +11,12 @@ artifacts/sha2_ligerito_golden.bin):
   export PATH="$HOME/.local/cuda13/bin:$PATH"
   FRX_PLATFORMS=cuda,cpu PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
       python/flock_zorch/testing/sha2_ligerito_oracle_test.py
+
+`--witgen` additionally regenerates the witness on device from the golden's own
+blocks, which puts `flock_zorch.witgen_sha2` under the same proof-level gate.
 """
 
+import argparse
 import sys
 
 import frx
@@ -26,6 +30,7 @@ from flock_zorch import (  # noqa: E402
     ghash,  # noqa: E402
     lincheck,
     prover,
+    witgen_sha2,
     zerocheck,
 )
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
@@ -78,14 +83,39 @@ def load(golden: str = "sha2_ligerito_golden.bin"):
     return g
 
 
-def run():
+def substitute_device_witness(g):
+    """Regenerate the witness on device from the golden's own blocks and swap it
+    into `g`, so the gates below exercise the witgen path.
+
+    The compression inputs come out of the golden's z prefix
+    (`witgen_sha2.extract_inputs`), so no extra fixture exists to go stale. The
+    proof gates then transitively pin `witgen_sha2` against flock: one diverging
+    witness bit flips every Fiat-Shamir draw after it, which is what catches the
+    layout drifting across a pin bump plus golden re-dump.
+
+    `zlc` is left as the golden's; sha2's lincheck stripe has no device port yet,
+    so substituting it would gate something that does not exist.
+    """
+    z, a, b = (
+        np.asarray(x).reshape(-1, 2)
+        for x in witgen_sha2.witness_sha2(*witgen_sha2.extract_inputs(g["z"]))
+    )
+    checks = [
+        (f"witgen_sha2 {k} vs golden", np.array_equal(v, g[k]))
+        for k, v in zip("zab", (z, a, b))
+    ]
+    g["z"], g["a"], g["b"] = z, a, b
+    return checks
+
+
+def run(device_witness=False):
     g = load()
     meta = g["meta"]
     cfg = g["cfg"]
     m = meta["m"]
     k_log, k_skip = meta["k_log"], meta["k_skip"]
     ir = k_log - k_skip
-    results = []
+    results = substitute_device_witness(g) if device_witness else []
 
     root, pdata = zorch_ligerito.commit_flock_ligerito(cfg, g["z"])
     results.append(("commit root", np.array_equal(root, g["root"])))
@@ -142,8 +172,16 @@ def run():
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(
+        "--witgen",
+        action="store_true",
+        help="regenerate the witness on device from the golden's own blocks "
+        "(gates flock_zorch.witgen_sha2 against flock end to end)",
+    )
+    args = ap.parse_args()
     print(f"device {frx.devices()[0]}")
-    m, results = run()
+    m, results = run(device_witness=args.witgen)
     return report(
         results,
         f"sha2 LIGERITO full prove (R1csProofLigerito) vs flock prove_ligerito (m={m})",

@@ -188,6 +188,19 @@ py_test(
     ],
 )
 
+# No golden: the R1CS relation z == a AND b, a scalar big-int layout reference
+# that shares no packing code with the emitter, and hash-frx's independent
+# compression as the math anchor.
+py_test(
+    name = "witgen_sha2_test",
+    size = "large",  # ~57s: sha2's emit is ~2x blake3's row count
+    srcs = ["flock_zorch/testing/witgen_sha2_test.py"],
+    deps = [
+        ":flock_zorch",
+        requirement("absl-py"),
+    ],
+)
+
 # No golden: `CscCircuit.fold_alpha_batched` (device seg-scan) vs a naive host
 # XOR-scatter reference — the non-identity A₀/B₀ structure coverage.
 py_test(
