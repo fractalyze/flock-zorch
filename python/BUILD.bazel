@@ -104,6 +104,20 @@ py_test(
     ],
 )
 
+# The device BLAKE3 Fiat-Shamir transcript against the host challenger the fork
+# fixtures already pin, so matching here pins the device arm to the fork
+# transitively. Every draw binds the whole prefix, so one wrong byte anywhere
+# surfaces at the next sample; scalar-vs-slice framing is exercised both ways,
+# with a guard that the two genuinely differ.
+py_test(
+    name = "blake3_field_transcript_test",
+    size = "medium",
+    srcs = ["flock_zorch/testing/blake3_field_transcript_test.py"],
+    deps = [
+        ":flock_zorch",
+    ],
+)
+
 # Fork-fixture byte gate for the benchmark profile's BLAKE3 Merkle arm: leaf
 # non-root chaining values at every leaf shape class, parent compressions, and
 # composed tree roots vs the fork's own merkle module; SHA-256 as the control.
