@@ -14,6 +14,7 @@ lane map with no shifts at all and its rows have no carries.
 from __future__ import annotations
 
 import frx.numpy as fnp
+import numpy as np
 
 # The row vocabulary both circuits share. `a AND b = z` per bit, in three forms:
 #
@@ -102,7 +103,25 @@ def emit(fields, n: int, *, words: int, useful_bits: int):
             widened[key] = value.astype(fnp.uint64)
         return widened[key]
 
-    cols = []
+    # A run of consecutive constant-only words goes out as one broadcast, not a
+    # `full` plus a stack operand each. The b-stream is where this pays: its
+    # lin-row masks are constants, so sha2's carries 156 constant-only words in
+    # four runs, against z/a's 21 in one (the zero pad).
+    blocks: list = []
+    const_run: list[int] = []
+    array_run: list = []
+
+    def flush_const():
+        if const_run:
+            row = fnp.asarray(np.array(const_run, dtype=np.uint64))
+            blocks.append(fnp.broadcast_to(row, (n, len(const_run))))
+            const_run.clear()
+
+    def flush_array():
+        if array_run:
+            blocks.append(fnp.stack(array_run, axis=1))
+            array_run.clear()
+
     for w in range(words):
         cw = (const_acc >> (64 * w)) & _ONES64
         acc = None
@@ -111,7 +130,11 @@ def emit(fields, n: int, *, words: int, useful_bits: int):
             v = (v >> fnp.uint64(shift)) if is_high else (v << fnp.uint64(shift))
             acc = v if acc is None else acc | v
         if acc is None:
-            cols.append(fnp.full((n,), cw, dtype=fnp.uint64))
+            flush_array()
+            const_run.append(cw)
         else:
-            cols.append((acc | fnp.uint64(cw)) if cw else acc)
-    return fnp.stack(cols, axis=1)
+            flush_const()
+            array_run.append((acc | fnp.uint64(cw)) if cw else acc)
+    flush_const()
+    flush_array()
+    return fnp.concatenate(blocks, axis=1)
