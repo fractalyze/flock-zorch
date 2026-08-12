@@ -89,6 +89,21 @@ py_test(
     ],
 )
 
+# The incremental BLAKE3 hasher as a fixed-shape device state, against
+# hash-frx's one-shot BLAKE3: absorbing a message in any sequence of pieces must
+# equal hashing it whole, the extendable read must match at every length the
+# transcript squeezes, and the state must survive a jitted loop as a carry —
+# the last is why the module exists. "large" because the split matrix traces one
+# program per pattern.
+py_test(
+    name = "blake3_stream_test",
+    size = "large",
+    srcs = ["flock_zorch/testing/blake3_stream_test.py"],
+    deps = [
+        ":flock_zorch",
+    ],
+)
+
 # Fork-fixture byte gate for the benchmark profile's BLAKE3 Merkle arm: leaf
 # non-root chaining values at every leaf shape class, parent compressions, and
 # composed tree roots vs the fork's own merkle module; SHA-256 as the control.
