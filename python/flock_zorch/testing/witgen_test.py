@@ -27,7 +27,8 @@ Independent checks, so a layout slip and a math slip cannot mask each other:
    per compression) — the device version replaces the running state with a
    closed form, and this pins the two equal.
 
-6. On GPU, the Pallas kernel must byte-match the portable XLA emission. The
+6. On GPU, both Pallas kernels — the witness emission and the stripe — must
+   byte-match their portable XLA twins. The
    two share only the layout constants, so they are independent implementations
    of the same spec — which is what makes the comparison a gate rather than a
    tautology. Skipped off GPU: Triton has no CPU lowering.
@@ -184,6 +185,25 @@ class WitgenTest(absltest.TestCase):
             np.testing.assert_array_equal(
                 np.asarray(w), np.asarray(g), f"{name} stream"
             )
+
+    def test_pallas_stripe_matches_portable_stripe(self):
+        if frx.default_backend() != "gpu":
+            self.skipTest("the Pallas kernel has no CPU lowering")
+        from flock_zorch import witgen_pallas
+
+        # Random words rather than a real witness: the stripe is a pure bit
+        # transpose, and random bits exercise it harder than the structured
+        # zeros a witness carries in its padding. The fixture's 8 blocks are
+        # below the kernel's tile, so this needs its own batch.
+        rng = np.random.default_rng(0x57819E)
+        n = witgen_pallas.stripe_rows()
+        z = frx.device_put(
+            rng.integers(0, 1 << 64, size=(n, witgen.WORDS_PER_BLOCK), dtype=np.uint64)
+        )
+        np.testing.assert_array_equal(
+            np.asarray(witgen._lincheck_stripe_xla(z)),
+            np.asarray(witgen_pallas.lincheck_stripe(z)),
+        )
 
     def test_extract_inputs_roundtrip(self):
         got = witgen.extract_inputs(self.z.reshape(-1, 2))

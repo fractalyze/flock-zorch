@@ -309,8 +309,26 @@ def _transpose_8x8_bits(x):
     return x
 
 
-@frx.jit
 def lincheck_stripe(z):
+    """The lincheck byte stripe from the packed z stream.
+
+    z: uint64 [N, 256] with N divisible by 8 -> uint8 [N/8, 16384].
+
+    GPU runs `witgen_pallas`'s kernel where the batch allows it; this XLA
+    expression is the portable path and the kernel's oracle, the same split
+    `witness_blake3` makes. Batches that are not a whole number of the kernel's
+    tile fall through to it as well — real proves are powers of two, and
+    padding a stripe would mean inventing blocks.
+    """
+    from flock_zorch import witgen_pallas
+
+    if frx.default_backend() == "gpu" and z.shape[0] % witgen_pallas.stripe_rows() == 0:
+        return witgen_pallas.lincheck_stripe(z)
+    return _lincheck_stripe_xla(z)
+
+
+@frx.jit
+def _lincheck_stripe_xla(z):
     """The lincheck byte stripe from the packed z stream, on device.
 
     z: uint64 [N, 256] with N divisible by 8 -> uint8 [N/8, 16384].
