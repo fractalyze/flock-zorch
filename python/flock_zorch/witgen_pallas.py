@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import frx
 import frx.numpy as fnp
+from frx import lax
 from frx.experimental import pallas as pl
 from frx.experimental.pallas import triton as plgpu
 from hash_frx.blake3.compress import IV, ROUNDS
@@ -39,6 +40,8 @@ from flock_zorch.witgen import (
     _G_LANES,
     _SCHEDULE,
     CARRY_BITS,
+    STRIPE_BYTES_PER_GROUP,
+    STRIPE_USEFUL_WORDS,
     WORDS_PER_BLOCK,
 )
 
@@ -56,6 +59,16 @@ _MASK64 = (1 << 64) - 1
 # `out_lo` covers bits [256, 512) = words 4..7 exactly, so skipping it costs no
 # straddle handling.
 _OUT_LO_BITS = 256
+
+# Stripe groups per program. The transpose is cross-lane over a group of 8
+# blocks, so a program holds whole groups.
+_STRIPE_GROUPS = 8
+_STRIPE_ROWS = _STRIPE_GROUPS * 8
+# The kernel writes the group's full 16,384 bytes as u64, so the zero tail is
+# stored rather than concatenated on afterwards -- padding outside would cost a
+# second pass over the whole output.
+_STRIPE_U64_PER_GROUP = STRIPE_BYTES_PER_GROUP // 8  # 2048
+_STRIPE_DATA_U64 = STRIPE_USEFUL_WORDS * 8  # 1928, the rest is the zero pad
 
 
 class _Writer:
@@ -247,3 +260,80 @@ def witness_blake3(cv, m, counter, block_len, flags):
         name="blake3_r1cs_witness",
     )(cv, m, counter, block_len, flags)
     return (z[:n], a[:n], b[:n]) if pad else (z, a, b)
+
+
+def _transpose_8x8_bits(x):
+    """Hacker's Delight 7-3 on the 8x8 bit matrix in each u64 (byte i = row i).
+
+    The device twin of `witgen._transpose_8x8_bits`; every mask is under 2^63,
+    so none of them need `_u64`.
+    """
+    t = (x ^ (x >> fnp.uint64(7))) & fnp.uint64(0x00AA_00AA_00AA_00AA)
+    x = x ^ t ^ (t << fnp.uint64(7))
+    t = (x ^ (x >> fnp.uint64(14))) & fnp.uint64(0x0000_CCCC_0000_CCCC)
+    x = x ^ t ^ (t << fnp.uint64(14))
+    t = (x ^ (x >> fnp.uint64(28))) & fnp.uint64(0x0000_0000_F0F0_F0F0)
+    return x ^ t ^ (t << fnp.uint64(28))
+
+
+def _stripe_kernel(z_ref, out_ref):
+    """One program's groups of the lincheck stripe.
+
+    Per useful word, all eight byte columns at once: `[group, row, column]`.
+    For column `c` the eight rows' bytes occupy disjoint byte positions of the
+    packed u64, so the cross-row gather is a SUM rather than an OR -- Triton
+    lowers the reduction, and disjointness makes them identical. Emitting one
+    8-wide store per word rather than eight scalar ones matters: the scalar
+    form did not finish compiling in half an hour.
+    """
+    shift = fnp.arange(8, dtype=fnp.uint64) * fnp.uint64(8)
+    lane_shift = shift.reshape(1, 8, 1)
+    for word in range(STRIPE_USEFUL_WORDS):
+        rows = z_ref[:, word].reshape(_STRIPE_GROUPS, 8, 1)
+        byte = (rows >> shift) & fnp.uint64(0xFF)
+        packed = fnp.sum(byte << lane_shift, axis=1)
+        out_ref[:, word * 8 : (word + 1) * 8] = _transpose_8x8_bits(packed)
+    # The zero tail goes out in the same 8-wide stores: Triton requires every
+    # array shape to be a power of two, and the tail is 120 u64 wide.
+    zero = fnp.zeros((_STRIPE_GROUPS, 8), fnp.uint64)
+    for word in range(STRIPE_USEFUL_WORDS, WORDS_PER_BLOCK):
+        out_ref[:, word * 8 : (word + 1) * 8] = zero
+
+
+@frx.jit
+def lincheck_stripe(z):
+    """The lincheck byte stripe from a packed z stream, byte-identical to
+    `witgen.lincheck_stripe`.
+
+    z: uint64 [N, 256] with N a multiple of `_STRIPE_ROWS` -> uint8
+    [N/8, 16384]. GPU only; reach it through `witgen.lincheck_stripe`.
+
+    Left as its own kernel rather than folded into the witness emission: folding
+    was measured, and it cost the emit 27% of its throughput (765 -> 561 GB/s)
+    because the cross-lane reduce competes for the chain's registers, so the
+    deleted read bought only 0.44 ms while compile time went 390 -> 966 s.
+    """
+    n = z.shape[0]
+    if n % _STRIPE_ROWS:
+        raise ValueError(f"stripe kernel needs a multiple of {_STRIPE_ROWS} blocks")
+    packed = pl.pallas_call(
+        _stripe_kernel,
+        out_shape=frx.ShapeDtypeStruct((n // 8, _STRIPE_U64_PER_GROUP), fnp.uint64),
+        grid=(n // _STRIPE_ROWS,),
+        in_specs=[pl.BlockSpec((_STRIPE_ROWS, WORDS_PER_BLOCK), lambda i: (i, 0))],
+        out_specs=pl.BlockSpec(
+            (_STRIPE_GROUPS, _STRIPE_U64_PER_GROUP), lambda i: (i, 0)
+        ),
+        compiler_params=plgpu.CompilerParams(num_warps=_NUM_WARPS),
+        name="blake3_lincheck_stripe",
+    )(z)
+    # u64 entry (i*8 + c) bitcasts to the eight bytes at i*64 + c*8 + t, which
+    # is flock's layout; a bitcast + reshape is free where a pad would not be.
+    return lax.bitcast_convert_type(packed, fnp.uint8).reshape(
+        n // 8, STRIPE_BYTES_PER_GROUP
+    )
+
+
+def stripe_rows() -> int:
+    """Batch granularity `lincheck_stripe` requires, for the dispatcher."""
+    return _STRIPE_ROWS
