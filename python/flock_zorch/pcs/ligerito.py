@@ -437,7 +437,7 @@ def _flock_ligerito_prover(cfg: dict, log_n: int):
     same one without threading it (cf. sp1-zorch rebuilding its RS code per
     call)."""
     config, chor = flock_ligerito_config(cfg, log_n)
-    prover = LigeritoProver(_make_ghash_code, merkle.GHASH_TREE, config, chor)
+    prover = LigeritoProver(_make_ghash_code, merkle.GHASH_SHA256_TREE, config, chor)
     return prover, config, chor
 
 
@@ -478,7 +478,9 @@ def verify_flock_ligerito(cfg: dict, root, b_combined, target, proof, ch) -> Arr
     Returns the scalar `ok`; threads `ch`."""
     log_n = b_combined.shape[0].bit_length() - 1
     config, chor = flock_ligerito_config(cfg, log_n)
-    verifier = LigeritoVerifier(_make_ghash_code, merkle.GHASH_TREE, config, chor)
+    verifier = LigeritoVerifier(
+        _make_ghash_code, merkle.GHASH_SHA256_TREE, config, chor
+    )
     ok, t = verifier.verify_with_basis(
         root, _bitrev(b_combined), target, proof, FlockTranscript(ch._t)
     )
