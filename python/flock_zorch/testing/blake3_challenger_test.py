@@ -32,10 +32,15 @@ Pure host except the SHA-256 control (eager device transcript hops, CPU-safe).
 """
 from __future__ import annotations
 
+import frx
 import numpy as np
 from absl.testing import absltest
 
-from flock_zorch.blake3_challenger import Blake3Challenger
+from flock_zorch.blake3_challenger import (
+    Blake3CallbackChallenger,
+    Blake3CallbackTranscript,
+    Blake3Challenger,
+)
 from flock_zorch.ghash import _lanes_to_ghash, to_lanes
 from flock_zorch.sha256_challenger import Sha256Challenger
 
@@ -140,6 +145,80 @@ class Blake3ChallengerForkGateTest(absltest.TestCase):
         c = Blake3Challenger(_DOMAIN)
         _replay_observes(c)
         self.assertFalse(c.verify_pow(1, bits=0))
+
+
+@frx.jit
+def _fixture_zone(t, x_scalar, x_slice, root):
+    """The whole fixture sequence as ONE jitted program — every op an ordered
+    io_callback into the host transcript."""
+    t = t.observe_label(_LABEL)
+    t = t.observe_scalar(x_scalar)
+    t, s1 = t.sample_scalar()
+    t = t.observe(x_slice)
+    t, v1 = t.sample(1)
+    t, v2 = t.sample(2)
+    t, v5 = t.sample(5)
+    t = t.observe_bytes(root)
+    t, s2 = t.sample_scalar()
+    t, n0 = t.grind(0)
+    t, n12 = t.grind(12)
+    t, s3 = t.sample_scalar()
+    return t, s1, v1, v2, v5, s2, n0, n12, s3
+
+
+class CallbackTranscriptForkGateTest(absltest.TestCase):
+    """The prove-path arm: the callback transcript through jitted zones. The
+    fixture pin here is what licenses swapping it into the four
+    transcript-threading zones unchanged."""
+
+    def test_one_jitted_zone_matches_the_fork(self):
+        t = Blake3CallbackTranscript.new(_DOMAIN)
+        root = np.frombuffer(_ROOT, np.uint8)
+        _, s1, v1, v2, v5, s2, n0, n12, s3 = _fixture_zone(
+            t, _g(_OBS_SCALAR), _g(_OBS_SLICE), root
+        )
+        got = {
+            "s1": _wire(s1),
+            "v1": _wire(v1),
+            "v2": _wire(v2),
+            "v5": _wire(v5),
+            "s2": _wire(s2),
+            "n0": int(n0),
+            "n12": int(n12),
+            "s3": _wire(s3),
+        }
+        self.assertEqual(got, _BLAKE3)
+
+    def test_eager_wrapper_matches_the_fork(self):
+        # The same ops OUTSIDE any jit zone — the eager touchpoints' path.
+        got = _drive(Blake3CallbackChallenger(_DOMAIN))
+        self.assertEqual(got, _BLAKE3)
+
+    def test_scan_body_matches_the_eager_challenger(self):
+        # fs.sample_chain's shape: sample_scalar as a lax.scan body.
+        ref = Blake3Challenger(_DOMAIN)
+        ref.observe_label(_LABEL)
+        want = [_wire(ref.sample_f128()) for _ in range(3)]
+
+        @frx.jit
+        def chain(t):
+            t = t.observe_label(_LABEL)
+            return frx.lax.scan(lambda t, _: t.sample_scalar(), t, None, length=3)
+
+        _, draws = chain(Blake3CallbackTranscript.new(_DOMAIN))
+        got = [_wire(np.asarray(draws)[i]) for i in range(3)]
+        self.assertEqual(got, want)
+
+    def test_check_witness_mirror(self):
+        c = Blake3CallbackChallenger(_DOMAIN)
+        c.observe_label(_LABEL)
+        nonce = c.grind_pow(12)
+        v = Blake3CallbackChallenger(_DOMAIN)
+        v.observe_label(_LABEL)
+        v2, ok = v.check_witness(np.uint64(nonce), pow_bits=12)
+        self.assertTrue(bool(np.asarray(ok)))
+        # Post-check lockstep: both sides draw the same next challenge.
+        self.assertEqual(_wire(c.sample_f128()), _wire(v2.sample_f128()))
 
 
 class Sha256ControlForkGateTest(absltest.TestCase):

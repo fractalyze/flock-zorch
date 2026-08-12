@@ -21,6 +21,10 @@ The rules every change must respect:
   zerocheck, lincheck, and ring-switch; per-layer golden gates are retired —
   don't add one, add a python-native test (no golden) for primitive behavior.
   No behavior change ships without the proof gates green (GPU set included).
+  The standing GPU gates run at m=22 (ML suffix n=15): a code path gated on
+  size — e.g. `_OUTER_SPLIT_MIN`'s n≥16 outer-product emission — is never
+  exercised by them, so byte-gate it with an m-variant golden
+  (`blake3_ligerito_golden_m32.bin` reaches n=25) before claiming green.
 - **Assemble zorch's blocks, never re-implement the scheme.** The prover is built
   from zorch's scheme-agnostic spine (the `ProverRound` / `VerifierRound`
   protocols and their drivers, Fiat-Shamir, `PCS`, fold, zero-check). flock-zorch adds only the flock-specific pieces the byte-match
@@ -30,6 +34,14 @@ The rules every change must respect:
   `git_override`) means bumping `requirements.in`'s frx / frxlib / frx-cuda12
   wheels to the SAME version as zorch's own `requirements.in`: the binary-field
   GPU kernels must match, and CPU-only CI can't catch a desync.
+- **Prove a wheel carries the compiler fix you're waiting on before you
+  validate against it.** A dev wheel is only as new as the xla commit its jax
+  pin named, which can be the commit *before* the fix; the version date says
+  nothing. Grep the plugin binary for a string the fix introduced —
+  `strings -a .venv/lib/python3.11/site-packages/frx_plugins/xla_cuda12/xla_cuda_plugin.so
+  | grep '<phrase from the fix>'` — and pair it with a control phrase that
+  predates the fix, so an empty result means "absent" and not "grep is wrong".
+  Skipping this reads a still-broken wheel as the fix having failed.
 
 ## Native `binary_field_ghash` dtype gotchas
 
