@@ -42,9 +42,11 @@ The R1CS is `a AND b = z` per bit, in three row forms:
     lin-id    (32 b)   z = v              a = v      b = 0xFFFF_FFFF
     AND       (32 b)   z = x & y          a = x      b = y
 
-with `cin = sum ^ x ^ y`, `left = (x ^ cin) & 0x7FFF_FFFF`,
-`right = (y ^ cin) & 0x7FFF_FFFF` — bit 31 is the discarded mod-2^32 carry-out
-and gets no slot.
+where `left` and `right` are the addends with the carry-in folded in. flock
+writes those as `x ^ cin` and `y ^ cin` for `cin = sum ^ x ^ y`; the XOR
+self-cancels, so they are just `sum ^ y` and `sum ^ x` and `cin` never needs
+computing. Bit 31 is the discarded mod-2^32 carry-out and gets no slot, which
+is what the 31-bit mask drops.
 
 Emission is offset-addressed rather than a bit cursor, which is the one
 structural difference from `witgen._emit`. sha2's computation order is not its
@@ -136,6 +138,15 @@ def _emit(fields, n: int):
     constant words. Offsets are explicit because sha2 produces its fields out of
     bit order.
     """
+    pos = 0
+    for off, width, _ in sorted(fields, key=lambda f: f[0]):
+        # The cursor `witgen._emit` gets for free: offsets are explicit here, so
+        # a gap or an overlap in the field list would otherwise emit a silently
+        # wrong stream instead of failing.
+        assert off == pos, f"field list leaves bit {pos} unwritten (next at {off})"
+        pos += width
+    assert pos == USEFUL_BITS, pos
+
     const_acc = 0
     contrib: list[list[tuple]] = [[] for _ in range(WORDS_PER_BLOCK)]
     for off, width, value in fields:
@@ -147,12 +158,24 @@ def _emit(fields, n: int):
         if s + width > 64:
             contrib[w + 1].append((value, 64 - s, True))
 
+    # A straddling field converts the same array in two adjacent words; widen
+    # each distinct value once instead.
+    widened: dict[int, object] = {}
+
+    def as_u64(value):
+        # Not `setdefault` — it evaluates its default eagerly, so the convert
+        # would still be traced on every hit and the cache would buy nothing.
+        key = id(value)
+        if key not in widened:
+            widened[key] = value.astype(fnp.uint64)
+        return widened[key]
+
     cols = []
     for w in range(WORDS_PER_BLOCK):
         cw = (const_acc >> (64 * w)) & ((1 << 64) - 1)
         acc = None
         for value, shift, is_high in contrib[w]:
-            v = value.astype(fnp.uint64)
+            v = as_u64(value)
             v = (v >> fnp.uint64(shift)) if is_high else (v << fnp.uint64(shift))
             acc = v if acc is None else acc | v
         if acc is None:
@@ -186,18 +209,25 @@ def witness_sha2(h_in, m):
         put(off, WORD_BITS, v, v, _ONES32)
 
     def put_and(off, x, y):
-        """An AND-output row: Ch and Maj are materialized, not folded."""
-        put(off, WORD_BITS, x & y, x, y)
+        """An AND-output row: Ch and Maj are materialized, not folded.
+
+        Returns the AND so the caller can finish the Ch/Maj XOR without
+        building it a second time.
+        """
+        z = x & y
+        put(off, WORD_BITS, z, x, y)
+        return z
 
     def add(off, x, y):
         """An ADD with its carry row; returns the mod-2^32 sum.
 
-        Bit 31 is the discarded mod-2^32 carry-out and gets no slot, which is
-        why the row is 31 bits wide and both operands are masked.
+        `left`/`right` are flock's `x ^ cin` / `y ^ cin` with `cin` cancelled
+        out (see the module docstring) — worth keeping folded, because XLA's
+        simplifier does not reassociate it back and `add` runs 600 times per
+        block. Bit 31 is the discarded carry-out, hence the 31-bit mask.
         """
         s = x + y
-        cin = s ^ x ^ y
-        left, right = (x ^ cin) & _MASK31, (y ^ cin) & _MASK31
+        left, right = (s ^ y) & _MASK31, (s ^ x) & _MASK31
         put(off, CARRY_BITS, left & right, left, right)
         return s
 
@@ -227,12 +257,10 @@ def witness_sha2(h_in, m):
         # Ch(e, f, g) = g ^ (e & (f ^ g)) and Maj(a, b, c) = a ^ ((b^a) & (c^a)):
         # the AND is the materialized row, the XOR is free.
         f_xor_g = ff ^ gg
-        put_and(CH_AND_BASE + WORD_BITS * r, ee, f_xor_g)
-        ch_out = (ee & f_xor_g) ^ gg
+        ch_out = put_and(CH_AND_BASE + WORD_BITS * r, ee, f_xor_g) ^ gg
 
         b_xor_a, c_xor_a = bb ^ aa, cc ^ aa
-        put_and(MAJ_AND_BASE + WORD_BITS * r, b_xor_a, c_xor_a)
-        maj_out = (b_xor_a & c_xor_a) ^ aa
+        maj_out = put_and(MAJ_AND_BASE + WORD_BITS * r, b_xor_a, c_xor_a) ^ aa
 
         s1e = rotr(ee, 6) ^ rotr(ee, 11) ^ rotr(ee, 25)
         s0a = rotr(aa, 2) ^ rotr(aa, 13) ^ rotr(aa, 22)
