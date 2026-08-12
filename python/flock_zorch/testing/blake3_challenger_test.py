@@ -36,8 +36,8 @@ import numpy as np
 from absl.testing import absltest
 
 from flock_zorch.blake3_challenger import Blake3Challenger
-from flock_zorch.challenger import Challenger
 from flock_zorch.ghash import _lanes_to_ghash, to_lanes
+from flock_zorch.sha256_challenger import Sha256Challenger
 
 _DOMAIN = b"flock-bench-v0"
 _LABEL = b"flock-zerocheck-v0"
@@ -148,7 +148,7 @@ class Sha256ControlForkGateTest(absltest.TestCase):
     bug in `_drive`."""
 
     def test_every_draw_matches_the_fork(self):
-        got = _drive(Challenger(_DOMAIN))
+        got = _drive(Sha256Challenger(_DOMAIN))
         self.assertEqual(got, _SHA256)
 
 

@@ -21,7 +21,7 @@ import frx.numpy as fnp
 from zorch.pcs.ring_switch import bit_slice_evals, rs_eq_ind, tensor_algebra_transpose
 
 from flock_zorch import fs, ghash, sumcheck
-from flock_zorch.challenger import Challenger
+from flock_zorch.sha256_challenger import Sha256Challenger
 
 LOG_PACKING = ghash.LOG_PACKING
 LABEL = b"flock-ring-switch-v0"
@@ -66,7 +66,7 @@ def _observe_and_reduce(t, s_hat_v):
     return t, eq_r_dprime, claim  # claim native ghash
 
 
-def prove_batched(packed_witness, x_outers, ch: Challenger):
+def prove_batched(packed_witness, x_outers, ch: Sha256Challenger):
     """Batched ring-switch over N opening points — byte-identical to flock
     `ring_switch::prove_batched_padded_with_precomputed`.
 
@@ -113,7 +113,7 @@ def _build_claim_weights(z_skip, x_outer_0):
     return fnp.concatenate([lam * (_ONE_G + x_outer_0), lam * x_outer_0])  # [128]
 
 
-def verify(claim, z_skip, x_outer, s_hat_v, ch: Challenger):
+def verify(claim, z_skip, x_outer, s_hat_v, ch: Sha256Challenger):
     """Observe LABEL + s_hat_v, check s_hat_v encodes `claim` at (z_skip, x_outer[0]),
     sample r'', reduce to the BaseFold sumcheck claim. Returns
     (sumcheck_claim, eq_r_dprime, ok)."""

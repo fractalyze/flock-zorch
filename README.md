@@ -84,8 +84,8 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 a valid type, a lowercase summary with no trailing period, a header of at most
 80 characters, and a body on everything but `docs`. The scope is the scheme the
 change lives in — `hash`, `lincheck`, `pcs`, `sumcheck`, `zerocheck` — or one of
-`verifier`, `ghash`, `prover`, `challenger`, `fs`, `release` for the modules
-directly under the package. A change spanning several of them takes no scope.
+`verifier`, `ghash`, `prover`, `sha256_challenger`, `blake3_challenger`, `fs`,
+`release` for the modules directly under the package. A change spanning several of them takes no scope.
 The same linter runs in CI over every commit in a pull request and over the PR
 title.
 

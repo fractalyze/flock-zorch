@@ -14,9 +14,9 @@ frx.config.update("jax_enable_x64", True)
 from absl.testing import absltest, parameterized  # noqa: E402
 
 from flock_zorch import ghash, lincheck, zerocheck  # noqa: E402
-from flock_zorch.challenger import Challenger  # noqa: E402
 from flock_zorch.lincheck import verifier as lcv  # noqa: E402
 from flock_zorch.pcs.pack import pack_witness, pack_z_lincheck_from_packed  # noqa: E402
+from flock_zorch.sha256_challenger import Sha256Challenger  # noqa: E402
 from flock_zorch.types import AbClaimPoint
 from flock_zorch.zerocheck import verifier as zcv  # noqa: E402
 
@@ -34,7 +34,7 @@ def _prove(m: int, k_log: int, k_skip: int):
     z_lincheck = pack_z_lincheck_from_packed(z_packed, m, k_log)
     eye = np.eye(1 << k_log, dtype=np.uint64)
 
-    chp = Challenger(DOMAIN)
+    chp = Sha256Challenger(DOMAIN)
     zc_proof, zc = zerocheck.prove_packed(z_bits, z_bits, z_bits, m, ch=chp)
     x_ab = AbClaimPoint.from_zerocheck(zc, k_log - k_skip)
     lp = lincheck.prove(z_lincheck, eye, eye, x_ab, m, k_log, k_skip, ch=chp)
@@ -42,7 +42,7 @@ def _prove(m: int, k_log: int, k_skip: int):
 
 
 def _verify(m, k_log, k_skip, zc_proof, zc, x_ab, lp, eye):
-    chv = Challenger(DOMAIN)
+    chv = Sha256Challenger(DOMAIN)
     zcv.verify(m, zc_proof, chv)
     return lcv.verify(m, k_log, k_skip, eye, eye, x_ab, zc.a_eval, zc.b_eval, lp, chv)
 

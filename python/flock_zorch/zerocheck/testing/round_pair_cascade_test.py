@@ -15,7 +15,7 @@ frx.config.update("jax_enable_x64", True)
 from absl.testing import absltest, parameterized  # noqa: E402
 
 from flock_zorch import fs, ghash, sumcheck  # noqa: E402
-from flock_zorch.challenger import Challenger  # noqa: E402
+from flock_zorch.sha256_challenger import Sha256Challenger  # noqa: E402
 from flock_zorch.testing._util import rand_ghash  # noqa: E402
 from flock_zorch.zerocheck.prover import (  # noqa: E402
     _mlv_round,
@@ -52,11 +52,11 @@ class RoundPairCascadeTest(parameterized.TestCase):
         eq_tables = sumcheck.build_eq_suffix_tables(cs)
         one = sumcheck.eq._ONE_G
 
-        t0 = Challenger(DOMAIN)._t
+        t0 = Sha256Challenger(DOMAIN)._t
         a1, b1, t1, m1_a, minf_a, rho_a = _mlv_round(a, b, eq_tables[0], one, t0)
         a2, b2, t2, m1_b, minf_b, rho_b = _mlv_round(a1, b1, eq_tables[1], one, t1)
 
-        tp0 = Challenger(DOMAIN)._t
+        tp0 = Sha256Challenger(DOMAIN)._t
         ap, bp, tp, pair_msgs, pair_rhos = _mlv_round_pair(
             a, b, eq_tables[0], eq_tables[1], one, tp0
         )
@@ -88,13 +88,13 @@ class RoundPairCascadeTest(parameterized.TestCase):
         eq_tables = sumcheck.build_eq_suffix_tables(sqrt_cs)
         one = sumcheck.eq._ONE_G
 
-        t0 = Challenger(DOMAIN)._t
+        t0 = Sha256Challenger(DOMAIN)._t
         a1, t1, m1_a, minf_a, rho_a = _mlv_round_sq(a, eq_tables[0], one, t0)
         a2, t2, m1_b, minf_b, rho_b = _mlv_round_sq(a1, eq_tables[1], one, t1)
 
         # The basis-form pair reads only round i+1's table plus √c_i — round
         # i's table (the singles' first operand) never enters.
-        tp0 = Challenger(DOMAIN)._t
+        tp0 = Sha256Challenger(DOMAIN)._t
         ap, tp, pair_msgs, pair_rhos = _mlv_round_pair_sq(
             a, eq_tables[1], sqrt_cs[0], one, tp0
         )

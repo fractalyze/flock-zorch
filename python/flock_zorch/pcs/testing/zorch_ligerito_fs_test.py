@@ -2,9 +2,9 @@
 
 Two layers, both CPU, no golden:
   1. Framing lockstep: `FlockTranscript` / `FlockChoreography` byte streams equal
-     the `Challenger` surface's (whose flock byte framing the proof-level oracle
+     the `Sha256Challenger` surface's (whose flock byte framing the proof-level oracle
      gates pin transitively), op by op — observes, scalar/slice sample split, PoW,
-     and the rejection-sampled distinct query draw vs an independent Challenger
+     and the rejection-sampled distinct query draw vs an independent Sha256Challenger
      reference.
   2. Round trip: `zorch.pcs.ligerito` prover+verifier over the GHASH
      `ReedSolomon` + the flock SHA-256 Merkle, driven end-to-end through the
@@ -31,7 +31,6 @@ from zorch.pcs.ligerito.verifier import LigeritoVerifier  # noqa: E402
 from zorch.pcs.stage import OpeningClaim, OpeningWitness  # noqa: E402
 from zorch.poly.multilinear import eval_mle  # noqa: E402
 
-from flock_zorch.challenger import Challenger  # noqa: E402
 from flock_zorch.hash import merkle  # noqa: E402
 from flock_zorch.pcs import ligerito as flock_ligerito  # noqa: E402
 from flock_zorch.pcs.ligerito import (  # noqa: E402
@@ -39,6 +38,7 @@ from flock_zorch.pcs.ligerito import (  # noqa: E402
     flock_ligerito_config,
     flock_transcript,
 )
+from flock_zorch.sha256_challenger import Sha256Challenger  # noqa: E402
 from flock_zorch.testing._util import rand_ghash  # noqa: E402
 
 DOMAIN = b"flock-ligerito-test"
@@ -114,14 +114,14 @@ def check(name: str, ok: bool):
 
 def test_observe_framing():
     """observe: ghash scalar == observe_f128, vector == per-element observe_f128,
-    uint8 == observe_bytes — buffer-exact vs the Challenger-side ops."""
+    uint8 == observe_bytes — buffer-exact vs the Sha256Challenger-side ops."""
     vs = rand_ghash(np.random.default_rng(1), 3)
     root = np.arange(32, dtype=np.uint8)
 
     t = flock_transcript(DOMAIN)
     t = t.observe(vs[0]).observe(vs).observe(fnp.asarray(root))
 
-    ch = Challenger(DOMAIN)
+    ch = Sha256Challenger(DOMAIN)
     ch.observe_f128(vs[0])
     for v in vs:
         ch.observe_f128(v)
@@ -136,7 +136,7 @@ def test_sample_framing():
     t, one = t.sample(1)
     t, vec = t.sample(5)
 
-    ch = Challenger(DOMAIN)
+    ch = Sha256Challenger(DOMAIN)
     ref_one = ch.sample_f128()
     ref_vec = ch.sample_f128(5)
     check(
@@ -148,13 +148,13 @@ def test_sample_framing():
 
 
 def test_grind_lockstep():
-    """FlockChoreography grind/check == Challenger grind_pow / a fresh replay."""
+    """FlockChoreography grind/check == Sha256Challenger grind_pow / a fresh replay."""
     chor = FlockChoreography()
     t = flock_transcript(DOMAIN)
     t, w = chor.grind(t, 6)
     t, w0 = chor.grind(t, 0)  # flock's unconditional 0-bit query grind
 
-    ch = Challenger(DOMAIN)
+    ch = Sha256Challenger(DOMAIN)
     n1, n0 = ch.grind_pow(6), ch.grind_pow(0)
     check("grind nonces", int(w) == n1 and int(w0) == n0 == 0)
     check("grind stream", _state_eq(t.inner, ch._t))
@@ -165,9 +165,11 @@ def test_grind_lockstep():
     check("check_grind", bool(ok1) and bool(ok0) and _state_eq(v.inner, t.inner))
 
 
-def _ref_distinct_queries(ch: Challenger, block_len: int, count: int) -> list[int]:
+def _ref_distinct_queries(
+    ch: Sha256Challenger, block_len: int, count: int
+) -> list[int]:
     """flock's rejection-sampled distinct queries (sample an F128, take its low
-    limb mod `block_len`, redraw on repeat, sort) — an independent Challenger-side
+    limb mod `block_len`, redraw on repeat, sort) — an independent Sha256Challenger-side
     reference for `FlockChoreography.sample_queries`, spelled out here so the gate
     holds without the retired in-tree Ligerito port."""
     seen: set[int] = set()
@@ -187,7 +189,7 @@ def test_distinct_queries_lockstep():
     t = flock_transcript(DOMAIN)
     t, pos = chor.sample_queries(t, block_len=16, count=6)
 
-    ch = Challenger(DOMAIN)
+    ch = Sha256Challenger(DOMAIN)
     ref = _ref_distinct_queries(ch, 16, 6)
     check(
         "distinct queries",

@@ -20,9 +20,9 @@ import numpy as np
 frx.config.update("jax_enable_x64", True)
 
 from flock_zorch import ghash, prover, verifier  # noqa: E402
-from flock_zorch.challenger import Challenger  # noqa: E402
 from flock_zorch.pcs import ligerito as zlig  # noqa: E402
 from flock_zorch.pcs.pack import pack_witness, pack_z_lincheck_from_packed  # noqa: E402
+from flock_zorch.sha256_challenger import Sha256Challenger  # noqa: E402
 
 _M, _K_LOG, _K_SKIP, _DOMAIN = 13, 8, 6, b"flock-verify-check"
 _CFG = dict(
@@ -46,7 +46,16 @@ def _flip(x):
 def _verify(res, root, eye, stmt):
     return bool(
         verifier.verify(
-            _CFG, root, stmt, res, eye, eye, _M, _K_LOG, _K_SKIP, Challenger(_DOMAIN)
+            _CFG,
+            root,
+            stmt,
+            res,
+            eye,
+            eye,
+            _M,
+            _K_LOG,
+            _K_SKIP,
+            Sha256Challenger(_DOMAIN),
         )
     )
 

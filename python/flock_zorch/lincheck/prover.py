@@ -29,8 +29,8 @@ from zorch.round import prove_rounds
 from zorch.stage import ProveResult, ProverStage
 
 from flock_zorch import ghash
-from flock_zorch.challenger import Challenger
 from flock_zorch.lincheck._csc_fold import _csc_segments, _flatten_nz, _seg_xor_fold
+from flock_zorch.sha256_challenger import Sha256Challenger
 from flock_zorch.sumcheck import build_eq
 from flock_zorch.sumcheck.inf_product import prove_inf_product
 from flock_zorch.types import (
@@ -296,7 +296,7 @@ def prove(
     k_log: int,
     k_skip: int,
     domain: bytes = b"flock-test-v0",
-    ch: Challenger | None = None,
+    ch: Sha256Challenger | None = None,
     circuit: LincheckCircuit | None = None,
 ) -> LincheckProof:
     """Run lincheck. `x_ab` is an `AbClaimPoint` (z_skip:[2], x_inner_rest:[*,2],
@@ -306,12 +306,12 @@ def prove(
     returns (see `partial_fold_packed_z`).
 
     A `lincheck_steps` sequence (comb → sumcheck → claim) threading one
-    `Challenger`. `circuit`: a `CscCircuit` for real hash R1CS (sparse A₀/B₀ at
+    `Sha256Challenger`. `circuit`: a `CscCircuit` for real hash R1CS (sparse A₀/B₀ at
     large k, with an optional const_pin +β column); when None, the dense
     `a_dense`/`b_dense` path is used (small test R1CS). Returns a `LincheckProof`.
-    Pass a shared `ch` to thread Fiat-Shamir; else a fresh Challenger(domain)."""
+    Pass a shared `ch` to thread Fiat-Shamir; else a fresh Sha256Challenger(domain)."""
     if ch is None:
-        ch = Challenger(domain)
+        ch = Sha256Challenger(domain)
     carry, _ch, _msgs = prove_rounds(
         lincheck_steps(m, k_log, k_skip),
         _LincheckCarry(z_stripe, a_dense, b_dense, x_ab, circuit),

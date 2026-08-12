@@ -37,7 +37,7 @@ Modes:
   attribution: per sub-step, per CUDA kernel, per XLA HLO-op family, and (for
   `open`) per recursion level.
 
-Every window is replayable because `Challenger` advances by REPLACING its
+Every window is replayable because `Sha256Challenger` advances by REPLACING its
 immutable `_t` pytree: snapshotting `_t` and re-assigning it before each
 iteration replays byte-identical Fiat-Shamir draws, so every iteration runs the
 same program on the same data. Rebuilding the state per iteration instead would
@@ -169,8 +169,8 @@ def _build_open(golden: str):
     import frx.numpy as fnp
 
     from flock_zorch import lincheck, prover, zerocheck
-    from flock_zorch.challenger import Challenger
     from flock_zorch.pcs import ligerito as zorch_ligerito
+    from flock_zorch.sha256_challenger import Sha256Challenger
     from flock_zorch.testing._util import await_all
     from flock_zorch.testing.prove_phase_bench import Circuit
 
@@ -189,7 +189,7 @@ def _build_open(golden: str):
     zlc = lincheck.stripe_to_device(g["zlc"], m, k_log)
 
     root, pdata = zorch_ligerito.commit_flock_ligerito(cfg, z)
-    ch = Challenger(circ.domain)
+    ch = Sha256Challenger(circ.domain)
     prover.bind_statement(ch, g["stmt"], root)
     _, zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch)
     x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, ir)
@@ -277,8 +277,8 @@ def _build_zerocheck(golden: str, which: str, equal_factors: bool = False):
     import frx.numpy as fnp
 
     from flock_zorch import lincheck, prover
-    from flock_zorch.challenger import Challenger
     from flock_zorch.pcs import ligerito as zorch_ligerito
+    from flock_zorch.sha256_challenger import Sha256Challenger
     from flock_zorch.testing._util import await_all
     from flock_zorch.testing.prove_phase_bench import Circuit
     from flock_zorch.zerocheck import prover as zcp
@@ -295,7 +295,7 @@ def _build_zerocheck(golden: str, which: str, equal_factors: bool = False):
     lincheck.stripe_to_device(g["zlc"], m, k_log)
 
     root, _pdata = zorch_ligerito.commit_flock_ligerito(cfg, z)
-    ch = Challenger(circ.domain)
+    ch = Sha256Challenger(circ.domain)
     prover.bind_statement(ch, g["stmt"], root)
 
     k_skip = zcp.K_SKIP
@@ -309,7 +309,7 @@ def _build_zerocheck(golden: str, which: str, equal_factors: bool = False):
     rnd = ml if which == "ml" else urm
 
     # Same replay trick as the open: the rounds are functional in `carry`, and
-    # the Challenger advances by REPLACING its immutable `_t`, so restoring the
+    # the Sha256Challenger advances by REPLACING its immutable `_t`, so restoring the
     # snapshot replays byte-identical Fiat-Shamir draws. Rebuilding the whole
     # state per iteration instead would pay a fresh commit each time.
     t_snapshot = ch._t
