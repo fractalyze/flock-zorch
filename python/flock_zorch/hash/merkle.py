@@ -1,12 +1,26 @@
-"""Binary SHA-256 Merkle tree — byte-identical to flock's `merkle` module, built
-on `zorch.commit.merkle.MerkleTree` (the scheme-agnostic commit/fold machinery)
-with flock's byte-SHA-256 as leaf hasher and compressor.
+"""Binary Merkle tree, SHA-256 and BLAKE3 arms — byte-identical to flock's
+`merkle` module, built on `zorch.commit.merkle.MerkleTree` (the scheme-agnostic
+commit/fold machinery) with flock's leaf hasher and compressor injected.
 
-flock's construction (no domain separation): each leaf hash = `SHA256(leaf_bytes)`,
-each internal node = `SHA256(left ‖ right)` (64-byte preimage). zorch's binary
-`_fold_scan` produces the same per-level digests with an O(1)-in-height traced
-body (it compresses a full-width buffer each level and slices the live prefix —
-extra hashes, cheaper trace; Merkle is <1% of PCS commit).
+The SHA-256 arm is flock's default construction (no domain separation): each
+leaf hash = `SHA256(leaf_bytes)`, each internal node = `SHA256(left ‖ right)`
+(64-byte preimage). zorch's binary `_fold_scan` produces the same per-level
+digests with an O(1)-in-height traced body (it compresses a full-width buffer
+each level and slices the live prefix — extra hashes, cheaper trace; Merkle is
+<1% of PCS commit).
+
+The BLAKE3 arm is the flock-challenge fork's `merkle_hash = Blake3`
+(the benchmark profile's commitment), and it does NOT hash concatenated bytes:
+it uses BLAKE3's own tree semantics — a leaf is the NON-ROOT chaining value of
+the leaf bytes (`Hasher::update(bytes).finalize_non_root()`), a parent is one
+`PARENT`-flagged compression of the two child values without the `ROOT` flag
+(`merge_subtrees_non_root(l, r, Mode::Hash)`). The `PARENT` flag buys the
+leaf/parent domain separation the SHA-256 construction lacks — and the digests
+differ from a `blake3::hash`-per-node tree (root-flagged one-shot hashes), so
+the arm must match the fork's choice exactly, not merely "BLAKE3". Both hooks
+are hash-frx's pending-compression surface (`tree_output` / `parent_output`
+finished by `chaining_value`), byte-gated against fork-dumped fixtures by
+`testing/blake3_merkle_test.py`.
 
 The octopus multi-proof stays flock-side: the proof layout is flock's assembly.
 """
@@ -16,7 +30,9 @@ from __future__ import annotations
 import frx
 import frx.numpy as fnp
 import numpy as np
+from hash_frx.blake3 import blake3
 from hash_frx.sha256 import INITIAL_STATE, block_to_words, sha256_merkle_damgard
+from hash_frx.word import pack_le, unpack_le
 from zorch.commit.merkle import MerkleTree
 
 
@@ -73,15 +89,20 @@ class _Sha256LeafHasher:
         return hash(type(self))
 
 
+def _ghash_leaf_bytes(matrix):
+    """`binary_field_ghash` leaf rows -> their raw lo‖hi LE element bytes
+    (flock's leaf preimage), uint8 `[B, 16*elems]`. The uint8 bitcast is the one
+    working device ghash→integer direction (ghash→uint64 returns zeros,
+    zorch#399). Shared by both hash arms — the preimage is the leaf dtype's,
+    not the hash's."""
+    return frx.lax.bitcast_convert_type(matrix, fnp.uint8).reshape(matrix.shape[0], -1)
+
+
 class _GhashSha256LeafHasher(_Sha256LeafHasher):
-    """Leaves are `binary_field_ghash` rows; the preimage is the raw lo‖hi LE
-    element bytes (flock's leaf preimage). The uint8 bitcast is the one working
-    device ghash→integer direction (ghash→uint64 returns zeros, zorch#399)."""
+    """Leaves are `binary_field_ghash` rows hashed over their element bytes."""
 
     def as_bytes(self, matrix):
-        return frx.lax.bitcast_convert_type(matrix, fnp.uint8).reshape(
-            matrix.shape[0], -1
-        )
+        return _ghash_leaf_bytes(matrix)
 
 
 class _Sha256Compressor:
@@ -118,6 +139,95 @@ class _Sha256MerkleTree(MerkleTree):
 
 
 GHASH_TREE = _Sha256MerkleTree(_GhashSha256LeafHasher(), _Sha256Compressor())
+
+
+# --- BLAKE3 arm (the flock-challenge fork's `merkle_hash = Blake3`) ----------
+#
+# Every hook is a pending BLAKE3 compression finished WITHOUT the `ROOT` flag —
+# `chaining_value` — which is exactly the fork's `finalize_non_root` /
+# `merge_subtrees_non_root` contract (see the module docstring). The digest
+# bytes are the eight chaining-value words little-endian, the same packing the
+# standard reads the root digest with.
+
+
+def _blake3_leaf_digest(rows):
+    """Non-root BLAKE3 chaining value per leaf: uint8 `[B, L]` -> uint8 `[B, 32]`."""
+    return unpack_le(
+        blake3.chaining_value(blake3.tree_output(rows, blake3.hash_mode()))
+    )
+
+
+def _blake3_parent_digest(pairs):
+    """Non-root `PARENT` compression per node pair: uint8 `[G, 64]`
+    (left ‖ right child digests) -> uint8 `[G, 32]`."""
+    words = pack_le(pairs.reshape(pairs.shape[0], 2, 32))  # [G, 2, 8]
+    out = blake3.parent_output(words[:, 0], words[:, 1], blake3.hash_mode())
+    return unpack_le(blake3.chaining_value(out))
+
+
+class _Blake3LeafHasher:
+    """`leaf_hasher` seam for the BLAKE3 arm: the leaf bytes' non-root chaining
+    value. Same `as_bytes` hook contract as the SHA-256 arm — batched hashing
+    runs through `_Blake3MerkleTree._hash_leaves`; `hash` is the single-row form
+    the inherited reconstruct/verify path calls."""
+
+    out = 32
+
+    def as_bytes(self, matrix):
+        return matrix
+
+    def hash(self, row):
+        b = self.as_bytes(row[None])
+        return _blake3_leaf_digest(b)[0]
+
+    def __eq__(self, other):
+        return type(self) is type(other)
+
+    def __hash__(self):
+        return hash(type(self))
+
+
+class _GhashBlake3LeafHasher(_Blake3LeafHasher):
+    """Leaves are `binary_field_ghash` rows hashed over their element bytes."""
+
+    def as_bytes(self, matrix):
+        return _ghash_leaf_bytes(matrix)
+
+
+class _Blake3Compressor:
+    """`compressor` seam: 2-to-1 non-root `PARENT` compression over 32-byte
+    child chaining values."""
+
+    arity = 2
+    chunk = 32
+
+    def compress(self, group):
+        return _blake3_parent_digest(group.reshape(1, 64))[0]
+
+    def __eq__(self, other):
+        return type(self) is type(other)
+
+    def __hash__(self):
+        return hash(type(self))
+
+
+class _Blake3MerkleTree(MerkleTree):
+    """`MerkleTree` with whole levels hashed batch-native, like
+    `_Sha256MerkleTree`: hash-frx's BLAKE3 reads the batch axis from the shape,
+    so the base `vmap(single-hash)` would retrace the block schedule at the
+    wrong rank. No dedicated fusion marker exists for BLAKE3 yet, so the traced
+    compressions run de-fused — correct first; the benchmark profile's commit
+    perf is a later lane."""
+
+    def _hash_leaves(self, matrix):
+        rows = self._leaf_hasher.as_bytes(matrix)
+        return _blake3_leaf_digest(rows)
+
+    def _compress_groups(self, groups):
+        return _blake3_parent_digest(groups.reshape(groups.shape[0], 64))
+
+
+GHASH_BLAKE3_TREE = _Blake3MerkleTree(_GhashBlake3LeafHasher(), _Blake3Compressor())
 
 
 def paths_to_multi_proof(paths: np.ndarray, num_leaves: int, positions) -> np.ndarray:

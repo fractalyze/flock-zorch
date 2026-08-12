@@ -88,6 +88,18 @@ py_test(
     ],
 )
 
+# Fork-fixture byte gate for the benchmark profile's BLAKE3 Merkle arm: leaf
+# non-root chaining values at every leaf shape class, parent compressions, and
+# composed tree roots vs the fork's own merkle module; SHA-256 as the control.
+py_test(
+    name = "blake3_merkle_test",
+    size = "medium",
+    srcs = ["flock_zorch/hash/testing/blake3_merkle_test.py"],
+    deps = [
+        ":flock_zorch",
+    ],
+)
+
 # Pure-host unit test (no golden) for `merkle.paths_to_multi_proof`: it is
 # proof-format encoding, not field math, so it needs no GPU and no golden.
 py_test(
