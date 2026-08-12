@@ -55,10 +55,13 @@ The rules every change must respect:
   compared directly in seconds. A mismatch then names a region instead of
   surfacing as "the proof diverges" after a kernel exists.
 - **The packing model differs by circuit family.** blake3 and sha2 pack fields
-  tightly, so values straddle 64-bit words and the emitter needs a bit cursor.
-  keccak and keccak3 place each state in a 2,048-bit aligned slot and write
-  whole u64 lanes, so their "field list" is a lane map with no shift arithmetic
-  at all. Parameterizing by `K_LOG` alone does not cover this.
+  tightly, so values straddle 64-bit words and every field needs shift
+  arithmetic — both go through `witgen_pack.emit`, which addresses fields by
+  bit offset rather than walking a cursor, because neither circuit produces its
+  fields in bit order. keccak and keccak3 place each state in a 2,048-bit
+  aligned slot and write whole u64 lanes, so their "field list" is a lane map
+  with no shift arithmetic at all. Parameterizing by `K_LOG` alone does not
+  cover this.
 
 ## Native `binary_field_ghash` dtype gotchas
 
