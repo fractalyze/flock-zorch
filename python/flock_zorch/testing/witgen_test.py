@@ -1,7 +1,7 @@
 # Copyright 2026 The Flock-Zorch Authors. SPDX-License-Identifier: Apache-2.0
 """Native unit test for `flock_zorch.witgen` (no golden).
 
-Three independent checks, so a layout slip and a math slip cannot mask each
+Four independent checks, so a layout slip and a math slip cannot mask each
 other:
 
 1. The R1CS relation itself: `z == a AND b` for every bit of every block.
@@ -12,7 +12,11 @@ other:
 2. A scalar big-int reference built field-by-field from the layout spec
    (append-only cursor, no word packing tricks) must reproduce the packed
    words exactly. This pins the bit layout without golden files.
-3. The compression math is anchored against `hash_frx.blake3.compress`, an
+3. The lincheck stripe must equal a per-bit-column rebuild from the same
+   scalar reference — one byte per bit position carrying that bit of all
+   8 blocks, with the 960-byte tail zero (the `cargo test` full-stripe
+   contract; release flock leaves it unwritten and the fold never reads it).
+4. The compression math is anchored against `hash_frx.blake3.compress`, an
    implementation this module shares no code with: the out_lo/out_hi
    regions of `z` must equal its 16 output words (words 0..8 are
    `state ^ state>>8`, words 8..16 are `state[8..] ^ cv`).
@@ -151,6 +155,22 @@ class WitgenTest(absltest.TestCase):
             np.testing.assert_array_equal(self.z[i], _words(rz), f"z block {i}")
             np.testing.assert_array_equal(self.a[i], _words(ra), f"a block {i}")
             np.testing.assert_array_equal(self.b[i], _words(rb), f"b block {i}")
+
+    def test_lincheck_stripe_matches_scalar_reference(self):
+        cv, m, counter, block_len, flags = self.inputs
+        zs = [
+            _ref_streams(cv[i], m[i], counter[i], block_len[i], flags[i])[0]
+            for i in range(8)
+        ]
+        want = np.zeros(witgen.STRIPE_BYTES_PER_GROUP, dtype=np.uint8)
+        for p in range(witgen.STRIPE_USEFUL_WORDS * 64):
+            byte = 0
+            for r in range(8):
+                byte |= ((zs[r] >> p) & 1) << r
+            want[p] = byte
+        got = np.asarray(witgen.lincheck_stripe(witgen.witness_blake3(*self.inputs)[0]))
+        self.assertEqual(got.shape, (1, witgen.STRIPE_BYTES_PER_GROUP))
+        np.testing.assert_array_equal(got[0], want)
 
     def test_out_regions_match_hash_frx_compress(self):
         cv, m, counter, block_len, flags = self.inputs

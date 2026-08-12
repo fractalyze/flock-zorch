@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import frx
 import frx.numpy as fnp
+from frx import lax
 
 K_LOG = 14
 K = 1 << K_LOG
@@ -53,6 +54,13 @@ CARRY_BITS = 31
 G_STRIDE = 6 * CARRY_BITS + 2 * 32  # 250
 USEFUL_BITS = 2 * 256 + 1 + 16 * 32 + 4 * 32 + N_G * G_STRIDE + 8 * 32  # 15,409
 PAD_BITS = K - USEFUL_BITS  # 975
+
+# The lincheck stripe transposes whole words, so it covers ceil(USEFUL_BITS/64)
+# words = 15,424 bit columns; the remaining 960 bytes per group are the honest
+# zero pad flock's `cargo test` contract requires (the production fold never
+# reads them, and release flock leaves them unwritten).
+STRIPE_USEFUL_WORDS = -(-USEFUL_BITS // 64)  # 241
+STRIPE_BYTES_PER_GROUP = K  # one byte per bit column, 8 blocks per byte
 
 _IV = (0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A)
 
@@ -200,3 +208,48 @@ def witness_blake3(cv, m, counter, block_len, flags):
     a = _emit(head + ag + tail + pad, n)
     b = _emit([((1 << 1153) - 1, 1153)] + bg + [((1 << 256) - 1, 256)] + pad, n)
     return z, a, b
+
+
+def _transpose_8x8_bits(x):
+    """Hacker's Delight 7-3: transpose the 8x8 bit matrix held in each u64
+    (byte i = row i); bit r*8+c of the input lands at bit c*8+r."""
+    t = (x ^ (x >> fnp.uint64(7))) & fnp.uint64(0x00AA_00AA_00AA_00AA)
+    x = x ^ t ^ (t << fnp.uint64(7))
+    t = (x ^ (x >> fnp.uint64(14))) & fnp.uint64(0x0000_CCCC_0000_CCCC)
+    x = x ^ t ^ (t << fnp.uint64(14))
+    t = (x ^ (x >> fnp.uint64(28))) & fnp.uint64(0x0000_0000_F0F0_F0F0)
+    x = x ^ t ^ (t << fnp.uint64(28))
+    return x
+
+
+@frx.jit
+def lincheck_stripe(z):
+    """The lincheck byte stripe from the packed z stream, on device.
+
+    z: uint64 [N, 256] with N divisible by 8 -> uint8 [N/8, 16384].
+    Byte `g*16384 + i*64 + c*8 + t` holds, in bit r, bit `i*64 + c*8 + t`
+    of block `8g + r`'s z — flock's stripe layout, one byte per bit column
+    covering all 8 blocks of the group.
+    """
+    n = z.shape[0]
+    if n % 8:
+        raise ValueError(f"stripe needs a multiple of 8 blocks, got {n}")
+    grp = z.reshape(n // 8, 8, WORDS_PER_BLOCK)[:, :, :STRIPE_USEFUL_WORDS]
+
+    cols = []
+    for c in range(8):
+        packed = None
+        for r in range(8):
+            byte = (grp[:, r, :] >> fnp.uint64(8 * c)) & fnp.uint64(0xFF)
+            term = byte << fnp.uint64(8 * r)
+            packed = term if packed is None else packed | term
+        cols.append(_transpose_8x8_bits(packed))
+
+    out = fnp.stack(cols, axis=-1)  # [G, 241, 8]; u64 bytes = columns c*8..c*8+8
+    out8 = lax.bitcast_convert_type(out, fnp.uint8).reshape(
+        n // 8, STRIPE_USEFUL_WORDS * 64
+    )
+    pad = fnp.zeros(
+        (n // 8, STRIPE_BYTES_PER_GROUP - STRIPE_USEFUL_WORDS * 64), dtype=fnp.uint8
+    )
+    return fnp.concatenate([out8, pad], axis=1)
