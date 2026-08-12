@@ -175,6 +175,19 @@ py_test(
     ],
 )
 
+# No golden: the R1CS relation z == a AND b, hash-frx's independent Keccak-f
+# permutation as the math anchor, chi's operand aliasing as the wiring pin, and
+# a layout cross-check against the lincheck circuit's copy of the same offsets.
+py_test(
+    name = "witgen_keccak_test",
+    size = "medium",
+    srcs = ["flock_zorch/testing/witgen_keccak_test.py"],
+    deps = [
+        ":flock_zorch",
+        requirement("absl-py"),
+    ],
+)
+
 # No golden: `CscCircuit.fold_alpha_batched` (device seg-scan) vs a naive host
 # XOR-scatter reference — the non-identity A₀/B₀ structure coverage.
 py_test(
