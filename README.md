@@ -182,6 +182,7 @@ scripts/dump_goldens.sh all                  # + the real hash circuits
 $VENV python/flock_zorch/testing/e2e_ligerito_oracle_test.py    # fused prove (identity R1CS)
 $VENV python/flock_zorch/testing/keccak3_ligerito_oracle_test.py # Keccak full prove (Ligerito)
 $VENV python/flock_zorch/testing/blake3_ligerito_oracle_test.py
+$VENV python/flock_zorch/testing/bench_ligerito_oracle_test.py  # snark.fast profile (BLAKE3 FS+Merkle) vs the challenge fork
 ```
 
 The full proof-gate list is the `*_oracle_test.py` set under
@@ -210,6 +211,34 @@ open and reports hashes/second, and refuses to print absolute numbers when
 another process is using the GPU — a neighbour saturating the SMs inflates a warm
 prove ~28× here, which is enough to invent a result. Swap `sha2` for `blake3` or
 `keccak3`; `--golden` points it at an m-variant dump.
+
+### The snark.fast harness window
+
+The [flock-challenge](https://github.com/Layr-Labs/flock-challenge) benchmark
+measures a fresh worker per trial — seed on stdin starts the clock, the proof
+file's rename stops it — and verifies every proof with the fork's own verifier
+(BLAKE3 Fiat-Shamir and BLAKE3 Merkle on the `flock-bench-v0` domain; the
+`prove_fast` profile plumbing selects that arm). Point its `WORKER` positional
+at `scripts/bench_worker.sh`: the harness clears the worker's env, so the shim
+restores it and exec's `python/flock_zorch/testing/bench_worker.py`, whose
+timed body is byte-gated against a fork-verified bundle by
+`bench_ligerito_oracle_test.py` (regen: `cargo run --release --example
+dump_bench_ligerito`) — the harness's `verified=true` is the same acceptance
+the gate pins. The shim also wires a per-wheel `JAX_COMPILATION_CACHE_DIR`:
+a respawned worker must absorb the multi-minute XLA compile inside the
+harness's 300 s readiness budget, so warm trials have to hit that cache.
+
+```bash
+git -C "$SCRATCH" clone https://github.com/Layr-Labs/flock-challenge.git
+git -C "$SCRATCH/flock-challenge" checkout d866043
+# One-time compile-cache warm per wheel and log2, OUTSIDE the harness's
+# readiness budget (a cold cache pays ~10 min of XLA compile):
+echo 42 | scripts/bench_worker.sh 8 "$SCRATCH/warm.ready" "$SCRATCH/warm.proof"
+cargo run --manifest-path "$SCRATCH/flock-challenge/Cargo.toml" --release \
+  -p flock-benchmark-harness -- \
+  "$PWD/scripts/bench_worker.sh" "$SCRATCH/bench" score.json summary.json \
+  8 32 2 10   # LOG2 THREADS WARMUP_RUNS RUNS; log2 8 → m=22, 18 → m=32
+```
 
 ## Benchmark
 
