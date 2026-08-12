@@ -27,11 +27,17 @@ Independent checks, so a layout slip and a math slip cannot mask each other:
    per compression) — the device version replaces the running state with a
    closed form, and this pins the two equal.
 
+6. On GPU, the Pallas kernel must byte-match the portable XLA emission. The
+   two share only the layout constants, so they are independent implementations
+   of the same spec — which is what makes the comparison a gate rather than a
+   tautology. Skipped off GPU: Triton has no CPU lowering.
+
 Inputs are random u32s — block_len and flags included, so the flags high bit
 (the streaming writer's pending-bit path in the Rust source) is exercised.
 """
 from __future__ import annotations
 
+import frx
 import numpy as np
 from absl.testing import absltest
 from hash_frx.blake3.compress import IV, compress
@@ -160,6 +166,24 @@ class WitgenTest(absltest.TestCase):
             np.testing.assert_array_equal(self.z[i], _words(rz), f"z block {i}")
             np.testing.assert_array_equal(self.a[i], _words(ra), f"a block {i}")
             np.testing.assert_array_equal(self.b[i], _words(rb), f"b block {i}")
+
+    def test_pallas_kernel_matches_portable_emission(self):
+        if frx.default_backend() != "gpu":
+            self.skipTest("the Pallas kernel has no CPU lowering")
+        from flock_zorch import witgen_pallas
+
+        # Same batch size the fixture uses, deliberately: a Triton compile of
+        # this kernel costs ~390 s per distinct shape, and reusing the shape
+        # `setUpClass` already compiled keeps the check nearly free. 8 rows is
+        # not a multiple of the 16-row tile, so it exercises the pad-and-slice
+        # path — the exact-tile path is the same code with pad == 0.
+        inputs = _rand_inputs(np.random.default_rng(0xA11A5), 8)
+        want = witgen._witness_blake3_xla(*inputs)
+        got = witgen_pallas.witness_blake3(*inputs)
+        for name, w, g in zip("zab", want, got):
+            np.testing.assert_array_equal(
+                np.asarray(w), np.asarray(g), f"{name} stream"
+            )
 
     def test_extract_inputs_roundtrip(self):
         got = witgen.extract_inputs(self.z.reshape(-1, 2))
