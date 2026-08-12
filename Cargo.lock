@@ -150,9 +150,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
+name = "flock-benchmark-common"
+version = "0.1.0"
+source = "git+https://github.com/Layr-Labs/flock-challenge.git?rev=d86604387a795f74aa526176f0911763df256405#d86604387a795f74aa526176f0911763df256405"
+
+[[package]]
 name = "flock-core"
 version = "0.1.0"
 source = "git+https://github.com/succinctlabs/flock.git?rev=85fc0e7#85fc0e7cc002e7ca4dffdff805ba89976e9a5293"
+dependencies = [
+ "bincode",
+ "blake3",
+ "rayon",
+ "serde",
+ "sha2",
+ "toml",
+]
+
+[[package]]
+name = "flock-core"
+version = "0.1.0"
+source = "git+https://github.com/Layr-Labs/flock-challenge.git?rev=d86604387a795f74aa526176f0911763df256405#d86604387a795f74aa526176f0911763df256405"
 dependencies = [
  "bincode",
  "blake3",
@@ -169,7 +187,20 @@ source = "git+https://github.com/succinctlabs/flock.git?rev=85fc0e7#85fc0e7cc002
 dependencies = [
  "bincode",
  "blake3",
- "flock-core",
+ "flock-core 0.1.0 (git+https://github.com/succinctlabs/flock.git?rev=85fc0e7)",
+ "rayon",
+ "serde",
+ "sha2",
+]
+
+[[package]]
+name = "flock-prover"
+version = "0.1.0"
+source = "git+https://github.com/Layr-Labs/flock-challenge.git?rev=d86604387a795f74aa526176f0911763df256405#d86604387a795f74aa526176f0911763df256405"
+dependencies = [
+ "bincode",
+ "blake3",
+ "flock-core 0.1.0 (git+https://github.com/Layr-Labs/flock-challenge.git?rev=d86604387a795f74aa526176f0911763df256405)",
  "rayon",
  "serde",
  "sha2",
@@ -179,8 +210,10 @@ dependencies = [
 name = "flock-zorch"
 version = "0.1.0"
 dependencies = [
- "flock-core",
- "flock-prover",
+ "flock-benchmark-common",
+ "flock-core 0.1.0 (git+https://github.com/succinctlabs/flock.git?rev=85fc0e7)",
+ "flock-prover 0.1.0 (git+https://github.com/succinctlabs/flock.git?rev=85fc0e7)",
+ "flock-prover 0.1.0 (git+https://github.com/Layr-Labs/flock-challenge.git?rev=d86604387a795f74aa526176f0911763df256405)",
 ]
 
 [[package]]

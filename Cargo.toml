@@ -20,6 +20,15 @@ flock-core = { git = "https://github.com/succinctlabs/flock.git", rev = "85fc0e7
 # provers, and by the `bench_*_ligerito_cpu` examples as the CPU baseline.
 flock-prover = { git = "https://github.com/succinctlabs/flock.git", rev = "85fc0e7" }
 
+# The Layr-Labs flock-challenge fork — the snark.fast benchmark's harness,
+# worker, and (crucially) VERIFIER. Renamed so the upstream flock pin above
+# stays the byte-compare oracle for every existing golden; the fork is a
+# second, independent source and only `dump_bench_ligerito` consumes it.
+# `flock-challenge-prover` re-exports the fork's whole flock-core API;
+# `flock-benchmark-common` carries the harness's `DOMAIN` + seed expansion.
+flock-challenge-prover = { git = "https://github.com/Layr-Labs/flock-challenge.git", rev = "d86604387a795f74aa526176f0911763df256405", package = "flock-prover" }
+flock-benchmark-common = { git = "https://github.com/Layr-Labs/flock-challenge.git", rev = "d86604387a795f74aa526176f0911763df256405", package = "flock-benchmark-common" }
+
 # Match flock's bench profile (thin LTO + single codegen unit) so the CPU
 # baseline in the `bench_*_ligerito_cpu` examples is flock's honest best on this
 # hardware rather than an under-optimized build.
