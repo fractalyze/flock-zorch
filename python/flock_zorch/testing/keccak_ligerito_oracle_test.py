@@ -43,6 +43,7 @@ from flock_zorch.testing._golden import (  # noqa: E402
     open_golden,
     read_ligerito_config,
     read_ligerito_proof,
+    swap_device_witness,
     unpack_bits,
 )
 from flock_zorch.testing._util import report  # noqa: E402
@@ -84,34 +85,20 @@ def load():
 
 
 def substitute_device_witness(g):
-    """Regenerate the witness on device from the golden's own states and swap it
-    into `g`, so the gates below exercise the witgen path.
+    """Regenerate the witness on device and swap it into `g`, so the gates
+    below exercise the witgen path.
 
-    `state_0` comes straight out of the golden's own z prefix — keccak writes
-    whole lanes, so the first 25 are the input states verbatim and no extra
-    fixture exists to go stale. The proof gates then transitively pin
-    `witgen_keccak` against flock: one diverging witness bit flips every
-    Fiat-Shamir draw after it, which is what catches the layout drifting across
-    a pin bump plus golden re-dump.
+    keccak writes whole lanes, so the input states sit verbatim at the head of
+    each slot and `extract_inputs` reads them straight out of the golden's own z
+    prefix — no extra fixture exists to go stale.
 
-    `zlc` is left as the golden's. The keccak lincheck stripe is a different
-    shape from BLAKE3's and has no device port yet, so substituting it here
-    would gate something that does not exist.
+    The keccak lincheck stripe is a different shape from BLAKE3's and has no
+    device port yet, so substituting `zlc` would gate something that does not
+    exist; it is left as the golden's.
     """
     spec = witgen_keccak.KECCAK
-    zw = np.asarray(g["z"], dtype=np.uint64).reshape(-1, spec.words_per_block)
-    lo = spec.state0_lane(0)
-    state0 = zw[:, lo : lo + witgen_keccak.N_LANES]
-    z, a, b = (
-        np.asarray(x).reshape(-1, 2)
-        for x in witgen_keccak.witness_keccak(frx.device_put(state0))
-    )
-    checks = [
-        (f"witgen_keccak {k} vs golden", np.array_equal(v, g[k]))
-        for k, v in zip("zab", (z, a, b))
-    ]
-    g["z"], g["a"], g["b"] = z, a, b
-    return checks
+    streams = witgen_keccak.witness_keccak(witgen_keccak.extract_inputs(g["z"], spec))
+    return swap_device_witness(g, "witgen_keccak", streams)
 
 
 def run(device_witness=False):

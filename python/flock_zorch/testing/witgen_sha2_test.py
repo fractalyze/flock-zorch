@@ -153,15 +153,7 @@ class WitgenSha2Test(absltest.TestCase):
     def test_h_out_region_matches_hash_frx_compress(self):
         h_in, m, z, _, _ = _emit()
         want = np.asarray(compress(h_in, m[:, None, :]))
-        got = np.stack(
-            [
-                (
-                    z[:, (ws.H_OUT_BASE + 32 * i) // 64] >> np.uint64((32 * i) % 64)
-                ).astype(np.uint32)
-                for i in range(8)
-            ],
-            axis=1,
-        )
+        got = ws.read_words(z, ws.H_OUT_BASE, 8)
         np.testing.assert_array_equal(got, want)
 
     def test_extract_inputs_roundtrip(self):

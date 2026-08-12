@@ -126,15 +126,6 @@ _K = (
 assert len(_K) == N_ROUNDS
 
 
-def _add_row(x, y):
-    """One 32-bit ADD with its R1CS row parts: (sum, left, right, carry)."""
-    s = x + y
-    cin = s ^ x ^ y
-    left = (x ^ cin) & _MASK31
-    right = (y ^ cin) & _MASK31
-    return s, left, right, left & right
-
-
 def _emit(fields, n: int):
     """Assemble one packed stream: [(offset, width, value)] -> u64 [N, 512].
 
@@ -167,7 +158,7 @@ def _emit(fields, n: int):
         if acc is None:
             cols.append(fnp.full((n,), cw, dtype=fnp.uint64))
         else:
-            cols.append(acc | fnp.uint64(cw) if cw else acc)
+            cols.append((acc | fnp.uint64(cw)) if cw else acc)
     return fnp.stack(cols, axis=1)
 
 
@@ -199,9 +190,15 @@ def witness_sha2(h_in, m):
         put(off, WORD_BITS, x & y, x, y)
 
     def add(off, x, y):
-        """An ADD with its carry row; returns the mod-2^32 sum."""
-        s, left, right, carry = _add_row(x, y)
-        put(off, CARRY_BITS, carry, left, right)
+        """An ADD with its carry row; returns the mod-2^32 sum.
+
+        Bit 31 is the discarded mod-2^32 carry-out and gets no slot, which is
+        why the row is 31 bits wide and both operands are masked.
+        """
+        s = x + y
+        cin = s ^ x ^ y
+        left, right = (x ^ cin) & _MASK31, (y ^ cin) & _MASK31
+        put(off, CARRY_BITS, left & right, left, right)
         return s
 
     for w in range(H_WORDS):
@@ -239,7 +236,9 @@ def witness_sha2(h_in, m):
 
         s1e = rotr(ee, 6) ^ rotr(ee, 11) ^ rotr(ee, 25)
         s0a = rotr(aa, 2) ^ rotr(aa, 13) ^ rotr(aa, 22)
-        kr = fnp.full((n,), _K[r], dtype=fnp.uint32)
+        # A scalar, not a broadcast column: the round constant only ever feeds
+        # the ADD arithmetic, never `put`, so it needs no batch dimension.
+        kr = fnp.uint32(_K[r])
 
         base = ROUND_CARRY_BASE + r * ROUND_CARRY_STRIDE
         carry = lambda i: base + i * CARRY_BITS  # noqa: E731
@@ -266,6 +265,22 @@ def witness_sha2(h_in, m):
     return _emit(zf, n), _emit(af, n), _emit(bf, n)
 
 
+def read_words(z_lanes, base: int, count: int):
+    """`count` consecutive 32-bit fields starting at bit `base`, out of a packed
+    z stream.
+
+    z_lanes: host uint64 [N*256, 2] (the golden loader's lane form) -> uint32
+    [N, count]. Every region of this layout that holds 32-bit values is
+    word-aligned, so this one reader serves all of them.
+    """
+    zw = np.asarray(z_lanes, dtype=np.uint64).reshape(-1, WORDS_PER_BLOCK)
+    out = np.zeros((zw.shape[0], count), np.uint32)
+    for i in range(count):
+        w, s = divmod(base + WORD_BITS * i, 64)
+        out[:, i] = ((zw[:, w] >> np.uint64(s)) & np.uint64(_ONES32)).astype(np.uint32)
+    return out
+
+
 def extract_inputs(z_lanes):
     """Recover every block's compression inputs from a packed z stream.
 
@@ -275,15 +290,7 @@ def extract_inputs(z_lanes):
     rather than between the input slots, so nothing is shifted by a bit.
     """
     zw = np.asarray(z_lanes, dtype=np.uint64).reshape(-1, WORDS_PER_BLOCK)
-
-    def words(base, count):
-        out = np.zeros((zw.shape[0], count), np.uint32)
-        for i in range(count):
-            off = base + WORD_BITS * i
-            w, s = divmod(off, 64)
-            out[:, i] = ((zw[:, w] >> np.uint64(s)) & np.uint64(_ONES32)).astype(
-                np.uint32
-            )
-        return out
-
-    return words(H_BASE, H_WORDS), words(M_BASE, M_WORDS)
+    w, s = divmod(Z_CONST_POS, 64)
+    if not np.all((zw[:, w] >> np.uint64(s)) & np.uint64(1)):
+        raise ValueError("constant-1 wire missing — not a packed sha2 z stream")
+    return read_words(z_lanes, H_BASE, H_WORDS), read_words(z_lanes, M_BASE, M_WORDS)

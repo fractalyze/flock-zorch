@@ -125,6 +125,30 @@ def unpack_bits(packed, m: int):
     return np.concatenate([lo, hi], axis=1).reshape(-1)[: 1 << m]
 
 
+def swap_device_witness(g, label: str, streams):
+    """Swap a device-regenerated witness into a loaded golden; return its checks.
+
+    `streams` is the `(z, a, b)` a `witness_*` returned. Each is reshaped to the
+    golden's lane form, compared against the golden's own, and written back into
+    `g` so every gate downstream runs on the device witness. That is what pins a
+    witness generator against flock transitively: one diverging bit flips every
+    Fiat-Shamir draw after it, which catches a layout drifting across a pin bump
+    plus golden re-dump — an event every golden-fed gate is green through by
+    construction.
+
+    The streams stay on device; only the comparison pulls. Writing host copies
+    into `g` instead would send the whole witness back across PCIe when the
+    commit reads it.
+    """
+    z, a, b = (x.reshape(-1, 2) for x in streams)
+    checks = [
+        (f"{label} {k} vs golden", np.array_equal(np.asarray(v), g[k]))
+        for k, v in zip("zab", (z, a, b))
+    ]
+    g["z"], g["a"], g["b"] = z, a, b
+    return checks
+
+
 # --------------------------------------------------------------- wire sections
 
 

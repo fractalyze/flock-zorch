@@ -165,16 +165,16 @@ def _theta(g):
     return g ^ d[:, None, :]
 
 
-def _rho_pi(g, n: int):
+def _rho_pi(g):
     """Rotate every lane by its own offset, then move it to its pi destination.
 
     Rotating before the gather is what lets one shift pair cover all 25 lanes:
     the offset belongs to the source lane, so applying it first makes the
     movement a pure static reorder.
     """
-    flat = g.reshape(n, N_LANES)
+    flat = g.reshape(-1, N_LANES)
     rotated = (flat << _ROT) | (flat >> _ROT_INV)
-    return rotated[:, _PI_PERM].reshape(n, 5, 5)
+    return rotated[:, _PI_PERM].reshape(-1, 5, 5)
 
 
 def _chi(g):
@@ -201,10 +201,11 @@ def _witness(state0, spec: Spec):
     t_a: list = []
     t_b: list = []
     for r in range(N_ROUNDS):
-        bs = _rho_pi(_theta(s.reshape(rows, 5, 5)), rows)
+        bs = _rho_pi(_theta(s.reshape(rows, 5, 5)))
         t, row_a, row_b = _chi(bs)
-        for acc, v in ((t_z, t), (t_a, row_a), (t_b, row_b)):
-            acc.append(v.reshape(rows, N_LANES))
+        t_z.append(t.reshape(rows, N_LANES))
+        t_a.append(row_a.reshape(rows, N_LANES))
+        t_b.append(row_b.reshape(rows, N_LANES))
         s = (bs ^ t).reshape(rows, N_LANES) ^ _RC_LANES[r]
 
     zeros = lambda k: fnp.zeros((n, k), dtype=fnp.uint64)  # noqa: E731
@@ -262,3 +263,29 @@ def witness_keccak3(state0):
     into the wider lane map.
     """
     return _witness(state0, KECCAK3)
+
+
+def extract_inputs(z_lanes, spec: Spec = KECCAK):
+    """Recover every block's input states from a packed z stream.
+
+    z_lanes: host uint64 [N * words_per_block / 2, 2] (the golden loader's lane
+    form) -> the `state0` its `witness_*` takes: uint64 [N, 25] for `KECCAK`,
+    [N, n_sub, 25] for the wider members. Returning the rank that member's
+    entry point accepts is what lets a gate write
+    `witness_keccak3(extract_inputs(z, KECCAK3))` with no reshaping of its own.
+
+    Nothing is unpacked: the keccak family writes whole lanes, so each state
+    sits verbatim at the head of its slot. That also makes this the inverse a
+    golden gate needs to regenerate its own witness with no extra fixture.
+    """
+    zw = np.asarray(z_lanes, dtype=np.uint64).reshape(-1, spec.words_per_block)
+    if not np.all(zw[:, spec.z_const_lane] & np.uint64(1)):
+        raise ValueError("constant-1 wire missing — not a packed keccak z stream")
+    states = np.stack(
+        [
+            zw[:, spec.state0_lane(i) : spec.state0_lane(i) + N_LANES]
+            for i in range(spec.n_sub)
+        ],
+        axis=1,
+    )
+    return states[:, 0, :] if spec.n_sub == 1 else states

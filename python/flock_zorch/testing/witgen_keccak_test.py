@@ -32,6 +32,8 @@ without a golden present.
 from __future__ import annotations
 
 import functools
+from collections.abc import Callable
+from typing import NamedTuple
 
 import frx
 import numpy as np
@@ -59,41 +61,53 @@ def _from_halves(halves):
     return h[..., 0].astype(np.uint64) | (h[..., 1].astype(np.uint64) << np.uint64(32))
 
 
+class _Case(NamedTuple):
+    """Everything that differs between the two family members, in one row."""
+
+    spec: wk.Spec
+    witness: Callable
+    lincheck: object
+
+
+_KECCAK = _Case(wk.KECCAK, wk.witness_keccak, lincheck_keccak)
+_KECCAK3 = _Case(wk.KECCAK3, wk.witness_keccak3, lincheck_keccak3)
+
+_CIRCUITS = (
+    {"testcase_name": "_keccak", "case": _KECCAK},
+    {"testcase_name": "_keccak3", "case": _KECCAK3},
+)
+
+
 @functools.lru_cache(maxsize=None)
-def _emit(n_sub: int):
-    """(state0 [N, n_sub, 25], z, a, b) for the family member of this width."""
-    spec = wk.KECCAK if n_sub == 1 else wk.KECCAK3
+def _emit(case: _Case):
+    """(state0 [N, n_sub, 25], z, a, b) for this family member."""
+    n_sub = case.spec.n_sub
     rng = np.random.default_rng(0xC0FFEE + n_sub)
     state0 = rng.integers(
         0, 1 << 64, size=(_N_BLOCKS, n_sub, wk.N_LANES), dtype=np.uint64
     )
-    fn = wk.witness_keccak if n_sub == 1 else wk.witness_keccak3
+    # Each entry point takes the rank its own circuit uses; `extract_inputs`
+    # returns the same rank, which is what the oracle gates rely on.
     arg = state0[:, 0, :] if n_sub == 1 else state0
-    return (spec, state0) + tuple(np.asarray(x) for x in fn(arg))
-
-
-_CIRCUITS = (
-    {"testcase_name": "_keccak", "n_sub": 1},
-    {"testcase_name": "_keccak3", "n_sub": 3},
-)
+    return (state0,) + tuple(np.asarray(x) for x in case.witness(arg))
 
 
 class WitgenKeccakTest(parameterized.TestCase):
     @parameterized.named_parameters(*_CIRCUITS)
-    def test_r1cs_relation_holds(self, n_sub):
-        _, _, z, a, b = _emit(n_sub)
+    def test_r1cs_relation_holds(self, case):
+        _, z, a, b = _emit(case)
         np.testing.assert_array_equal(z, a & b)
 
     @parameterized.named_parameters(*_CIRCUITS)
-    def test_shape_is_one_block_per_group(self, n_sub):
-        spec, _, *streams = _emit(n_sub)
+    def test_shape_is_one_block_per_group(self, case):
+        _, *streams = _emit(case)
         for name, s in zip("zab", streams):
-            self.assertEqual(s.shape, (_N_BLOCKS, spec.words_per_block), name)
+            self.assertEqual(s.shape, (_N_BLOCKS, case.spec.words_per_block), name)
 
     @parameterized.named_parameters(*_CIRCUITS)
-    def test_state0_regions_are_the_input(self, n_sub):
-        spec, state0, z, a, b = _emit(n_sub)
-        for i in range(n_sub):
+    def test_state0_regions_are_the_input(self, case):
+        spec, (state0, z, a, b) = case.spec, _emit(case)
+        for i in range(spec.n_sub):
             lo = spec.state0_lane(i)
             lanes = slice(lo, lo + wk.N_LANES)
             np.testing.assert_array_equal(z[:, lanes], state0[:, i, :], f"sub {i}")
@@ -103,31 +117,32 @@ class WitgenKeccakTest(parameterized.TestCase):
             )
 
     @parameterized.named_parameters(*_CIRCUITS)
-    def test_state24_regions_match_hash_frx_permutation(self, n_sub):
-        spec, state0, z, a, _ = _emit(n_sub)
+    def test_state24_regions_match_hash_frx_permutation(self, case):
+        spec, (state0, z, a, _) = case.spec, _emit(case)
         flat = state0.reshape(-1, wk.N_LANES)
         want = _from_halves(
             np.asarray(
                 frx.vmap(KeccakF1600().permute)(frx.device_put(_to_halves(flat)))
             )
-        ).reshape(_N_BLOCKS, n_sub, wk.N_LANES)
-        for i in range(n_sub):
+        ).reshape(_N_BLOCKS, spec.n_sub, wk.N_LANES)
+        for i in range(spec.n_sub):
             lo = spec.state24_lane(i)
             lanes = slice(lo, lo + wk.N_LANES)
             np.testing.assert_array_equal(z[:, lanes], want[:, i, :], f"sub {i}")
             np.testing.assert_array_equal(a[:, lanes], want[:, i, :], f"sub {i}")
 
     @parameterized.named_parameters(*_CIRCUITS)
-    def test_constant_wire(self, n_sub):
-        spec, _, *streams = _emit(n_sub)
+    def test_constant_wire(self, case):
+        _, *streams = _emit(case)
         for name, s in zip("zab", streams):
             np.testing.assert_array_equal(
-                s[:, spec.z_const_lane], np.ones(_N_BLOCKS, np.uint64), name
+                s[:, case.spec.z_const_lane], np.ones(_N_BLOCKS, np.uint64), name
             )
 
     @parameterized.named_parameters(*_CIRCUITS)
-    def test_slot_gaps_and_padding_are_zero(self, n_sub):
-        spec, _, *streams = _emit(n_sub)
+    def test_slot_gaps_and_padding_are_zero(self, case):
+        spec, (_, *streams) = case.spec, _emit(case)
+        n_sub = spec.n_sub
         # Each 2,048-bit slot holds a 1,600-bit state, so seven lanes of every
         # slot are pad; everything past the last t row is pad as well.
         gaps = [
@@ -149,43 +164,83 @@ class WitgenKeccakTest(parameterized.TestCase):
                 )
 
     @parameterized.named_parameters(*_CIRCUITS)
-    def test_chi_operands_name_the_same_lane_twice(self, n_sub):
-        spec, _, _, a, b = _emit(n_sub)
-        # b at row (x, y) and a at row ((x+1)%5, y) are both bs[(x+2)%5 + 5y].
-        for i in range(n_sub):
+    def test_chi_operands_name_the_same_lane_twice(self, case):
+        spec, (_, _, a, b) = case.spec, _emit(case)
+        # b at row (x, y) and a at row ((x+1)%5, y) are both bs[(x+2)%5 + 5y],
+        # so one whole-round compare pins the lane order and the round stride.
+        lanes = np.array([wk._li(x, y) for y in range(5) for x in range(5)])
+        shifted = np.array([wk._li((x + 1) % 5, y) for y in range(5) for x in range(5)])
+        for i in range(spec.n_sub):
             for r in range(wk.N_ROUNDS):
                 base = spec.t_lane(i, r)
-                for y in range(5):
-                    for x in range(5):
-                        np.testing.assert_array_equal(
-                            b[:, base + wk._li(x, y)],
-                            ~a[:, base + wk._li((x + 1) % 5, y)],
-                            f"sub {i}, round {r}, lane ({x}, {y})",
-                        )
+                np.testing.assert_array_equal(
+                    b[:, base + lanes], ~a[:, base + shifted], f"sub {i}, round {r}"
+                )
 
     @parameterized.named_parameters(*_CIRCUITS)
-    def test_layout_agrees_with_the_lincheck_circuit(self, n_sub):
-        spec = wk.KECCAK if n_sub == 1 else wk.KECCAK3
-        lk = lincheck_keccak if n_sub == 1 else lincheck_keccak3
+    def test_extract_inputs_roundtrip(self, case):
+        spec, (state0, z, _, _) = case.spec, _emit(case)
+        got = wk.extract_inputs(z.reshape(-1, 2), spec)
+        want = state0[:, 0, :] if spec.n_sub == 1 else state0
+        np.testing.assert_array_equal(got, want)
+
+    @parameterized.named_parameters(*_CIRCUITS)
+    def test_extract_inputs_rejects_a_foreign_stream(self, case):
+        _, (_, z, _, _) = case.spec, _emit(case)
+        corrupt = z.copy()
+        corrupt[:, case.spec.z_const_lane] = 0
+        with self.assertRaises(ValueError):
+            wk.extract_inputs(corrupt.reshape(-1, 2), case.spec)
+
+    @parameterized.named_parameters(*_CIRCUITS)
+    def test_witness_column_map_agrees_with_the_lincheck_circuit(self, case):
+        """The strongest form of the cross-check: compare whole column vectors.
+
+        Comparing region bases alone would miss a transposed sub/round grouping
+        in keccak3's t rows, which is exactly the transcription slip two
+        independent derivations exist to catch. `_WLC` is the lincheck side's
+        within-lane map, so base + _WLC is the same column set this module
+        writes lane by lane.
+        """
+        spec, lk = case.spec, case.lincheck
+        wlc = lincheck_keccak._WLC
+        if spec.n_sub == 1:
+            col0, col24, rows_t = [lk._COL_STATE0], [lk._COL_STATE24], [lk._ROWS_T]
+        else:
+            col0, col24, rows_t = lk._COL0, lk._COL24, lk._ROWS_T
+        for i in range(spec.n_sub):
+            np.testing.assert_array_equal(
+                col0[i], spec.state0_lane(i) * wk.LANE_BITS + wlc, f"state_0 sub {i}"
+            )
+            np.testing.assert_array_equal(
+                col24[i], spec.state24_lane(i) * wk.LANE_BITS + wlc, f"state_24 sub {i}"
+            )
+            for r in range(wk.N_ROUNDS):
+                np.testing.assert_array_equal(
+                    rows_t[i][r],
+                    spec.t_lane(i, r) * wk.LANE_BITS + wlc,
+                    f"t sub {i} round {r}",
+                )
+
+    @parameterized.named_parameters(*_CIRCUITS)
+    def test_layout_agrees_with_the_lincheck_circuit(self, case):
+        spec, lk = case.spec, case.lincheck
         self.assertEqual(spec.k_log, lk.K_LOG)
         self.assertEqual(spec.words_per_block * wk.LANE_BITS, lk.K)
         self.assertEqual(wk.SLOT_BITS, lk.SLOT_BITS)
         self.assertEqual(spec.z_const_lane * wk.LANE_BITS, lk.Z_CONST)
         self.assertEqual(spec.t_lane_base * wk.LANE_BITS, lk.T_PACKED_BIT_BASE)
-        if n_sub > 1:
+        if spec.n_sub > 1:
             self.assertEqual(spec.n_sub, lk.N_SUB)
 
-    def test_single_keccak_layout_agrees_with_its_lincheck_bases(self):
-        # Only the single-keccak circuit names the state slots directly; the
-        # keccak3 walker derives its own from N_SUB.
+    def test_round_constants_and_rho_offsets_agree_with_the_lincheck_circuit(self):
+        # Reached from hash_frx here and hand-transcribed from flock's Rust
+        # there, so this is the only thing pinning that transcription.
         lk = lincheck_keccak
         self.assertEqual(wk.N_LANES, lk.N_LANES)
         self.assertEqual(wk.LANE_BITS, lk.LANE_BITS)
         self.assertEqual(wk.N_ROUNDS, lk.N_T)
-        self.assertEqual(wk.KECCAK.state0_lane(0) * wk.LANE_BITS, lk.STATE0_BIT_BASE)
-        self.assertEqual(wk.KECCAK.state24_lane(0) * wk.LANE_BITS, lk.STATE24_BIT_BASE)
         self.assertEqual(list(wk._RC), lk.ROUND_CONSTANTS)
-        # rho's offsets, reached from hash_frx here and from flock's Rust there.
         for y in range(5):
             for x in range(5):
                 self.assertEqual(

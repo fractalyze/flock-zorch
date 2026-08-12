@@ -40,6 +40,7 @@ from flock_zorch.testing._golden import (  # noqa: E402
     open_golden,
     read_ligerito_config,
     read_ligerito_proof,
+    swap_device_witness,
 )
 from flock_zorch.testing._util import report  # noqa: E402
 
@@ -84,28 +85,17 @@ def load(golden: str = "sha2_ligerito_golden.bin"):
 
 
 def substitute_device_witness(g):
-    """Regenerate the witness on device from the golden's own blocks and swap it
-    into `g`, so the gates below exercise the witgen path.
+    """Regenerate the witness on device and swap it into `g`, so the gates
+    below exercise the witgen path.
 
-    The compression inputs come out of the golden's z prefix
-    (`witgen_sha2.extract_inputs`), so no extra fixture exists to go stale. The
-    proof gates then transitively pin `witgen_sha2` against flock: one diverging
-    witness bit flips every Fiat-Shamir draw after it, which is what catches the
-    layout drifting across a pin bump plus golden re-dump.
+    The compression inputs come out of the golden's own z prefix
+    (`witgen_sha2.extract_inputs`), so no extra fixture exists to go stale.
 
-    `zlc` is left as the golden's; sha2's lincheck stripe has no device port yet,
-    so substituting it would gate something that does not exist.
+    sha2's lincheck stripe has no device port yet, so substituting `zlc` would
+    gate something that does not exist; it is left as the golden's.
     """
-    z, a, b = (
-        np.asarray(x).reshape(-1, 2)
-        for x in witgen_sha2.witness_sha2(*witgen_sha2.extract_inputs(g["z"]))
-    )
-    checks = [
-        (f"witgen_sha2 {k} vs golden", np.array_equal(v, g[k]))
-        for k, v in zip("zab", (z, a, b))
-    ]
-    g["z"], g["a"], g["b"] = z, a, b
-    return checks
+    streams = witgen_sha2.witness_sha2(*witgen_sha2.extract_inputs(g["z"]))
+    return swap_device_witness(g, "witgen_sha2", streams)
 
 
 def run(device_witness=False):
