@@ -132,12 +132,37 @@ def _emit(fields, n: int):
     return fnp.stack(cols, axis=1)
 
 
-@frx.jit
 def witness_blake3(cv, m, counter, block_len, flags):
     """Packed z/a/b witness streams for a batch of BLAKE3 compressions.
 
     cv: uint32 [N, 8], m: uint32 [N, 16], counter: uint64 [N],
     block_len/flags: uint32 [N] -> three uint64 [N, 256] arrays (z, a, b).
+
+    GPU runs `witgen_pallas`'s fused kernel, which walks the chain once for all
+    three streams and stores each output word as it is finished; this XLA
+    expression stays as the portable path and as the kernel's oracle, which is
+    how `zorch.utils.binary_field.byte_select_xor_reduce` splits the same way.
+    The kernel is Triton, so it has no CPU lowering at all ("Only interpret
+    mode is supported on CPU backend") — the split is forced, not a tuning
+    choice. `witgen_test` byte-compares the two wherever both can run.
+    """
+    if frx.default_backend() != "gpu":
+        return _witness_blake3_xla(cv, m, counter, block_len, flags)
+    # Deferred: witgen_pallas reads this module's layout constants, so a
+    # module-scope import here would be a cycle.
+    from flock_zorch import witgen_pallas
+
+    return witgen_pallas.witness_blake3(cv, m, counter, block_len, flags)
+
+
+@frx.jit
+def _witness_blake3_xla(cv, m, counter, block_len, flags):
+    """The portable emission: assemble every output word as one stacked stream.
+
+    Kept as the CPU path and as the kernel's independent reference. It is also
+    the slower one on GPU by 2.6x — one fusion per stream has to keep the
+    sequential 336-row chain live across all 256 words, which pins it at the
+    255-register cap (fractalyze/xla#495).
     """
     n = cv.shape[0]
     t_lo = counter.astype(fnp.uint32)
