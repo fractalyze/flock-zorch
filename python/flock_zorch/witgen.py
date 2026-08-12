@@ -84,6 +84,13 @@ for _ in range(ROUNDS - 1):
 
 _MASK31 = fnp.uint32(0x7FFF_FFFF)
 
+# Output words per stack group in `_emit`. RTX 5090, ptxas 13.3, 2^18 blocks,
+# z stream, un-profiled p10: 256 (one group) 2.006 ms, 16 1.192, 8 0.915,
+# 4 1.036 — below 8 the chain is re-walked more often than the occupancy buys
+# back. Any positive value is correct (the final slice just runs short); only
+# the speed changes, and WORDS_PER_BLOCK restores the ungrouped program.
+_EMIT_GROUP_WORDS = 8
+
 
 def _add_row(x, y):
     """One 32-bit ADD with its R1CS row parts: (sum, left, right, carry)."""
@@ -129,7 +136,23 @@ def _emit(fields, n: int):
             cols.append(fnp.full((n,), cw, dtype=fnp.uint64))
         else:
             cols.append(acc | fnp.uint64(cw) if cw else acc)
-    return fnp.stack(cols, axis=1)
+
+    # Stacking all 256 words at once makes the stream one fusion, which then
+    # has to keep the sequential 336-row chain live while it assembles them:
+    # ptxas spills up to 716 B/thread at the 255-register cap, leaving 8
+    # warps/SM, and the emit runs at 289 GB/s against a 1453 GB/s store
+    # roofline. Grouping bounds that liveness — a row whose bits fall outside
+    # the group dies immediately. The barrier is load-bearing: without it XLA
+    # merges the groups back into one wide fusion and the win disappears
+    # entirely. Revisit if fractalyze/xla#374 or #479 make the wide fusion
+    # affordable.
+    groups = [
+        lax.optimization_barrier(
+            fnp.stack(cols[start : start + _EMIT_GROUP_WORDS], axis=1)
+        )
+        for start in range(0, WORDS_PER_BLOCK, _EMIT_GROUP_WORDS)
+    ]
+    return fnp.concatenate(groups, axis=1)
 
 
 @frx.jit
