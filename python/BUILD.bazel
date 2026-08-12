@@ -101,6 +101,18 @@ py_test(
     ],
 )
 
+# Pure-host wire tests (no golden) for the proof-bundle serializer: parse is
+# serialize's exact inverse, plus hand-laid header/framing bytes. The format
+# itself is pinned against the fork by the full-prove bundle gate.
+py_test(
+    name = "proof_io_test",
+    size = "small",
+    srcs = ["flock_zorch/testing/proof_io_test.py"],
+    deps = [
+        ":flock_zorch",
+    ],
+)
+
 # Pure-host unit test (no golden) for `merkle.paths_to_multi_proof`: it is
 # proof-format encoding, not field math, so it needs no GPU and no golden.
 py_test(
