@@ -40,6 +40,8 @@ artifacts of its sequential emission and fall out of the same offsets.
 
 from __future__ import annotations
 
+import functools
+
 import frx
 import frx.numpy as fnp
 import numpy as np
@@ -202,6 +204,41 @@ def witness_blake3(cv, m, counter, block_len, flags):
     a = _emit(head + ag + tail + pad, n)
     b = _emit(ones(head) + bg + ones(tail) + pad, n)
     return z, a, b
+
+
+_SPLITMIX_GOLDEN = 0x9E37_79B9_7F4A_7C15
+
+
+@functools.partial(frx.jit, static_argnums=(1,))
+def blocks_from_seed(seed, log2_size: int):
+    """The flock-challenge benchmark's `generate_compressions`, on device.
+
+    seed: uint64 scalar -> (cv, m, counter, block_len, flags) for 2^log2_size
+    compressions, bit-identical to `flock_benchmark_common`'s host generator
+    (splitmix64, 25 u32 draws per compression: 8 cv + 16 message + 1 counter;
+    block_len/flags fixed at 64/11). splitmix's state advances by a constant
+    per draw, so draw j is `mix(s0 + (j+1)*GOLDEN)` — no sequential state,
+    every draw independent. With this, only the 8-byte seed crosses the host
+    boundary: blocks, witness, and prove are all device-resident.
+
+    `log2_size` is static (the arange shape depends on it); the seed is
+    traced, so per-trial seeds reuse the compiled program.
+    """
+    n = 1 << log2_size
+    golden = fnp.uint64(_SPLITMIX_GOLDEN)
+    # u64::from(log2_size).rotate_left(29) — log2_size < 2^35, so no wrap.
+    s0 = fnp.asarray(seed, dtype=fnp.uint64) ^ fnp.uint64(log2_size << 29)
+    j = fnp.arange(1, n * 25 + 1, dtype=fnp.uint64)
+    z = s0 + j * golden
+    z = (z ^ (z >> fnp.uint64(30))) * fnp.uint64(0xBF58_476D_1CE4_E5B9)
+    z = (z ^ (z >> fnp.uint64(27))) * fnp.uint64(0x94D0_49BB_1331_11EB)
+    draws = (z ^ (z >> fnp.uint64(31))).astype(fnp.uint32).reshape(n, 25)
+    cv = draws[:, 0:8]
+    m = draws[:, 8:24]
+    counter = draws[:, 24].astype(fnp.uint64)
+    block_len = fnp.full((n,), 64, dtype=fnp.uint32)
+    flags = fnp.full((n,), 11, dtype=fnp.uint32)
+    return cv, m, counter, block_len, flags
 
 
 def extract_inputs(z_lanes):

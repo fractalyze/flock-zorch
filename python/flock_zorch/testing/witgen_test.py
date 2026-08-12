@@ -22,6 +22,10 @@ Independent checks, so a layout slip and a math slip cannot mask each other:
    implementation this module shares no round/emission code with: the
    out_lo/out_hi regions of `z` must equal its 16 output words (words 0..8
    are `state ^ state>>8`, words 8..16 are `state[8..] ^ cv`).
+6. `blocks_from_seed` must match a scalar splitmix64 transcription of the
+   challenge harness's `generate_compressions` (sequential state, 25 draws
+   per compression) — the device version replaces the running state with a
+   closed form, and this pins the two equal.
 
 Inputs are random u32s — block_len and flags included, so the flags high bit
 (the streaming writer's pending-bit path in the Rust source) is exercised.
@@ -172,6 +176,29 @@ class WitgenTest(absltest.TestCase):
         ).reshape(1, witgen.STRIPE_BYTES_PER_GROUP)
         got = np.asarray(witgen.lincheck_stripe(self.z))
         np.testing.assert_array_equal(got, want)
+
+    def test_blocks_from_seed_matches_splitmix_reference(self):
+        log2, seed = 8, 0xDEAD_BEEF_1234_5678
+        mask = (1 << 64) - 1
+        s = seed ^ ((log2 << 29) & mask)
+        draws = []
+        for _ in range((1 << log2) * 25):
+            s = (s + 0x9E37_79B9_7F4A_7C15) & mask
+            z = s
+            z = ((z ^ (z >> 30)) * 0xBF58_476D_1CE4_E5B9) & mask
+            z = ((z ^ (z >> 27)) * 0x94D0_49BB_1331_11EB) & mask
+            draws.append((z ^ (z >> 31)) & 0xFFFF_FFFF)
+        want = np.array(draws, np.uint32).reshape(-1, 25)
+        cv, m, counter, block_len, flags = witgen.blocks_from_seed(
+            np.uint64(seed), log2
+        )
+        np.testing.assert_array_equal(np.asarray(cv), want[:, 0:8])
+        np.testing.assert_array_equal(np.asarray(m), want[:, 8:24])
+        np.testing.assert_array_equal(
+            np.asarray(counter), want[:, 24].astype(np.uint64)
+        )
+        np.testing.assert_array_equal(np.asarray(block_len), np.full(1 << log2, 64))
+        np.testing.assert_array_equal(np.asarray(flags), np.full(1 << log2, 11))
 
     def test_out_regions_match_hash_frx_compress(self):
         cv, m, counter, block_len, flags = self.inputs
