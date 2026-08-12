@@ -93,7 +93,28 @@ The benchmark itself — how to run it and what it has published — is in
   the m32 ranking two size steps early — the absolute share never did.
 - **A phase is not a target.** `zerocheck` bundles the round-1 URM extend and the
   multilinear ladder, whose relative sizes invert with `m`. Split to the prover
-  round before scoping work off a phase number.
+  round before scoping work off a phase number. The inversion is not subtle: on
+  Metal the URM extend read 83% of `zerocheck` at m22 and 22% at m28, with the
+  ladder going the other way, so a target picked off the m22 split is the wrong
+  one. Whatever splits the phase must re-run the real entry point and
+  byte-compare its output — a split that does not reproduce the wire is timing a
+  different computation, and the `sum` vs phase-wall gap only catches unbilled
+  glue, not a divergent one.
+- **A branch inside a `@jit` is decided at trace time, so a monkeypatch A/B
+  measures one arm twice.** Swapping something the traced function reads —
+  `frx.default_backend()`, a feature flag, anything behind an `if` — and timing
+  again is a cache hit on the first arm's graph unless `frx.clear_caches()` runs
+  between arms. The failure is silent and *reassuring*: it reports exactly 1.0×
+  with byte-identical results, which reads as "this branch costs nothing". Treat
+  a perfect 1.00× tie between two supposedly different implementations as
+  evidence you measured one of them. With the clear added, the same experiment
+  said the other branch does not even lower on that platform. (Same shape as the
+  `xla_gpu_cuda_data_dir` cache-key trap above, one level up.)
+- **Do not calibrate a per-op cost from a kernel containing one of that op.** On
+  Metal the first GF(2^128) multiply in a kernel cost ~2 ns/element while each
+  additional one cost ~11.65, with emitted op counts perfectly linear in between
+  and the unroll factor ruled out. Any budget built on the single-op number is
+  off by 6×. Take the slope across k ops per element, and read the marginal.
 - **Latency vs arithmetic: busy from nsys, wall from a clean run.** nsys inflates
   *host* dispatch ~2×, so inter-kernel gaps on its timeline are contaminated;
   on-device kernel durations are not. Pass `--cuda-graph-trace=node` or
