@@ -27,10 +27,15 @@ discarded mod-2^32 carry-out and gets no slot. A lin-id row pins a wire `v`
 via `z = a = v`, `b = 0xFFFF_FFFF`. Only `b_new`/`d_new` need lin rows:
 `a_2`/`c_2` are already pinned as ADD-row sums.
 
-This module assembles the streams in logical bit order and packs at the end;
-the streaming-writer word tricks in the Rust source (the shift-by-one from
-the constant wire, the flags>>31 pending bit) are artifacts of its packed
-emission and produce the same bytes.
+Emission assembles each of the 256 output words directly from the u32 field
+values: every field's bit offset is a compile-time constant, so a field
+lands in one word (or straddles two) with static shifts, and all-constant
+regions (the b-stream's lin masks, the constant wire, the padding) fold
+into one host-side K-bit literal per stream. Nothing per-bit is ever
+materialized, which is what lets a 2^18 batch emit at output size instead
+of 8x it. The streaming-writer word tricks in the Rust source (the
+shift-by-one from the constant wire, the flags>>31 pending bit) are
+artifacts of its sequential emission and fall out of the same offsets.
 """
 
 from __future__ import annotations
@@ -90,17 +95,45 @@ def _add_row(x, y):
     return s, left, right, left & right
 
 
-def _bits(v, n: int):
-    """uint32 [N] -> uint8 [N, n], LSB-first low n bits."""
-    shifts = fnp.arange(n, dtype=fnp.uint32)
-    return ((v[:, None] >> shifts) & fnp.uint32(1)).astype(fnp.uint8)
+_M64 = (1 << 64) - 1
 
 
-def _pack(bits):
-    """uint8 [N, K] -> uint64 [N, K/64], LSB-first within each word."""
-    n = bits.shape[0]
-    w = bits.reshape(n, WORDS_PER_BLOCK, 64).astype(fnp.uint64)
-    return (w << fnp.arange(64, dtype=fnp.uint64)).sum(axis=-1, dtype=fnp.uint64)
+def _emit(fields, n: int):
+    """Assemble one packed stream: [(value, width)] in bit order -> u64 [N, 256].
+
+    `value` is a uint32 [N] array (pre-masked to `width` bits, as the row
+    builders guarantee) or a Python int constant of any width. Array fields
+    contribute to one output word, or two when they straddle a boundary,
+    with shifts fixed at trace time; int fields accumulate into a single
+    K-bit literal that seeds the constant words.
+    """
+    const_acc = 0
+    contrib: list[list[tuple]] = [[] for _ in range(WORDS_PER_BLOCK)]
+    pos = 0
+    for value, width in fields:
+        if isinstance(value, int):
+            const_acc |= (value & ((1 << width) - 1)) << pos
+        else:
+            w, s = divmod(pos, 64)
+            contrib[w].append((value, s, False))
+            if s + width > 64:
+                contrib[w + 1].append((value, 64 - s, True))
+        pos += width
+    assert pos == K, pos
+
+    cols = []
+    for w in range(WORDS_PER_BLOCK):
+        cw = (const_acc >> (64 * w)) & _M64
+        acc = None
+        for value, shift, is_high in contrib[w]:
+            v = value.astype(fnp.uint64)
+            v = (v >> fnp.uint64(shift)) if is_high else (v << fnp.uint64(shift))
+            acc = v if acc is None else acc | v
+        if acc is None:
+            cols.append(fnp.full((n,), cw, dtype=fnp.uint64))
+        else:
+            cols.append(acc | fnp.uint64(cw) if cw else acc)
+    return fnp.stack(cols, axis=1)
 
 
 @frx.jit
@@ -118,9 +151,10 @@ def witness_blake3(cv, m, counter, block_len, flags):
     state += [fnp.full((n,), c, dtype=fnp.uint32) for c in _IV]
     state += [t_lo, t_hi, block_len, flags]
 
-    # Per-G row values in emission order; (value, nbits) per field.
+    # Per-G row values in emission order; (value, nbits) per field. The
+    # b-stream's lin rows are int constants, so they fold into _emit's
+    # K-bit literal instead of costing device work.
     zg, ag, bg = [], [], []
-    ones32 = fnp.full((n,), 0xFFFF_FFFF, dtype=fnp.uint32)
     for r in range(N_ROUNDS):
         sched = _SCHEDULE[r]
         for g in range(8):
@@ -145,44 +179,24 @@ def witness_blake3(cv, m, counter, block_len, flags):
             bg += [(r0, 31), (r1, 31), (r2, 31), (r3, 31), (r4, 31), (r5, 31)]
             zg += [(b_new, 32), (d2, 32)]
             ag += [(b_new, 32), (d2, 32)]
-            bg += [(ones32, 32), (ones32, 32)]
+            bg += [(0xFFFF_FFFF, 32), (0xFFFF_FFFF, 32)]
 
             state[la], state[lb], state[lc], state[ld] = a2, b_new, c2, d2
 
     out_lo = [state[w] ^ state[w + 8] for w in range(8)]
     out_hi = [state[w + 8] ^ cv[:, w] for w in range(8)]
 
-    def word_bits(vals):
-        return fnp.concatenate([_bits(v, 32) for v in vals], axis=1)
+    # z and a share every non-G field; b is all-ones through bit 1153 (its
+    # prefix lin rows) and over out_hi, zero over the padding.
+    head = [(cv[:, i], 32) for i in range(8)]
+    head += [(v, 32) for v in out_lo]
+    head += [(1, 1)]
+    head += [(m[:, i], 32) for i in range(16)]
+    head += [(t_lo, 32), (t_hi, 32), (block_len, 32), (flags, 32)]
+    tail = [(v, 32) for v in out_hi]
+    pad = [(0, PAD_BITS)]
 
-    one = fnp.ones((n, 1), dtype=fnp.uint8)
-    pad = fnp.zeros((n, PAD_BITS), dtype=fnp.uint8)
-    prefix_vals = [cv[:, i] for i in range(8)]
-    prefix_vals += out_lo
-    m_vals = [m[:, i] for i in range(16)]
-    tail_vals = [t_lo, t_hi, block_len, flags]
-
-    def assemble(g_fields, prefix_bit, g_ones_prefix):
-        # z and a share every non-G field; b is all-ones through bit 1153 and
-        # over out_hi (its lin rows), zero over the padding.
-        if g_ones_prefix:
-            head = fnp.ones((n, 1153), dtype=fnp.uint8)
-            outh = fnp.ones((n, 256), dtype=fnp.uint8)
-        else:
-            head = fnp.concatenate(
-                [
-                    word_bits(prefix_vals),
-                    prefix_bit,
-                    word_bits(m_vals),
-                    word_bits(tail_vals),
-                ],
-                axis=1,
-            )
-            outh = word_bits(out_hi)
-        gbits = fnp.concatenate([_bits(v, nb) for v, nb in g_fields], axis=1)
-        return _pack(fnp.concatenate([head, gbits, outh, pad], axis=1))
-
-    z = assemble(zg, one, False)
-    a = assemble(ag, one, False)
-    b = assemble(bg, one, True)
+    z = _emit(head + zg + tail + pad, n)
+    a = _emit(head + ag + tail + pad, n)
+    b = _emit([((1 << 1153) - 1, 1153)] + bg + [((1 << 256) - 1, 256)] + pad, n)
     return z, a, b
