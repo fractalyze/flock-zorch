@@ -241,8 +241,8 @@ def test_round_trip_ghash():
             dtype=fnp.binary_field_ghash,
         )
 
-    prover = LigeritoProver(make_code, merkle.GHASH_TREE, config, chor)
-    verifier = LigeritoVerifier(make_code, merkle.GHASH_TREE, config, chor)
+    prover = LigeritoProver(make_code, merkle.GHASH_SHA256_TREE, config, chor)
+    verifier = LigeritoVerifier(make_code, merkle.GHASH_SHA256_TREE, config, chor)
 
     f = rand_ghash(np.random.default_rng(7), 1 << config.num_vars)
     z = rand_ghash(np.random.default_rng(11), config.num_vars)

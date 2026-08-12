@@ -35,7 +35,7 @@ from absl.testing import absltest
 from flock_zorch.ghash import _lanes_to_ghash
 from flock_zorch.hash.merkle import (
     GHASH_BLAKE3_TREE,
-    GHASH_TREE,
+    GHASH_SHA256_TREE,
     _blake3_leaf_digest,
     _blake3_parent_digest,
     _digest,
@@ -137,7 +137,7 @@ class Sha256MerkleControlTest(absltest.TestCase):
     def test_tree_roots_match_the_fork(self):
         for key, leaves, width in (("root8x48", 8, 48), ("root4x1024", 4, 1024)):
             matrix = _ghash_matrix(_pattern(leaves * width), leaves)
-            root, _ = GHASH_TREE.commit(matrix)
+            root, _ = GHASH_SHA256_TREE.commit(matrix)
             self.assertEqual(_hex(root), _FIX_SHA256[key], key)
 
 

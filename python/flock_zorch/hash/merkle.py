@@ -138,7 +138,7 @@ class _Sha256MerkleTree(MerkleTree):
         return _digest(groups.reshape(groups.shape[0], 64), 64)
 
 
-GHASH_TREE = _Sha256MerkleTree(_GhashSha256LeafHasher(), _Sha256Compressor())
+GHASH_SHA256_TREE = _Sha256MerkleTree(_GhashSha256LeafHasher(), _Sha256Compressor())
 
 
 # --- BLAKE3 arm (the flock-challenge fork's `merkle_hash = Blake3`) ----------
