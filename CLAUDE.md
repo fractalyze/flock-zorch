@@ -53,6 +53,20 @@ The rules every change must respect:
   | grep '<phrase from the fix>'` — and pair it with a control phrase that
   predates the fix, so an empty result means "absent" and not "grep is wrong".
   Skipping this reads a still-broken wheel as the fix having failed.
+  The Metal plugin has no published wheel at all — the lockstep set is
+  `frx/frxlib/frx-cuda12-*` — so `frx_plugins/xla_metal/*.dylib` is
+  structurally selfbuilt, and rebuilding it without the same
+  `--override_repository=` flags silently drops whatever unlanded fix it
+  carried. A regression whose size matches a known lever's is that, not your
+  change.
+- **A `fused_region` decomposition is a fallback, not the code that runs.**
+  `ZorchFusedRegionRewriter` routes the composite to its kCustom emitter on
+  **Metal as well as CUDA** (`MetalCompiler : GpuCompiler` does not override the
+  pipeline), so optimizing the Python body — `_urm._round1_partial_decomp` and
+  friends — moves nothing on device. Before profiling a fused region, confirm
+  what it lowered to: `frx.jit(fn).lower(...).compile().as_text()` gives the
+  optimized HLO (`XLA_FLAGS` dumps only the input module at PJRT level), and the
+  fix then belongs in `xla/backends/gpu/codegen/emitters/`.
 
 ## Porting a witness layout from flock
 
