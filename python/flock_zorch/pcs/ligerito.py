@@ -430,18 +430,22 @@ def _flock_proof_dict(
     }
 
 
-def _flock_ligerito_prover(cfg: dict, log_n: int):
+def _flock_ligerito_prover(cfg: dict, log_n: int, tree=None):
     """`(LigeritoProver, config, choreography)` for a `2^log_n` witness. Rebuilt
     at both commit and open — the prover is stateless (config + code/tree
     factories), deterministic from `cfg`, so the commit and open sites derive the
     same one without threading it (cf. sp1-zorch rebuilding its RS code per
-    call)."""
+    call). `tree` selects the Merkle arm (the benchmark profile commits with
+    BLAKE3); None is flock's SHA-256 default."""
     config, chor = flock_ligerito_config(cfg, log_n)
-    prover = LigeritoProver(_make_ghash_code, merkle.GHASH_SHA256_TREE, config, chor)
+    tree = merkle.GHASH_SHA256_TREE if tree is None else tree
+    prover = LigeritoProver(_make_ghash_code, tree, config, chor)
     return prover, config, chor
 
 
-def commit_flock_ligerito(cfg: dict, z_packed) -> tuple[Array, LigeritoProverData]:
+def commit_flock_ligerito(
+    cfg: dict, z_packed, tree=None
+) -> tuple[Array, LigeritoProverData]:
     """L0 commit for the flock ligerito open. Committing through zorch's own
     `LigeritoProver.commit` (rather than flock's `pcs_commit.commit`) yields the
     `LigeritoProverData` the open consumes directly — the commit→open prover-data
@@ -451,7 +455,7 @@ def commit_flock_ligerito(cfg: dict, z_packed) -> tuple[Array, LigeritoProverDat
     monomial-commit correspondence."""
     z = z_packed.reshape(-1, 2)
     log_n = z.shape[0].bit_length() - 1
-    prover, _config, _chor = _flock_ligerito_prover(cfg, log_n)
+    prover, _config, _chor = _flock_ligerito_prover(cfg, log_n, tree)
     root, pdata = prover.commit([_bitrev(ghash.to_ghash(z))])
     return root, pdata
 
@@ -471,16 +475,17 @@ def _open_jitted(prover, pdata, b, value, transcript):
     return prover.open_with_basis(pdata, _bitrev(b), value, transcript)
 
 
-def verify_flock_ligerito(cfg: dict, root, b_combined, target, proof, ch) -> Array:
+def verify_flock_ligerito(
+    cfg: dict, root, b_combined, target, proof, ch, tree=None
+) -> Array:
     """Verifier dual of `prove_flock_ligerito`: zorch's `LigeritoVerifier` over the
     same flock config/transcript seam. `proof` is the zorch `LigeritoProof` object
     (from `prove_flock_ligerito(..., return_proof=True)`), not the wire dict.
     Returns the scalar `ok`; threads `ch`."""
     log_n = b_combined.shape[0].bit_length() - 1
     config, chor = flock_ligerito_config(cfg, log_n)
-    verifier = LigeritoVerifier(
-        _make_ghash_code, merkle.GHASH_SHA256_TREE, config, chor
-    )
+    tree = merkle.GHASH_SHA256_TREE if tree is None else tree
+    verifier = LigeritoVerifier(_make_ghash_code, tree, config, chor)
     ok, t = verifier.verify_with_basis(
         root, _bitrev(b_combined), target, proof, FlockTranscript(ch._t)
     )
@@ -495,6 +500,7 @@ def prove_flock_ligerito(
     target,
     ch,
     return_proof: bool = False,
+    tree=None,
 ):
     """Drive `zorch.pcs.ligerito` over flock's shared challenger and assemble a
     flock `LigeritoProof` dict — byte-identical to the retired in-tree
@@ -507,7 +513,7 @@ def prove_flock_ligerito(
     open continues the transcript the commit / zerocheck / lincheck phases
     built."""
     log_n = pdata.f.shape[0].bit_length() - 1
-    prover, config, chor = _flock_ligerito_prover(cfg, log_n)
+    prover, config, chor = _flock_ligerito_prover(cfg, log_n, tree)
 
     proof, t_open = _open_jitted(
         prover, pdata, b_combined, target, FlockTranscript(ch._t)
