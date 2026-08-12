@@ -6,7 +6,7 @@ flock side of both seams so the code-generic driver produces flock's byte wire:
 
 - `FlockTranscript`: zorch's functional `Transcript` protocol over the device
   SHA-256 substrate (`Sha256FieldTranscript`, the same one
-  `challenger.Challenger` wraps). Framing is flock's: an F128 observe is a
+  `sha256_challenger.Sha256Challenger` wraps). Framing is flock's: an F128 observe is a
   scalar-framed `observe_scalar` per element, a root a raw `observe_bytes`,
   one challenge a scalar squeeze and an n-vector a slice squeeze.
 - `FlockChoreography`: flock `pcs::ligerito`'s FS shape — the

@@ -64,8 +64,8 @@ frx.config.update("jax_enable_x64", True)
 import frx.numpy as fnp  # noqa: E402
 
 from flock_zorch import lincheck, prover, witgen, zerocheck  # noqa: E402
-from flock_zorch.challenger import Challenger  # noqa: E402
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
+from flock_zorch.sha256_challenger import Sha256Challenger  # noqa: E402
 from flock_zorch.testing._golden import unpack_bits  # noqa: E402
 from flock_zorch.testing._util import await_all, best, best_of  # noqa: E402
 from flock_zorch.types import ProveFastResult  # noqa: E402
@@ -301,7 +301,7 @@ def make_prove(circ: Circuit, g, unpacked: bool, seed: int | None = None):
 
         def _commit():
             root, pdata = zorch_ligerito.commit_flock_ligerito(cfg, wit_z)
-            ch = Challenger(circ.domain)
+            ch = Sha256Challenger(circ.domain)
             prover.bind_statement(ch, stmt, root)
             return pdata, ch
 

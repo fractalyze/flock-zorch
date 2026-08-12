@@ -67,6 +67,7 @@ verifier = [
 # yields nothing for them.
 ghash = ["python/flock_zorch/ghash.py"]
 prover = ["python/flock_zorch/prover.py"]
-challenger = ["python/flock_zorch/challenger.py"]
+sha256_challenger = ["python/flock_zorch/sha256_challenger.py"]
+blake3_challenger = ["python/flock_zorch/blake3_challenger.py"]
 fs = ["python/flock_zorch/fs.py"]
 release = ["python/flock_zorch/__init__.py"]

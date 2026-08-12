@@ -25,10 +25,10 @@ frx.config.update("jax_enable_x64", True)
 import frx.numpy as fnp  # noqa: E402
 
 from flock_zorch import ghash, lincheck, prover, zerocheck  # noqa: E402
-from flock_zorch.challenger import Challenger  # noqa: E402
 from flock_zorch.lincheck import chain  # noqa: E402
 from flock_zorch.lincheck.keccak import KeccakLincheckCircuit  # noqa: E402
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
+from flock_zorch.sha256_challenger import Sha256Challenger  # noqa: E402
 from flock_zorch.testing._golden import (  # noqa: E402
     ligerito_proof_results,
     open_golden,
@@ -91,7 +91,7 @@ def run():
     root, pdata = zorch_ligerito.commit_flock_ligerito(cfg, g["z"])
     results.append(("commit root", np.array_equal(root, g["root"])))
 
-    ch = Challenger(b"flock-keccak-chain-v0")
+    ch = Sha256Challenger(b"flock-keccak-chain-v0")
     prover.bind_statement(ch, g["stmt"], root)
     a_bits, b_bits, c_bits = (
         unpack_bits(g["a"], m),

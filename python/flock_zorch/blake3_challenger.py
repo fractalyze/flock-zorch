@@ -120,7 +120,7 @@ class Blake3ByteTranscript(ByteHashTranscript):
 class Blake3Challenger:
     """Mutable wrapper over the functional BLAKE3 byte transcript, mirroring
     flock-core's `&mut self` `FsChallenger::with_hash(domain, Blake3)` — the
-    same API surface `challenger.Challenger` gives the SHA-256 transcript.
+    same API surface `sha256_challenger.Sha256Challenger` gives the SHA-256 transcript.
 
     Observes and samples carry `binary_field_ghash` elements (host numpy — the
     transcript is a host object); a scalar draw and a slice draw frame

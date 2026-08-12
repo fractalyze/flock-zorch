@@ -18,10 +18,14 @@ from frx import Array
 from zorch.stage import ProveResult, ProverStage, TrivialClaim
 
 from flock_zorch import ghash
-from flock_zorch.challenger import Challenger  # noqa: F401  (re-exported for callers)
+
+# noqa: F401  (re-exported for callers)
 from flock_zorch.lincheck.prover import LincheckProver
 from flock_zorch.pcs import ligerito as zorch_ligerito
 from flock_zorch.pcs import ring_switch
+from flock_zorch.sha256_challenger import (
+    Sha256Challenger,
+)
 from flock_zorch.sumcheck import build_eq
 from flock_zorch.types import (
     BatchOpeningClaim,
@@ -225,5 +229,5 @@ def prove_fast(
     return prover.prove(
         R1csClaim(statement_digest=statement_digest),
         R1csWitness(z_packed=z_packed, z_lincheck=z_lincheck, a0=a0, b0=b0),
-        Challenger(domain),
+        Sha256Challenger(domain),
     ).reduction_proof

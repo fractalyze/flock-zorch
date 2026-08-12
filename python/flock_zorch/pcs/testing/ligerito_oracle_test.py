@@ -23,8 +23,8 @@ import frx
 frx.config.update("jax_enable_x64", True)
 
 from flock_zorch import ghash  # noqa: E402
-from flock_zorch.challenger import Challenger  # noqa: E402
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
+from flock_zorch.sha256_challenger import Sha256Challenger  # noqa: E402
 from flock_zorch.testing._golden import (  # noqa: E402
     ligerito_proof_results,
     open_golden,
@@ -65,7 +65,7 @@ def run():
     results = []
 
     # The flock-zorch prove path → byte-gate every LigeritoProof field.
-    ch = Challenger(b"flock-ligerito-test")
+    ch = Sha256Challenger(b"flock-ligerito-test")
     _root, pdata = zorch_ligerito.commit_flock_ligerito(cfg, g["f"])
     p = zorch_ligerito.prove_flock_ligerito(
         cfg, pdata, ghash.to_ghash(g["b"]), ghash.to_ghash(g["target"]), ch

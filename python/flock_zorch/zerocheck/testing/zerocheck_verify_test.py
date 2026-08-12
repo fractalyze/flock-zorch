@@ -16,7 +16,7 @@ frx.config.update("jax_enable_x64", True)
 from absl.testing import absltest, parameterized  # noqa: E402
 
 from flock_zorch import ghash, zerocheck  # noqa: E402
-from flock_zorch.challenger import Challenger  # noqa: E402
+from flock_zorch.sha256_challenger import Sha256Challenger  # noqa: E402
 from flock_zorch.zerocheck import verifier  # noqa: E402
 
 DOMAIN = b"flock-zc-verify-test"
@@ -50,7 +50,7 @@ class ZerocheckVerifyTest(parameterized.TestCase):
     @parameterized.parameters(13, 14, 16)
     def test_accept_and_claim_reconstruction(self, m: int):
         proof, want_claim = _proof(m)
-        claim, _, ok = verifier.verify(m, proof, Challenger(DOMAIN))
+        claim, _, ok = verifier.verify(m, proof, Sha256Challenger(DOMAIN))
         self.assertTrue(bool(ok))
         # Both roles state the same claim: the verifier re-derives from the wire
         # proof what the prover produced alongside it.
@@ -73,7 +73,7 @@ class ZerocheckVerifyTest(parameterized.TestCase):
         lanes[0] ^= np.uint64(1)
         bad_a = ghash.to_ghash(frx.numpy.asarray(lanes))
         _, _, ok_bad = verifier.verify(
-            m, dataclasses.replace(proof, final_a_eval=bad_a), Challenger(DOMAIN)
+            m, dataclasses.replace(proof, final_a_eval=bad_a), Sha256Challenger(DOMAIN)
         )
         self.assertFalse(bool(ok_bad))
 

@@ -34,13 +34,13 @@ def _initial_transcript(domain: bytes):
 
     Constructing the SHA-256 field transcript absorbs the same domain through
     several eager device primitives.  Array values are immutable and every
-    ``Challenger`` replaces (rather than mutates) ``_t`` as it advances, so the
+    ``Sha256Challenger`` replaces (rather than mutates) ``_t`` as it advances, so the
     seeded state is safe to share between proofs.
     """
     return Sha256FieldTranscript.new(domain, fnp.binary_field_ghash)
 
 
-class Challenger:
+class Sha256Challenger:
     """Mutable wrapper over the functional device transcript, mirroring flock's
     `&mut self` `FsChallenger` API. Observes and samples carry native
     `binary_field_ghash` elements; host-int consumers convert at their own edge."""
@@ -101,22 +101,26 @@ class Challenger:
     def has_dedicated_fusion(self) -> bool:
         return self._t.has_dedicated_fusion
 
-    def observe(self, values) -> "Challenger":
+    def observe(self, values) -> "Sha256Challenger":
         self._t = self._t.observe(values)
         return self
 
-    def sample(self, n: int = 1) -> tuple["Challenger", object]:
+    def sample(self, n: int = 1) -> tuple["Sha256Challenger", object]:
         self._t, out = self._t.sample(n)
         return self, out
 
-    def observe_and_sample(self, values, n: int = 1) -> tuple["Challenger", object]:
+    def observe_and_sample(
+        self, values, n: int = 1
+    ) -> tuple["Sha256Challenger", object]:
         self._t, out = self._t.observe_and_sample(values, n)
         return self, out
 
-    def grind(self, pow_bits: int) -> tuple["Challenger", object]:
+    def grind(self, pow_bits: int) -> tuple["Sha256Challenger", object]:
         self._t, witness = self._t.grind(pow_bits)
         return self, witness
 
-    def check_witness(self, witness, *, pow_bits: int) -> tuple["Challenger", object]:
+    def check_witness(
+        self, witness, *, pow_bits: int
+    ) -> tuple["Sha256Challenger", object]:
         self._t, ok = self._t.check_witness(witness, pow_bits=pow_bits)
         return self, ok

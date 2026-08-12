@@ -5,7 +5,7 @@ serializable proof — authored as a host round loop, byte-identical to flock-co
 Proves `a(y)·b(y) ⊕ c(y) = 0 ∀ y ∈ {0,1}^m`. Structure: one univariate-skip
 round-1 (URM, `_urm.round1_rows`) over K_SKIP=6 skip variables, then a multilinear
 sumcheck over the remaining `m − K_SKIP` variables (the iter-10 `sumcheck`
-primitives). Fiat-Shamir is the host SHA-256 `Challenger`; the bulk field arith
+primitives). Fiat-Shamir is the host SHA-256 `Sha256Challenger`; the bulk field arith
 (`round_pair_eq`, the multilinear fold) runs on the native
 `binary_field_ghash` multiply (→ clmad on GPU).
 
@@ -29,8 +29,8 @@ from zorch.stage import ProveResult, ProverStage
 from zorch.sumcheck.domain import fold
 
 from flock_zorch import ghash, sumcheck
-from flock_zorch.challenger import Challenger
 from flock_zorch.ghash import _ghash_to_lanes, _lanes_to_ghash
+from flock_zorch.sha256_challenger import Sha256Challenger
 from flock_zorch.types import R1csClaim, R1csWitness, ZerocheckClaim, ZerocheckProof
 from flock_zorch.zerocheck import _urm
 from flock_zorch.zerocheck._fold import (
@@ -401,15 +401,15 @@ def prove_packed(
     c_bits,
     m: int,
     domain: bytes | None = None,
-    ch: Challenger | None = None,
+    ch: Sha256Challenger | None = None,
 ) -> tuple[ZerocheckProof, ZerocheckClaim]:
     """Returns the wire `ZerocheckProof` and the `ZerocheckClaim` it discharges
     into — the evaluation point and the â/b̂/ĉ evals bound at it.
 
     A `zerocheck_steps` sequence (URM → multilinear) threading one
-    `Challenger`; pass a shared `ch` (the e2e challenger carrying commit/bind state)
-    to thread Fiat-Shamir through the fused prover, else a fresh Challenger(domain)
-    is made.
+    `Sha256Challenger`; pass a shared `ch` (the e2e challenger carrying
+    commit/bind state) to thread Fiat-Shamir through the fused prover, else a
+    fresh Sha256Challenger(domain) is made.
 
     Passing the SAME array object as `a_bits` and `b_bits` (the identity R1CS
     instance a = b = c = ẑ — ZerocheckProver's call) routes the multilinear
@@ -419,8 +419,8 @@ def prove_packed(
     k_skip = K_SKIP
     assert m >= k_skip + N_INNER, f"m must be >= {k_skip + N_INNER}"
     if ch is None:
-        assert domain is not None, "pass either a domain or a Challenger"
-        ch = Challenger(domain)
+        assert domain is not None, "pass either a domain or a Sha256Challenger"
+        ch = Sha256Challenger(domain)
     r_skip, r_outer = sample_challenge_coords(ch, m, k_skip)
     # r = r_skip ++ small ++ medium ++ r_outer, assembled on the dtype.
     r = fnp.concatenate([r_skip, _SMALL_G, _MEDIUM_G, r_outer])

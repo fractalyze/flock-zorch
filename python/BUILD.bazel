@@ -64,8 +64,9 @@ py_test(
     ],
 )
 
-# No golden: FlockTranscript/FlockChoreography framing lockstep vs the Challenger
-# surface + a zorch-driver Ligerito round trip over the GHASH code, all-CPU.
+# No golden: FlockTranscript/FlockChoreography framing lockstep vs the
+# Sha256Challenger surface + a zorch-driver Ligerito round trip over the GHASH
+# code, all-CPU.
 py_test(
     name = "zorch_ligerito_fs_test",
     size = "medium",
