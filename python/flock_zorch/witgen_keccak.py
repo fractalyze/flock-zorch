@@ -208,19 +208,18 @@ def _witness(state0, spec: Spec):
         s = (bs ^ t).reshape(rows, N_LANES) ^ _RC_LANES[r]
 
     zeros = lambda k: fnp.zeros((n, k), dtype=fnp.uint64)  # noqa: E731
-    ones = lambda k: fnp.full((n, k), _ONES64, dtype=fnp.uint64)  # noqa: E731
-    # Row `b * n_sub + sub` of the folded batch, so a sub's blocks are a stride.
+    # Row `block * n_sub + sub` of the folded batch, so one sub is a stride.
     sub = lambda x, i: x[i :: spec.n_sub]  # noqa: E731
     tail = spec.words_per_block - spec.useful_lanes
 
-    def stream(state_of, t_rows):
-        """`state_of(sub, final)` supplies a slot's contents for this stream."""
+    def stream(slots_in, slots_out, t_rows):
+        """One packed stream: the slot pairs, the constant wire, then the t rows."""
         parts = []
         for i in range(spec.n_sub):
             parts += [
-                state_of(i, False),
+                slots_in[i],
                 zeros(SLOT_PAD_LANES),
-                state_of(i, True),
+                slots_out[i],
                 zeros(SLOT_PAD_LANES),
             ]
         parts.append(fnp.ones((n, 1), dtype=fnp.uint64))
@@ -228,11 +227,14 @@ def _witness(state0, spec: Spec):
         parts.append(zeros(tail))
         return fnp.concatenate(parts, axis=1)
 
-    value = lambda i, final: sub(s, i) if final else state0[:, i, :]  # noqa: E731
+    # z and a carry the states themselves (lin-id rows); b carries the mask.
+    state_in = [state0[:, i, :] for i in range(spec.n_sub)]
+    state_out = [sub(s, i) for i in range(spec.n_sub)]
+    masks = [fnp.full((n, N_LANES), _ONES64, dtype=fnp.uint64)] * spec.n_sub
     return (
-        stream(value, t_z),
-        stream(value, t_a),
-        stream(lambda *_: ones(N_LANES), t_b),
+        stream(state_in, state_out, t_z),
+        stream(state_in, state_out, t_a),
+        stream(masks, masks, t_b),
     )
 
 
