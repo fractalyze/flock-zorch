@@ -87,9 +87,17 @@ _MASK31 = fnp.uint32(0x7FFF_FFFF)
 # Output words per stack group in `_emit`. RTX 5090, ptxas 13.3, 2^18 blocks,
 # z stream, un-profiled p10: 256 (one group) 2.006 ms, 16 1.192, 8 0.915,
 # 4 1.036 — below 8 the chain is re-walked more often than the occupancy buys
-# back. Any positive value is correct (the final slice just runs short); only
-# the speed changes, and WORDS_PER_BLOCK restores the ungrouped program.
-_EMIT_GROUP_WORDS = 8
+# back.
+#
+# 8 is faster on GPU but is NOT usable: the CPU backend falls off a cliff
+# between 16 and 8 words per group — 16 compiles `witness_blake3` in 13.9 s,
+# the same as ungrouped, while 8 does not finish in 600 s and times the CPU
+# `witgen_test` out. The cliff is a threshold, not a slope (256/16/32 words all
+# compile in ~14 s), so re-measure the CPU compile before lowering this.
+#
+# Any positive value is correct (the final slice just runs short); only the
+# speed changes, and WORDS_PER_BLOCK restores the ungrouped program.
+_EMIT_GROUP_WORDS = 16
 
 
 def _add_row(x, y):
