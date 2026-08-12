@@ -14,8 +14,12 @@ artifacts/keccak3_ligerito_golden.bin):
   export PATH="$HOME/.local/cuda13/bin:$PATH"
   FRX_PLATFORMS=cuda,cpu PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)" <venv> \
       python/flock_zorch/testing/keccak3_ligerito_oracle_test.py
+
+`--witgen` additionally regenerates the witness on device from the golden's own
+states, which puts `flock_zorch.witgen_keccak` under the same proof-level gate.
 """
 
+import argparse
 import sys
 
 import frx
@@ -25,7 +29,13 @@ frx.config.update("jax_enable_x64", True)
 
 import frx.numpy as fnp  # noqa: E402
 
-from flock_zorch import ghash, lincheck, prover, zerocheck  # noqa: E402
+from flock_zorch import (  # noqa: E402
+    ghash,
+    lincheck,
+    prover,
+    witgen_keccak,
+    zerocheck,
+)
 from flock_zorch.lincheck.keccak3 import Keccak3LincheckCircuit  # noqa: E402
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
 from flock_zorch.sha256_challenger import Sha256Challenger  # noqa: E402
@@ -76,14 +86,48 @@ def load(golden: str = "keccak3_ligerito_golden.bin"):
     return g
 
 
-def run():
+def substitute_device_witness(g):
+    """Regenerate the witness on device from the golden's own states and swap it
+    into `g`, so the gates below exercise the witgen path.
+
+    Each sub-permutation's `state_0` comes straight out of the golden's own z
+    prefix — keccak3 writes whole lanes into aligned slots, so the three input
+    states are there verbatim and no extra fixture exists to go stale. The proof
+    gates then transitively pin `witgen_keccak` against flock: one diverging
+    witness bit flips every Fiat-Shamir draw after it.
+
+    `zlc` is left as the golden's; the keccak-family lincheck stripe has no
+    device port yet, so substituting it would gate something that does not exist.
+    """
+    spec = witgen_keccak.KECCAK3
+    zw = np.asarray(g["z"], dtype=np.uint64).reshape(-1, spec.words_per_block)
+    state0 = np.stack(
+        [
+            zw[:, spec.state0_lane(i) : spec.state0_lane(i) + witgen_keccak.N_LANES]
+            for i in range(spec.n_sub)
+        ],
+        axis=1,
+    )
+    z, a, b = (
+        np.asarray(x).reshape(-1, 2)
+        for x in witgen_keccak.witness_keccak3(frx.device_put(state0))
+    )
+    checks = [
+        (f"witgen_keccak3 {k} vs golden", np.array_equal(v, g[k]))
+        for k, v in zip("zab", (z, a, b))
+    ]
+    g["z"], g["a"], g["b"] = z, a, b
+    return checks
+
+
+def run(device_witness=False):
     g = load()
     meta = g["meta"]
     cfg = g["cfg"]
     m = meta["m"]
     k_log, k_skip = meta["k_log"], meta["k_skip"]
     ir = k_log - k_skip  # inner_rest = 17 - 6 = 11
-    results = []
+    results = substitute_device_witness(g) if device_witness else []
 
     root, pdata = zorch_ligerito.commit_flock_ligerito(cfg, g["z"])
     results.append(("commit root", np.array_equal(root, g["root"])))
@@ -146,8 +190,16 @@ def run():
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(
+        "--witgen",
+        action="store_true",
+        help="regenerate the witness on device from the golden's own states "
+        "(gates flock_zorch.witgen_keccak against flock end to end)",
+    )
+    args = ap.parse_args()
     print(f"device {frx.devices()[0]}")
-    m, results = run()
+    m, results = run(device_witness=args.witgen)
     return report(
         results,
         f"keccak3 LIGERITO full prove (R1csProofLigerito) vs flock prove_fast (m={m})",

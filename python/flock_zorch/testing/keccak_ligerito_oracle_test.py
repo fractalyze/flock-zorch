@@ -98,8 +98,10 @@ def substitute_device_witness(g):
     shape from BLAKE3's and has no device port yet, so substituting it here
     would gate something that does not exist.
     """
-    zw = np.asarray(g["z"], dtype=np.uint64).reshape(-1, witgen_keccak.WORDS_PER_BLOCK)
-    state0 = zw[:, witgen_keccak.STATE0_LANE : witgen_keccak.STATE0_LANE + 25]
+    spec = witgen_keccak.KECCAK
+    zw = np.asarray(g["z"], dtype=np.uint64).reshape(-1, spec.words_per_block)
+    lo = spec.state0_lane(0)
+    state0 = zw[:, lo : lo + witgen_keccak.N_LANES]
     z, a, b = (
         np.asarray(x).reshape(-1, 2)
         for x in witgen_keccak.witness_keccak(frx.device_put(state0))
