@@ -100,12 +100,15 @@ build:
 
 **Prerequisites** — an NVIDIA GPU (CUDA; RTX 5090 / sm_120 reference), a Rust
 toolchain (`flock-core` is edition 2024), Python 3.11. For the GPU fast path, a **CUDA 13.3
-`ptxas`** (the reference machine uses `/usr/local/cuda/bin/ptxas`): with
-`CUDA_ROOT` pointed at it the compiler emits the hardware `clmad` GF(2¹²⁸)
-multiply; without it, the software `binary_field_ghash` multiply — same output,
-just slower. `CUDA_ROOT` is what selects it, not `PATH` — see
-[`docs/measurement.md`](docs/measurement.md), which also covers why a stale
-compilation cache can hide the fix.
+`ptxas`** first on `PATH` (`/usr/local/cuda` is not necessarily one): with it
+the compiler emits the hardware `clmad` GF(2¹²⁸) multiply; without it, the
+software `binary_field_ghash` multiply — same output, just slower. `PATH` — or
+`CUDA_DIR` — is what selects it, **not `CUDA_ROOT`**, which frx overwrites at
+import. See [`docs/measurement.md`](docs/measurement.md), which also covers why
+a stale compilation cache can hide the fix. The `*_oracle_test.py` gates and
+`prove_phase_bench.py` refuse to run on a toolchain that cannot assemble
+`clmad`, so a mis-set environment fails loudly rather than as a phantom
+regression.
 
 ```bash
 git clone https://github.com/fractalyze/flock-zorch.git && cd flock-zorch
@@ -175,8 +178,8 @@ export FRX_ENABLE_X64=1                    # required by packed F128 witnesses
 unset JAX_PLATFORMS JAX_ENABLE_X64         # avoid overriding the frx settings
 export XLA_PYTHON_CLIENT_PREALLOCATE=false   # don't grab ~75% of VRAM up front
 export PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"
-export CUDA_ROOT=/usr/local/cuda            # MUST be 13.3; this is what selects clmad
-export PATH="$CUDA_ROOT/bin:$PATH"           # for your own ptxas --version checks
+CUDA13=/usr/local/cuda                       # MUST be a 13.3 toolchain
+export PATH="$CUDA13/bin:$PATH"              # PATH selects clmad — NOT CUDA_ROOT
 VENV=.venv/bin/python
 scripts/dump_goldens.sh all                  # + the real hash circuits
 $VENV python/flock_zorch/testing/e2e_ligerito_oracle_test.py    # fused prove (identity R1CS)
@@ -199,8 +202,8 @@ export FRX_PLATFORMS=cuda,cpu FRX_ENABLE_X64=1
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 unset JAX_PLATFORMS JAX_ENABLE_X64
 export PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"
-export CUDA_ROOT=/usr/local/cuda             # required for the hardware clmad path
-export PATH="$CUDA_ROOT/bin:$PATH"
+CUDA13=/usr/local/cuda                       # required for the hardware clmad path
+export PATH="$CUDA13/bin:$PATH"              # PATH selects clmad — NOT CUDA_ROOT
 CPU=$(target/release/examples/bench_sha2_ligerito_cpu 2048 | grep -oE '[0-9.]+ ms' | head -1)
 $VENV python/flock_zorch/testing/prove_phase_bench.py sha2 --cpu-ms "${CPU%% ms}"         # GPU vs CPU
 ```
@@ -264,12 +267,17 @@ Reproduce all three GPU points with the shared goldens:
 export FLOCK_ZORCH_ARTIFACTS="$PWD/artifacts"   # where dump_goldens.sh writes
 export FRX_PLATFORMS=cuda,cpu FRX_ENABLE_X64=1
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
-# CUDA_ROOT must be a 13.3 toolchain — /usr/local/cuda is not necessarily one,
-# and 12.9 silently selects the software GF(2¹²⁸) multiply (~5.5× at m28). XLA
-# uses CUDA_ROOT's ptxas, so check that one rather than whatever PATH resolves.
-export CUDA_ROOT=/usr/local/cuda PATH="$CUDA_ROOT/bin:$PATH"
-"$CUDA_ROOT/bin/ptxas" --version | grep -q 'release 13.3' ||
-  echo 'WARNING: CUDA_ROOT ptxas is not 13.3'
+# A 13.3 toolchain must come first on PATH — /usr/local/cuda is not necessarily
+# one, and 12.9 silently selects the software GF(2¹²⁸) multiply (~5.5× at m28)
+# and fails outright in nvlink on the larger opens. XLA resolves ptxas from
+# CUDA_DIR then PATH; CUDA_ROOT plays no part (frx overwrites it at import), so
+# probe the ptxas PATH actually resolves. Keep these two exports SEPARATE: in a
+# single `export A=x PATH="$A/bin:$PATH"`, $A still expands to its OLD value,
+# so the toolchain never reaches PATH.
+CUDA13=/usr/local/cuda
+export PATH="$CUDA13/bin:$PATH"
+ptxas --version | grep -q 'release 13.3' ||
+  echo 'WARNING: the ptxas on PATH is not 13.3 — the gates will refuse'
 export PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"
 VENV=.venv/bin/python
 # Needed when the host does not already provide CUDA 12 user-space libraries.

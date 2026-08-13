@@ -7,8 +7,24 @@ of them is discoverable by reading the code.
 The benchmark itself — how to run it and what it has published — is in
 [`README.md`](../README.md).
 
-- **The `ptxas` that decides `clmad` is `CUDA_ROOT`'s, not `PATH`'s — so
-  `ptxas --version` is not the check.** With a 13.3 `ptxas` the compiler emits
+- **Put ONE 13.3+ toolchain first on `PATH` and set nothing else.** `ptxas` and
+  `nvlink` are resolved from *different* places, so a half-set environment
+  mixes toolchains: `ptxas` follows `xla_gpu_cuda_data_dir` (which frx sets
+  from an exported `CUDA_ROOT`), while the linker ignores that directory and
+  takes `PATH`, then `/usr/local/cuda`. Exporting only `CUDA_ROOT` therefore
+  assembles PTX 9.3 with 13.3 and links it with 12.9 — which does not degrade
+  quietly: the m30 Ligerito gate dies in `nvlink fatal: Internal FNLZR error`,
+  a failure that reads as a byte regression in whatever merged last (this cost
+  a filed issue, fractalyze/flock-zorch#272, and a session). One toolchain on
+  `PATH` satisfies both lookups, and the `*_oracle_test.py` gates now refuse
+  the mixed state up front. Beware
+  `export CUDA_ROOT=<root> PATH="$CUDA_ROOT/bin:$PATH"` as a single statement:
+  `$CUDA_ROOT` there still expands to its OLD value, so the root never reaches
+  `PATH` — that one line is how the mixed state is usually reached.
+
+- **A 13.3 `ptxas` is what emits `clmad`, and `ptxas --version` is not
+  automatically the check** — it is only the check once the toolchain is on
+  `PATH` as above. With a 13.3 `ptxas` the compiler emits
   the hardware `clmad` GF(2¹²⁸) multiply; without it, the software
   `binary_field_ghash` multiply — same proof, no warning, and **5.5× on the
   whole prove at m28, more as `m` grows** (measured ~16× at m32). The damage is
@@ -18,11 +34,17 @@ The benchmark itself — how to run it and what it has published — is in
   Self-check by reproducing the README's published m28 baseline.
 
   frx sets XLA's `xla_gpu_cuda_data_dir` from `CUDA_ROOT` itself, and XLA
-  prefers `<that dir>/bin/ptxas` over anything on `PATH`. Three consequences,
-  each of which has burned a session:
-  - Unset, it falls back to the venv's bundled CUDA (`nvidia/cuda_nvcc`,
-    currently 12.9) — so `ptxas --version` can say 13.3 while XLA compiles 12.9.
-    `/usr/local/cuda` is not necessarily 13.3 either.
+  prefers `<that dir>/bin/ptxas` over anything on `PATH` — for **ptxas only**.
+  Four consequences, each of which has burned a session:
+  - With `CUDA_ROOT` unset, ptxas comes off `PATH`, falling back to the venv's
+    bundled CUDA (`nvidia/cuda_nvcc`, currently 12.9) when `PATH` has none — so
+    `ptxas --version` can say 13.3 while XLA compiles 12.9 if the 13.3 tree is
+    not the one `PATH` resolves. `/usr/local/cuda` is not necessarily 13.3.
+  - The linker does NOT follow `xla_gpu_cuda_data_dir`. `nvlink` comes from
+    `PATH`, then `/usr/local/cuda` — so `CUDA_ROOT` alone cannot supply it, and
+    a 13.3 `CUDA_ROOT` with a bare `PATH` links 13.3 cubins with 12.9. Measured
+    by adding *only* a 13.3 `nvlink` to `PATH` in that state: the m30 gate goes
+    from `nvlink fatal` to PASS with nothing else changed.
   - `--xla_gpu_cuda_data_dir` in `XLA_FLAGS` does **not** work: the flag parses,
     then frx overwrites the field. And `CUDA_ROOT` is read when frx is imported,
     so setting it from inside Python after `import frx` is a no-op — export it
@@ -33,9 +55,12 @@ The benchmark itself — how to run it and what it has published — is in
     before re-measuring.
 
   `TF_CPP_MIN_LOG_LEVEL=0 TF_CPP_MAX_VLOG_LEVEL=1` dumps every debug option by
-  name: grep the log for `xla_gpu_cuda_data_dir` (must be your 13.3 tree) and
-  `Targeting PTX version: 93`. Both gates read that one ptxas probe, so a 9.3
-  header proves the toolchain is wired right. `XLA_FLAGS=--xla_dump_to=<dir>`
+  name: grep the log for `Targeting PTX version: 93`, which is the direct
+  reading of what ptxas emitted. Do NOT require `xla_gpu_cuda_data_dir` to name
+  your 13.3 tree — on the recommended `PATH`-only setup it stays at its default
+  `./cuda_sdk_lib` while PTX 93 is emitted anyway. And a 9.3 header proves only
+  the *assembler*; `nvlink --version` is a separate check.
+  `XLA_FLAGS=--xla_dump_to=<dir>`
   then confirms the kernel itself contains `clmad.{lo,hi}.u64` — absent there
   means you dumped a kernel with no GHASH multiplies, not a toolchain problem.
   (A `libdevice not found` warning is separate and only fatal if a fusion needs
