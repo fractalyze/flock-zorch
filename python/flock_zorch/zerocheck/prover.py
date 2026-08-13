@@ -333,6 +333,19 @@ class _UrmRound:
         return carry, transcript, (round1_ab, round1_c)
 
 
+def equal_factors(carry) -> bool:
+    """True when both product factors are the SAME device array — the identity
+    instance a = b = ẑ, aliased by `_UrmRound`.
+
+    This is the multilinear ladder's routing test: equal factors take the
+    squared-sum path, distinct Az/Bz tracks (every hash circuit) take the
+    generic one. Anything that re-times or attributes the round must ask THIS
+    rather than re-deriving it, or it measures a ladder the prover never runs —
+    `zerocheck_split_bench --inner` did exactly that and understated the blake3
+    ladder 5.1x (9.9 ms against 51.0 ms at m=28)."""
+    return carry.b_rows is carry.a_rows
+
+
 class _MultilinearRound:
     """The multilinear sumcheck over the m − k_skip outer variables: fold the
     witness at z, then bind each remaining variable (round message + fold),
@@ -361,7 +374,7 @@ class _MultilinearRound:
         # onto the four-sum basis (sumcheck.round_pair_eq_sq_basis), which is
         # what lets _sq_pair_suffix_tables drop the tables it makes dead.
         # Byte-identical wire either way.
-        if carry.b_rows is carry.a_rows:
+        if equal_factors(carry):
             cs_sqrt = _SQRT(r_g[k_skip + 1 :])
             eq_tables = _EQ_TABLES_SQ(cs_sqrt)
             transcript._t, rounds, rhos, final_a = _mlv_sumcheck_sq(

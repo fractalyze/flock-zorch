@@ -17,7 +17,8 @@ aborts rather than warning.
 `--inner` is a different kind of number and is labelled as such: the multilinear
 round is one fused device program, so its parts are re-timed standalone on the
 same inputs. They answer "which piece is big", not "where did the round's
-milliseconds go", and they do not sum to the round.
+milliseconds go". Which steps they are depends on the ladder the circuit takes,
+so they are named by `_inner_split` rather than fixed here.
 
 Rank targets by *marginal* µs/hash across an m step, never by share at one m —
 `docs/measurement.md` is emphatic about this and the ranking inverts between
@@ -50,7 +51,7 @@ import frx.numpy as fnp  # noqa: E402
 
 from flock_zorch import zerocheck  # noqa: E402
 from flock_zorch.sumcheck.eq import _ONE_G  # noqa: E402
-from flock_zorch.testing._util import await_all, best  # noqa: E402
+from flock_zorch.testing._util import await_all, best_of  # noqa: E402
 from flock_zorch.testing.prove_phase_bench import (  # noqa: E402
     CIRCUITS,
     Circuit,
@@ -59,46 +60,62 @@ from flock_zorch.testing.prove_phase_bench import (  # noqa: E402
 from flock_zorch.types import ZerocheckProof  # noqa: E402
 from flock_zorch.zerocheck._fold import _fold_at_z, _lagrange_weights  # noqa: E402
 from flock_zorch.zerocheck.prover import (  # noqa: E402
+    _EQ_TABLES,
     _EQ_TABLES_SQ,
     _MEDIUM_G,
     _SMALL_G,
     _SQRT,
     K_SKIP,
+    _mlv_sumcheck,
     _mlv_sumcheck_sq,
     _MultilinearRound,
     _UrmRound,
     _ZerocheckCarry,
+    equal_factors,
     sample_challenge_coords,
 )
 
 SUB_STEPS = ("urm_round1", "mlv_round")
-INNER_STEPS = ("fold_at_z", "sqrt+eq_tables", "mlv_ladder")
 
 
-# `_util.best` is warmup-excluded best-of-n, which is exactly what this needs:
-# every step here is a fresh jitted program on first call and at m=28 the
-# compile dominates. Timing without the warm-up read ~2x steady state, and the
-# two m values warmed unequally, which corrupts the marginal column.
-_best = best
+def _timed(fn, runs: int):
+    """Warmup-excluded best-of-`runs` ms AND the fastest run's own value.
+
+    `_util.best_of` is warmup-excluded because every step here is a fresh
+    jitted program on first call and at m=28 the compile dominates: timing
+    without the warm-up read ~2x steady state, and the two m values warmed
+    unequally, which corrupts the marginal column.
+
+    It also already keeps (and has awaited) the fastest run's result, so a
+    caller never has to re-run a timed program just to bind its value — at
+    m=28 each such re-run is another full-size device program.
+    """
+
+    def once():
+        value = fn()
+        return value, value
+
+    return best_of(once, runs)
 
 
 def _timed_round(step, carry, ch, runs: int):
-    """Time `step` best-of-`runs`, then run it once more for real.
+    """Time `step` best-of-`runs` and carry the fastest run's own outputs.
 
     Sha256Challenger replaces `_t` rather than mutating it, so snapshotting the
     field is enough to rewind the transcript between repeats — without that,
     each repeat would advance Fiat-Shamir and the reassembled proof would not
-    match.
+    match. Every repeat therefore does identical work from identical state and
+    lands identical outputs, which is what lets the fastest run's be the ones
+    threaded onward instead of running the whole round once more for real.
     """
     saved = ch._t
 
     def once():
         ch._t = saved
-        return step(carry, ch)[0]
+        out = step(carry, ch)
+        return out[0], out
 
-    ms = _best(once, runs)
-    ch._t = saved
-    return ms, step(carry, ch)
+    return best_of(once, runs)
 
 
 def _proof_from_carry(carry) -> ZerocheckProof:
@@ -140,24 +157,50 @@ def _wire_bytes(proof: ZerocheckProof) -> bytes:
     return bytes(out)
 
 
-def _inner_split(carry, transcript, times, runs: int) -> None:
-    """Re-time the multilinear round's parts standalone. See module docstring:
-    these do not sum to `mlv_round`."""
+def _inner_split(carry, transcript, times, runs: int) -> list[str]:
+    """Re-time the multilinear round's parts standalone, on the ladder
+    `equal_factors` says the prover takes. Returns the step names it filled.
+
+    The two ladders run different programs and so have different step names;
+    asking `prover.equal_factors` rather than re-deriving the choice is what
+    keeps this from timing a program the circuit never runs (see that helper).
+
+    See module docstring: these are standalone re-timings and still answer
+    "which piece is big" rather than "where did the round's milliseconds go".
+    """
+    steps: list[str] = []
+
+    def timed(name, fn):
+        """Time `fn` under `name`, record the step, and hand back its value."""
+        times[name], value = _timed(fn, runs)
+        steps.append(name)
+        return value
+
     weights = _lagrange_weights(K_SKIP, carry.z, 0)
-    times["fold_at_z"] = _best(lambda: _fold_at_z(carry.a_rows, weights), runs)
-
-    a_g = _fold_at_z(carry.a_rows, weights)
     r_tail = carry.r[K_SKIP + 1 :]
-    times["sqrt+eq_tables"] = _best(lambda: _EQ_TABLES_SQ(_SQRT(r_tail)), runs)
+    a_g = timed("fold_at_z", lambda: _fold_at_z(carry.a_rows, weights))
 
-    cs_sqrt = _SQRT(r_tail)
-    eq_tables = _EQ_TABLES_SQ(cs_sqrt)
     # The ladder threads the transcript; hand it the same pre-round state each
     # repeat so every timing measures identical work.
-    times["mlv_ladder"] = _best(
-        lambda: _mlv_sumcheck_sq(a_g, eq_tables, cs_sqrt, _ONE_G, transcript),
-        runs,
-    )
+    if equal_factors(carry):
+
+        def sqrt_then_tables():
+            cs = _SQRT(r_tail)
+            return cs, _EQ_TABLES_SQ(cs)
+
+        cs_sqrt, eq_tables = timed("sqrt+eq_tables", sqrt_then_tables)
+        timed(
+            "mlv_ladder",
+            lambda: _mlv_sumcheck_sq(a_g, eq_tables, cs_sqrt, _ONE_G, transcript),
+        )
+    else:
+        b_g = timed("fold_at_z_b", lambda: _fold_at_z(carry.b_rows, weights))
+        eq_tables = timed("eq_tables", lambda: _EQ_TABLES(r_tail))
+        timed(
+            "mlv_ladder",
+            lambda: _mlv_sumcheck(a_g, b_g, eq_tables, _ONE_G, transcript),
+        )
+    return steps
 
 
 def make_split_prove_packed(unsplit, times: dict, runs: int, inner: bool):
@@ -195,7 +238,7 @@ def make_split_prove_packed(unsplit, times: dict, runs: int, inner: bool):
             )
 
         if inner:
-            _inner_split(carry, pre_mlv_transcript, times, runs)
+            times["inner_steps"] = _inner_split(carry, pre_mlv_transcript, times, runs)
 
         # Hand back the reference objects so the rest of the prove is unaffected.
         return ref_proof, ref_claim
@@ -241,7 +284,15 @@ def main() -> int:
     big = run(circ, args.golden, args)
     small = run(circ, args.compare, args) if args.compare else None
 
-    steps = list(SUB_STEPS) + (list(INNER_STEPS) if args.inner else [])
+    steps = list(SUB_STEPS)
+    if args.inner:
+        if small and small["inner_steps"] != big["inner_steps"]:
+            raise SystemExit(
+                "the two goldens took different multilinear ladders "
+                f"({big['inner_steps']} vs {small['inner_steps']}) — the "
+                "marginal column would subtract unlike programs"
+            )
+        steps += big["inner_steps"]
     header = f"{'step':<16}{'m=' + str(big['m']):>11}"
     if small:
         header += f"{'m=' + str(small['m']):>11}{'marg us/hash':>14}"
