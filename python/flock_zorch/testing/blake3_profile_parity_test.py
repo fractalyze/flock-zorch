@@ -122,35 +122,6 @@ class Blake3ProfileParityTest(unittest.TestCase):
         self.assertIs(prover.BENCHMARK_PROFILE.challenger_cls, Blake3DeviceChallenger)
         self.assertIs(prover.BENCHMARK_PROFILE.tree, merkle.GHASH_BLAKE3_TREE)
 
-    def test_round_loop_stays_in_the_program(self):
-        """The leading indicator: the sumcheck loop must compile INTO the prove
-        program under the device arm. Under the callback arm the same trace
-        cannot hold it, so `while` count is the thing that separates them —
-        not a wall-clock number."""
-        from flock_zorch import zerocheck
-
-        g = load(GOLDEN)
-        meta = g["meta"]
-
-        def whiles(challenger_cls):
-            # `ZerocheckProof` is a wire record, not a pytree, so the traced
-            # function returns the arrays rather than the record.
-            def run(a, b, c):
-                proof, _ = zerocheck.prove_packed(a, b, c, meta["m"], ch=ch)
-                return proof.round1_ab, proof.round1_c
-
-            ch = challenger_cls(b"flock-bench-v0")
-            return frx.jit(run).lower(g["a"], g["b"], g["z"]).as_text().count("while(")
-
-        dev = whiles(Blake3DeviceChallenger)
-        cb = whiles(Blake3CallbackChallenger)
-        self.assertGreater(
-            dev,
-            cb,
-            f"device arm kept {dev} while-loops vs callback {cb} — the whole "
-            "point of the change is that it keeps more",
-        )
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -157,5 +157,48 @@ class Blake3FieldTranscriptTest(unittest.TestCase):
         )
 
 
+class RoundLoopTest(unittest.TestCase):
+    """The leading indicator: the sumcheck round loop must compile INTO the
+    prove program under the device arm, and cannot under the callback arm.
+
+    Lives here rather than beside the full-prove parity gate because this needs
+    no golden — `lower` traces, it does not execute, so synthetic witness shapes
+    carry the same program structure and the check runs in CPU CI. The parity
+    gate needs the heavy blake3 golden, which CI does not dump, so it is a venv
+    gate like its sibling oracle tests.
+    """
+
+    M = 22
+
+    def _whiles(self, challenger_cls):
+        from flock_zorch import zerocheck
+
+        rows = 1 << (self.M - 7)
+        packed = fnp.zeros((rows, 2), fnp.uint64)
+        ch = challenger_cls(DOMAIN)
+
+        def run(a, b, c):
+            proof, _ = zerocheck.prove_packed(a, b, c, self.M, ch=ch)
+            return proof.round1_ab, proof.round1_c
+
+        return frx.jit(run).lower(packed, packed, packed).as_text().count("while(")
+
+    def test_device_arm_keeps_the_round_loop(self):
+        from flock_zorch.blake3_challenger import (
+            Blake3CallbackChallenger,
+            Blake3DeviceChallenger,
+        )
+
+        device = self._whiles(Blake3DeviceChallenger)
+        callback = self._whiles(Blake3CallbackChallenger)
+        self.assertGreater(
+            device,
+            callback,
+            f"device arm kept {device} while-loops vs callback {callback} — a "
+            "host-backed transcript cannot be a loop carry, and keeping the "
+            "loop in the program is the whole point of the device arm",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

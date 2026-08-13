@@ -118,21 +118,11 @@ py_test(
     ],
 )
 
-# The benchmark profile's device transcript against the callback arm it
-# replaced: a full m22 prove under each, every proof field compared, since the
-# swap may change how the transcript is computed but never what the proof is.
-# Also carries the leading indicator — the sumcheck round loop must stay in the
-# compiled program, which is a tracing property and so needs no GPU.
-py_test(
-    name = "blake3_profile_parity_test",
-    size = "large",
-    srcs = ["flock_zorch/testing/blake3_profile_parity_test.py"],
-    data = ["//artifacts:goldens"],
-    deps = [
-        ":flock_zorch",
-        ":test_support",
-    ],
-)
+# No target for `blake3_profile_parity_test`: it proves the m22 blake3 golden
+# under both transcript arms, and that golden is in dump_goldens.sh's HEAVY set,
+# which CI does not dump. It is a venv gate like the other hash-circuit oracle
+# tests. Its leading indicator — the round loop staying in the compiled program
+# — needs no golden and rides in blake3_field_transcript_test instead.
 
 # Fork-fixture byte gate for the benchmark profile's BLAKE3 Merkle arm: leaf
 # non-root chaining values at every leaf shape class, parent compressions, and
