@@ -44,7 +44,14 @@ The rules every change must respect:
 - **frx and zorch pins move in lockstep.** Bumping zorch (the `MODULE.bazel`
   `git_override`) means bumping `requirements.in`'s frx / frxlib / frx-cuda12
   wheels to the SAME version as zorch's own `requirements.in`: the binary-field
-  GPU kernels must match, and CPU-only CI can't catch a desync.
+  GPU kernels must match, and CPU-only CI can't catch a desync. Two things the
+  bump does NOT do by itself, both of which read as unrelated breakage:
+  `.bazelrc.user`'s `common --override_module=zorch=<path>` bypasses the pin
+  entirely, so the local checkout keeps serving the old zorch until it is pulled
+  to the same commit (CI meanwhile uses the pin — they disagree silently); and a
+  zorch module that is new to this repo needs its own `@zorch//zorch:<target>`
+  dep in `python/BUILD.bazel`, without which the import resolves in the venv and
+  fails only under bazel.
 - **Prove a wheel carries the compiler fix you're waiting on before you
   validate against it.** A dev wheel is only as new as the xla commit its jax
   pin named, which can be the commit *before* the fix; the version date says
