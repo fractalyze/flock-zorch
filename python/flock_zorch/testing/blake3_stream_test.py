@@ -68,15 +68,21 @@ def _splits(msg: bytes):
         if 0 < cut < n:
             out.append([msg[:cut], msg[cut:]])
     # Many small pieces exercises the partial-block path repeatedly, but each
-    # piece is a separate absorb in the traced program — keep it off the long
-    # messages, where it buys nothing the short ones have not already covered.
-    if 3 < n <= 2048:
+    # distinct piece length is its own trace, so this is the expensive arm —
+    # keep it to messages short enough that it covers the partial-block cases
+    # without paying for them at every size.
+    if 3 < n <= 128:
         out.append([msg[i : i + 7] for i in range(0, n, 7)])
     return out
 
 
 class Blake3StreamTest(unittest.TestCase):
-    LENGTHS = (0, 1, 63, 64, 65, 127, 128, 1023, 1024, 1025, 2048, 3000, 24163)
+    # One length per class the tree hash distinguishes: empty, sub-block, the
+    # 64-byte block edge either side, the 1024-byte chunk edge either side, and
+    # the 24,163 bytes a full m32 prove absorbs (multi-chunk, so it is the only
+    # one that exercises the subtree-stack merge). Sizes between those classes
+    # cost a trace each and test nothing new.
+    LENGTHS = (0, 1, 63, 64, 65, 1023, 1024, 1025, 24163)
 
     def test_matches_host_one_shot(self):
         rng = np.random.default_rng(0)

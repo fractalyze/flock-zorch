@@ -33,7 +33,7 @@ from flock_zorch.blake3_challenger import (  # noqa: E402
     Blake3DeviceChallenger,
 )
 from flock_zorch.hash import merkle  # noqa: E402
-from flock_zorch.testing.blake3_ligerito_oracle_test import load  # noqa: E402
+from flock_zorch.testing._golden import latest_blake3_golden as load  # noqa: E402
 
 GOLDEN = "blake3_ligerito_golden.bin"  # m22, the size the CPU gates run
 

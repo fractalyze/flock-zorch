@@ -285,3 +285,49 @@ def _recursive_proofs_eq(p, gl) -> bool:
         and np.array_equal(pr["merkle_proof"], gr["merkle_proof"])
         for pr, gr in zip(p["recursive_proofs"], gl["recursive_proofs"])
     )
+
+
+def latest_blake3_golden(golden: str = "blake3_ligerito_golden.bin"):
+    """Ingest a blake3 FLKBL golden. `golden` names a file under `artifacts/`,
+    so the same loader serves the m-variant dumps (`..._golden_m24.bin`) a size
+    sweep needs.
+
+    Lives here rather than in the oracle test because the oracle test is not a
+    Bazel dependency of anything: `py_library` excludes `testing/**` and
+    `test_support` globs only `_*.py`, so a sibling test importing it builds
+    locally on PYTHONPATH and fails in the sandbox.
+    """
+    rd = open_golden(golden)
+    assert bytes(rd.take(8)) == b"FLKBL_01", "bad magic"
+    meta = dict(
+        m=rd.u(),
+        k_log=rd.u(),
+        k_skip=rd.u(),
+        useful_bits=rd.u(),
+        const_pin=rd.u(),
+        lir=rd.u(),
+        lbs=rd.u(),
+        n_blocks_log=rd.u(),
+        log_n=rd.u(),
+    )
+    cfg = read_ligerito_config(rd)
+    g = dict(
+        meta=meta,
+        cfg=cfg,
+        stmt=bytes(rd.raw(32)),
+        root=rd.raw(32),
+        z=rd.fv(),
+        a=rd.fv(),
+        b=rd.fv(),
+    )
+    g["zlc"] = bytes(rd.raw(rd.u()))
+    g["a0_rows"] = rd.rowsu()
+    g["b0_rows"] = rd.rowsu()
+    g["zc"] = dict(
+        r1ab=rd.fv(), r1c=rd.fv(), mlv=rd.pair(), fa=rd.f(), fb=rd.f(), fc=rd.f()
+    )
+    g["lc"] = dict(rounds=rd.pair(), zp=rd.fv())
+    g["rs"] = [rd.fv() for _ in range(rd.u())]
+    lig = read_ligerito_proof(rd)
+    g["lig"] = lig
+    return g

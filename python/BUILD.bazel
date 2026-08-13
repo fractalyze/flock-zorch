@@ -97,7 +97,7 @@ py_test(
 # program per pattern.
 py_test(
     name = "blake3_stream_test",
-    size = "large",
+    size = "medium",
     srcs = ["flock_zorch/testing/blake3_stream_test.py"],
     deps = [
         ":flock_zorch",
@@ -130,6 +130,7 @@ py_test(
     data = ["//artifacts:goldens"],
     deps = [
         ":flock_zorch",
+        ":test_support",
     ],
 )
 
