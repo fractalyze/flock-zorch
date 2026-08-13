@@ -36,8 +36,7 @@ import frx
 import frx.numpy as fnp
 import numpy as np
 from frx import Array, lax
-from frx.tree_util import register_dataclass
-from hash_frx.sha256 import Sha256State
+from frx.tree_util import register_dataclass, tree_map
 from zorch.coding.reed_solomon import ReedSolomon
 from zorch.pcs.ligerito.choreography import LigeritoChoreography
 from zorch.pcs.ligerito.config import LigeritoConfig
@@ -143,66 +142,32 @@ def _sample_distinct_positions_impl(inner, block_len: int, count: int):
     return inner, fnp.sort(out)
 
 
-@functools.lru_cache(maxsize=None)
-def _cpu_query_jit(block_len: int, count: int):
-    @frx.jit
-    def run(h, pending, counts):
-        inner = Sha256FieldTranscript(
-            Sha256State(h=h, pending=pending, counts=counts),
-            np.dtype(fnp.binary_field_ghash),
-        )
-        inner, positions = _sample_distinct_positions_impl(inner, block_len, count)
-        return inner.state.h, inner.state.pending, inner.state.counts, positions
-
-    return run
-
-
-def _sample_distinct_positions_host(h, pending, counts, *, block_len, count):
-    """Run the serial SHA chain on CPU and return NumPy callback leaves."""
-    cpu = frx.devices("cpu")[0]
-    args = tuple(frx.device_put(x, cpu) for x in (h, pending, counts))
-    return tuple(np.asarray(x) for x in _cpu_query_jit(block_len, count)(*args))
+_cpu_query_jit = frx.jit(
+    _sample_distinct_positions_impl, static_argnames=("block_len", "count")
+)
 
 
 @functools.partial(frx.jit, static_argnums=(1, 2), inline=True)
 def _sample_distinct_positions(inner, block_len: int, count: int):
     """Sample Ligerito queries on CPU while the surrounding open stays on GPU.
 
-    The chain is 43--218 sequential SHA-256 scalar squeezes per level, so GPU
-    parallelism cannot help. One pure callback transfers the 104-byte stream
-    state to CPU and the updated state plus positions back; the five m=28
-    levels cost less than running a dedicated single-thread GPU chain.
-
-    The offload is keyed on the concrete state because it ships that state's
-    leaves; any other transcript takes the backend-neutral sampler and runs the
-    chain on device. That is the BLAKE3 arm's path today, and it is where the
-    ~114 ms its `open` still gives up to the SHA-256 arm sits (per-level query
-    draws plus the two PoW grinds) — the same offload for `Blake3Stream` is the
-    named lever, not a rewrite of this function.
+    The chain is 43--218 sequential scalar squeezes per level, so GPU
+    parallelism cannot help. One pure callback transfers the transcript to
+    CPU, runs the same backend-neutral sampler under a CPU jit, and carries
+    the updated state plus positions back; the five m=28 levels cost less
+    than running a dedicated single-thread GPU chain. The transcript rides
+    as its pytree, so every device-state arm takes this one shipper rather
+    than a hand-rebuilt twin per hash state layout — all it asks is the
+    fixed-shape state pytree, invariant under absorb/squeeze, that the
+    device transcripts already advertise.
     """
-    if not isinstance(inner, Sha256FieldTranscript):
-        return _sample_distinct_positions_impl(inner, block_len, count)
-    h, pending, counts, positions = frx.pure_callback(
-        functools.partial(
-            _sample_distinct_positions_host,
-            block_len=block_len,
-            count=count,
-        ),
+    return frx.pure_callback(
+        functools.partial(_cpu_query_jit, block_len=block_len, count=count),
         (
-            frx.ShapeDtypeStruct(inner.state.h.shape, inner.state.h.dtype),
-            frx.ShapeDtypeStruct(inner.state.pending.shape, inner.state.pending.dtype),
-            frx.ShapeDtypeStruct(inner.state.counts.shape, inner.state.counts.dtype),
+            tree_map(lambda leaf: frx.ShapeDtypeStruct(leaf.shape, leaf.dtype), inner),
             frx.ShapeDtypeStruct((count,), fnp.int32),
         ),
-        inner.state.h,
-        inner.state.pending,
-        inner.state.counts,
-    )
-    return (
-        Sha256FieldTranscript(
-            Sha256State(h=h, pending=pending, counts=counts), inner.dtype
-        ),
-        positions,
+        inner,
     )
 
 

@@ -14,6 +14,7 @@ Two layers, both CPU, no golden:
      the remaining T4 delta, tracked on #32).
 """
 
+import functools
 import sys
 
 import frx
@@ -24,14 +25,17 @@ frx.config.update("jax_platforms", "cpu")
 
 import frx.numpy as fnp  # noqa: E402
 from frx import lax  # noqa: E402
+from frx.tree_util import tree_map  # noqa: E402
 from zorch.coding.reed_solomon import ReedSolomon  # noqa: E402
 from zorch.pcs.ligerito.config import LigeritoConfig  # noqa: E402
 from zorch.pcs.ligerito.prover import LigeritoProver  # noqa: E402
 from zorch.pcs.ligerito.verifier import LigeritoVerifier  # noqa: E402
 from zorch.pcs.stage import OpeningClaim, OpeningWitness  # noqa: E402
 from zorch.poly.multilinear import eval_mle  # noqa: E402
+from zorch.sha256_field_transcript import Sha256FieldTranscript  # noqa: E402
 
 from flock_zorch.hash import merkle  # noqa: E402
+from flock_zorch.hash.blake3_field_transcript import Blake3FieldTranscript  # noqa: E402
 from flock_zorch.pcs import ligerito as flock_ligerito  # noqa: E402
 from flock_zorch.pcs.ligerito import (  # noqa: E402
     FlockChoreography,
@@ -265,6 +269,23 @@ def test_round_trip_ghash():
     check("FS lockstep", np.array_equal(_lohi(s_open), _lohi(s_verify)))
 
 
+def test_query_chain_ship_lockstep():
+    """The CPU-shipped query chain equals the backend-neutral sampler for BOTH
+    device-state arms — shipping moves where the chain runs, never what it
+    absorbs, so positions and every post-chain state leaf must match."""
+    for cls in (Sha256FieldTranscript, Blake3FieldTranscript):
+        inner = cls.new(DOMAIN, fnp.binary_field_ghash)
+        shipped_t, shipped_pos = flock_ligerito._sample_distinct_positions(inner, 64, 5)
+        neutral_t, neutral_pos = flock_ligerito._sample_distinct_positions_impl(
+            inner, 64, 5
+        )
+        tree_map(
+            functools.partial(np.testing.assert_array_equal, err_msg=cls.__name__),
+            (shipped_t, shipped_pos),
+            (neutral_t, neutral_pos),
+        )
+
+
 if __name__ == "__main__":
     test_wire_lohi_host_view()
     test_packed_device_get_preserves_mixed_tree()
@@ -272,6 +293,7 @@ if __name__ == "__main__":
     test_sample_framing()
     test_grind_lockstep()
     test_distinct_queries_lockstep()
+    test_query_chain_ship_lockstep()
     test_config_mapping()
     test_round_trip_ghash()
     print("OK zorch_ligerito_fs_test")
