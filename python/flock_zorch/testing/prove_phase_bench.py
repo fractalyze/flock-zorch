@@ -13,9 +13,11 @@ into a proof, so cost per hash — the quantity a throughput target is about —
 differs from cost per proof by a circuit-dependent constant.
 
 It also refuses to run while another compute process holds the GPU, since a
-neighbour saturating the SMs inflates a warm prove by ~28x on this box. That is
-a precondition check, not a certificate: see the GPU-provenance section below
-for what it cannot see.
+neighbour saturating the SMs inflates a warm prove by ~28x on this box, and
+when the selected ptxas predates clmad on a clmad-capable card, since the
+shift/XOR fallback inflates the clmul-heavy phases ~15x and poisons the
+per-wheel compile cache (`_ptxas.py`). Both are precondition checks, not
+certificates: see the GPU-provenance section below for what they cannot see.
 
 **One run of this is not a baseline.** The best-of-N below is within a single
 process. Measured on an idle card, blake3 landed 13-19% apart *across*
@@ -67,6 +69,10 @@ from flock_zorch import lincheck, prover, witgen, zerocheck  # noqa: E402
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
 from flock_zorch.sha256_challenger import Sha256Challenger  # noqa: E402
 from flock_zorch.testing._golden import unpack_bits  # noqa: E402
+from flock_zorch.testing._ptxas import (  # noqa: E402
+    clmad_ptxas_verdict,
+    ptxas_version_text,
+)
 from flock_zorch.testing._util import await_all, best, best_of  # noqa: E402
 from flock_zorch.types import ProveFastResult  # noqa: E402
 
@@ -432,6 +438,12 @@ def main() -> int:
         action="store_true",
         help="measure even with another compute process on the card",
     )
+    ap.add_argument(
+        "--allow-clmadless-ptxas",
+        action="store_true",
+        help="measure even though the selected ptxas predates clmad "
+        "(PTX ISA 9.3); the GF(2^128) multiply then runs as shift/XOR",
+    )
     args = ap.parse_args()
 
     if args.seed is not None:
@@ -461,7 +473,24 @@ def main() -> int:
         )
         return 2
 
-    print(f"device {frx.devices()[0]} | gpu: {card}")
+    device = frx.devices()[0]
+    if device.platform == "gpu":
+        reason = clmad_ptxas_verdict(
+            ptxas_version_text(), getattr(device, "compute_capability", None)
+        )
+        if reason and not args.allow_clmadless_ptxas:
+            print(
+                f"REFUSING to measure: {reason} — zerocheck/open inflate ~15x "
+                "and the wall reads as a regression, while the run poisons "
+                "this wheel's XLA compile cache with the slow executables.\n"
+                "Point CUDA_ROOT at a CUDA 13.3+ toolchain (README), wipe "
+                "JAX_COMPILATION_CACHE_DIR if a mis-toolchained run populated "
+                "it, or pass --allow-clmadless-ptxas for ratio-only work.",
+                file=sys.stderr,
+            )
+            return 2
+
+    print(f"device {device} | gpu: {card}")
     print(
         f"witness form: {'uint8 bits' if args.unpacked else 'packed F128'} "
         f"| best-of-{args.runs} within this process\n"

@@ -162,6 +162,19 @@ py_test(
     ],
 )
 
+# No golden, no GPU: the clmad-toolchain verdict is pure text, and its wrong
+# answer is silent (a false pass benches the shift/XOR fallback as a
+# regression), so it is pinned against real ptxas banners.
+py_test(
+    name = "ptxas_guard_test",
+    size = "small",
+    srcs = ["flock_zorch/testing/ptxas_guard_test.py"],
+    deps = [
+        ":test_support",
+        requirement("absl-py"),
+    ],
+)
+
 # No golden: the R1CS relation z == a AND b, a scalar big-int layout
 # reference, and hash-frx's independent compression as the math anchor.
 py_test(
