@@ -151,10 +151,20 @@ GHASH_SHA256_TREE = _Sha256MerkleTree(_GhashSha256LeafHasher(), _Sha256Compresso
 
 
 def _blake3_leaf_digest(rows):
-    """Non-root BLAKE3 chaining value per leaf: uint8 `[B, L]` -> uint8 `[B, 32]`."""
-    return unpack_le(
-        blake3.chaining_value(blake3.tree_output(rows, blake3.hash_mode()))
-    )
+    """Non-root BLAKE3 chaining value per leaf: uint8 `[B, L]` -> uint8 `[B, 32]`.
+
+    Marked on the GPU leg, the unmarked decomposition elsewhere — same bytes
+    either way, split on cost alone. With the emitter (GPU-only today, the
+    condition hash-frx's own suites key on) the whole leaf level is one
+    `hash_frx.blake3` composite carrying `non_root = 1`, fused to a single
+    kernel. Without one the marker inlines, and XLA's codegen of that inlined
+    body is super-linear in the compression count — a chunk-sized leaf does
+    not finish compiling — where the plain unrolled primitives compile in
+    seconds at the same shapes.
+    """
+    if frx.default_backend() == "gpu":
+        return blake3.non_root_digest(rows)
+    return blake3.unmarked_non_root_hash(rows, blake3.hash_mode())
 
 
 def _blake3_parent_digest(pairs):
