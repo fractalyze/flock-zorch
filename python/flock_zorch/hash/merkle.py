@@ -32,7 +32,6 @@ import frx.numpy as fnp
 import numpy as np
 from hash_frx.blake3 import blake3
 from hash_frx.sha256 import INITIAL_STATE, block_to_words, sha256_merkle_damgard
-from hash_frx.word import pack_le, unpack_le
 from zorch.commit.merkle import MerkleTree
 
 
@@ -169,10 +168,22 @@ def _blake3_leaf_digest(rows):
 
 def _blake3_parent_digest(pairs):
     """Non-root `PARENT` compression per node pair: uint8 `[G, 64]`
-    (left ‖ right child digests) -> uint8 `[G, 32]`."""
-    words = pack_le(pairs.reshape(pairs.shape[0], 2, 32))  # [G, 2, 8]
-    out = blake3.parent_output(words[:, 0], words[:, 1], blake3.hash_mode())
-    return unpack_le(blake3.chaining_value(out))
+    (left ‖ right child digests) -> uint8 `[G, 32]`.
+
+    Marked on every backend, unlike `_blake3_leaf_digest`. That one gates on the
+    emitter because without one its marker inlines a chunk-sized body whose
+    codegen is super-linear in the compression count; a parent is exactly ONE
+    compression at every tree depth, so the inlined form is the same size as the
+    primitives it replaces and there is no cliff to dodge. With an emitter a
+    whole parent level is one kernel; without one it inlines to the arithmetic
+    this function used to spell by hand. Same bytes either way — the pair gate
+    in `blake3_merkle_test` pins them against the fork's own fixtures.
+
+    The `pack_le`/`unpack_le` round-trip the hand-spelled form needed is gone:
+    the two children ARE the marker's 64 operand bytes, so the packing folds
+    into the emitter's own block read.
+    """
+    return blake3.parent_digest(pairs)
 
 
 class _Blake3LeafHasher:
