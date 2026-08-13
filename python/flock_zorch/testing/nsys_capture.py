@@ -12,7 +12,9 @@ Windows (`--window`, default `open`):
 
 - **`open`** — the Ligerito recursive open, with sub-step ranges around
   `ring_switch.prove_batched`, `_combine_claims`, `_open_jitted` and
-  `_flock_proof_dict`, plus a per-recursion-level breakdown.
+  `_flock_proof_dict`, plus a per-recursion-level breakdown. Run it with
+  `--fs blake3` to attribute the deficit that arm carries: the barriered phase
+  split puts ~85% of it in THIS window (m32, post-#271).
 - **`commit`** — the L0 commit, with no sub-step ranges: it is one jitted
   program, so its encode / layout-assembly / leaf-hash groups have to be read
   off the kernel names in the report rather than fenced by NVTX. `--tree`
@@ -39,7 +41,7 @@ Modes:
   attribution: per sub-step, per CUDA kernel, per XLA HLO-op family, and (for
   `open`) per recursion level.
 
-Every window is replayable because `Sha256Challenger` advances by REPLACING its
+Every window is replayable because either challenger advances by REPLACING its
 immutable `_t` pytree: snapshotting `_t` and re-assigning it before each
 iteration replays byte-identical Fiat-Shamir draws, so every iteration runs the
 same program on the same data. Rebuilding the state per iteration instead would
@@ -108,7 +110,7 @@ import ctypes
 import sqlite3
 import time
 from collections import defaultdict
-from typing import Any
+from typing import Any, NamedTuple
 
 # ------------------------------------------------------------------ NVTX / CUPTI
 #
@@ -158,6 +160,22 @@ class _Profiler:
 # ----------------------------------------------------------------------- capture
 
 
+class Arms(NamedTuple):
+    """Which Merkle and Fiat-Shamir hashes a window runs.
+
+    Two axes, selected independently, because they answer different questions
+    and differ by two orders of magnitude: the Merkle arm's whole cost is a few
+    ms of commit device-busy, while the FS arm drives nearly all of the BLAKE3
+    deficit, in `open`. Collapsing them into one flag would leave the small term
+    inseparable from the large one — which is how a Merkle change once got
+    credited with a figure it could not have produced. `--fs blake3 --tree
+    blake3` is the profile the 5M benchmark is scored on.
+    """
+
+    tree: str
+    fs: str
+
+
 def _resolve_tree(name: str):
     """Merkle arm by name -> the tree object the ligerito seams take.
 
@@ -173,7 +191,20 @@ def _resolve_tree(name: str):
     }[name]
 
 
-def _build_open(golden: str, tree: str):
+def _resolve_fs(name: str):
+    """Fiat-Shamir arm by name -> the challenger class.
+
+    Both classes advance by REPLACING an immutable `_t`, which is what the
+    windows' replay contract needs — so either arm is snapshot-replayable on
+    the same terms.
+    """
+    from flock_zorch.blake3_challenger import Blake3DeviceChallenger
+    from flock_zorch.sha256_challenger import Sha256Challenger
+
+    return {"sha256": Sha256Challenger, "blake3": Blake3DeviceChallenger}[name]
+
+
+def _build_open(golden: str, arms: Arms):
     """Run the prove up to the open and return a replayable open thunk.
 
     The sequence mirrors `prove_phase_bench.make_prove` (commit -> zerocheck
@@ -187,7 +218,6 @@ def _build_open(golden: str, tree: str):
 
     from flock_zorch import lincheck, prover, zerocheck
     from flock_zorch.pcs import ligerito as zorch_ligerito
-    from flock_zorch.sha256_challenger import Sha256Challenger
     from flock_zorch.testing._util import await_all
     from flock_zorch.testing.prove_phase_bench import Circuit
 
@@ -205,9 +235,9 @@ def _build_open(golden: str, tree: str):
     z = c_bits
     zlc = lincheck.stripe_to_device(g["zlc"], m, k_log)
 
-    arm = _resolve_tree(tree)
+    arm = _resolve_tree(arms.tree)
     root, pdata = zorch_ligerito.commit_flock_ligerito(cfg, z, arm)
-    ch = Sha256Challenger(circ.domain)
+    ch = _resolve_fs(arms.fs)(circ.domain)
     prover.bind_statement(ch, g["stmt"], root)
     _, zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch)
     x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, ir)
@@ -231,7 +261,7 @@ def _build_open(golden: str, tree: str):
     return open_once, meta
 
 
-def _build_commit(golden: str, tree: str):
+def _build_commit(golden: str, arms: Arms):
     """Run only the ingest, then return a replayable thunk for the `commit`
     phase — `commit_flock_ligerito`, the same call `prove_phase_bench` times.
 
@@ -265,7 +295,7 @@ def _build_commit(golden: str, tree: str):
     meta, cfg = g["meta"], g["cfg"]
     z = frx.device_put(g["z"])
 
-    arm = _resolve_tree(tree)
+    arm = _resolve_tree(arms.tree)
 
     def commit_once():
         return await_all(zorch_ligerito.commit_flock_ligerito(cfg, z, arm))
@@ -273,7 +303,7 @@ def _build_commit(golden: str, tree: str):
     return commit_once, meta
 
 
-def _build_zerocheck(golden: str, tree: str, which: str, equal_factors: bool = False):
+def _build_zerocheck(golden: str, arms: Arms, which: str, equal_factors: bool = False):
     """Run the prove up to one zerocheck `ProverRound` and return a replayable
     thunk for that round — `urm` for round-1's univariate skip, `ml` for the
     multilinear ladder.
@@ -304,7 +334,6 @@ def _build_zerocheck(golden: str, tree: str, which: str, equal_factors: bool = F
 
     from flock_zorch import lincheck, prover
     from flock_zorch.pcs import ligerito as zorch_ligerito
-    from flock_zorch.sha256_challenger import Sha256Challenger
     from flock_zorch.testing._util import await_all
     from flock_zorch.testing.prove_phase_bench import Circuit
     from flock_zorch.zerocheck import prover as zcp
@@ -320,8 +349,10 @@ def _build_zerocheck(golden: str, tree: str, which: str, equal_factors: bool = F
     z = c_bits  # same host array as the C track; saves 512 MiB at m32
     lincheck.stripe_to_device(g["zlc"], m, k_log)
 
-    root, _pdata = zorch_ligerito.commit_flock_ligerito(cfg, z, _resolve_tree(tree))
-    ch = Sha256Challenger(circ.domain)
+    root, _pdata = zorch_ligerito.commit_flock_ligerito(
+        cfg, z, _resolve_tree(arms.tree)
+    )
+    ch = _resolve_fs(arms.fs)(circ.domain)
     prover.bind_statement(ch, g["stmt"], root)
 
     k_skip = zcp.K_SKIP
@@ -335,7 +366,7 @@ def _build_zerocheck(golden: str, tree: str, which: str, equal_factors: bool = F
     rnd = ml if which == "ml" else urm
 
     # Same replay trick as the open: the rounds are functional in `carry`, and
-    # the Sha256Challenger advances by REPLACING its immutable `_t`, so restoring the
+    # the challenger advances by REPLACING its immutable `_t`, so restoring the
     # snapshot replays byte-identical Fiat-Shamir draws. Rebuilding the whole
     # state per iteration instead would pay a fresh commit each time.
     t_snapshot = ch._t
@@ -397,15 +428,15 @@ WINDOWS: dict[str, tuple[Any, tuple[tuple[str, str, str], ...]]] = {
     "open": (_build_open, _SUBSTEPS["open"]),
     "commit": (_build_commit, ()),
     "zerocheck-urm": (
-        lambda golden, tree: _build_zerocheck(golden, tree, "urm"),
+        lambda golden, arms: _build_zerocheck(golden, arms, "urm"),
         _SUBSTEPS["zerocheck-urm"],
     ),
     "zerocheck-ml": (
-        lambda golden, tree: _build_zerocheck(golden, tree, "ml"),
+        lambda golden, arms: _build_zerocheck(golden, arms, "ml"),
         _SUBSTEPS["zerocheck-ml"],
     ),
     "zerocheck-ml-sq": (
-        lambda golden, tree: _build_zerocheck(golden, tree, "ml", equal_factors=True),
+        lambda golden, arms: _build_zerocheck(golden, arms, "ml", equal_factors=True),
         _SUBSTEPS["zerocheck-ml-sq"],
     ),
 }
@@ -439,7 +470,7 @@ def run_capture(args) -> int:
     build, substeps = WINDOWS[args.window]
     nvtx = _Nvtx()
     prof = _Profiler()
-    once, meta = build(args.golden, args.tree)
+    once, meta = build(args.golden, Arms(tree=args.tree, fs=args.fs))
 
     for _ in range(2):  # compile + warm
         once()
@@ -458,7 +489,7 @@ def run_walls(args) -> int:
     import numpy as np
 
     build, _ = WINDOWS[args.window]
-    once, meta = build(args.golden, args.tree)
+    once, meta = build(args.golden, Arms(tree=args.tree, fs=args.fs))
     for _ in range(2):
         once()
 
@@ -643,6 +674,13 @@ def main() -> int:
         default="sha256",
         help="Merkle arm to commit with; sha256 is flock's default, blake3 is "
         "what the 5M BLAKE3/s benchmark profile commits with",
+    )
+    ap.add_argument(
+        "--fs",
+        choices=("sha256", "blake3"),
+        default="sha256",
+        help="Fiat-Shamir arm. Independent of --tree so each can be priced "
+        "alone; pass both as blake3 for the profile the benchmark is scored on",
     )
     ap.add_argument("--walls", type=int, help="N un-profiled iterations")
     ap.add_argument("--report", help="exported nsys sqlite to analyze")
