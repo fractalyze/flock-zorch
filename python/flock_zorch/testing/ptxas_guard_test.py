@@ -11,7 +11,10 @@ from __future__ import annotations
 
 from absl.testing import absltest
 
-from flock_zorch.testing._ptxas import clmad_ptxas_verdict
+from flock_zorch.testing._ptxas import (
+    clmad_nvlink_verdict,
+    clmad_ptxas_verdict,
+)
 
 _V12_9 = (
     "Cuda compilation tools, release 12.9, V12.9.86\n"
@@ -46,6 +49,35 @@ class ClmadPtxasVerdictTest(absltest.TestCase):
         self.assertIsNone(clmad_ptxas_verdict(_V12_9, None))
         self.assertIsNone(clmad_ptxas_verdict("not a ptxas banner", "12.0"))
         self.assertIsNone(clmad_ptxas_verdict(_V12_9, "sm_120a"))
+
+
+class ClmadNvlinkVerdictTest(absltest.TestCase):
+    """The linker half of the toolchain check.
+
+    A pre-13.3 nvlink is the state `export CUDA_ROOT=<13.3>` with no PATH
+    change produces, and it failed the m30 Ligerito gate *in nvlink* rather
+    than merely slowing it — so a false pass here reads as a byte regression.
+    """
+
+    def test_pre_clmad_nvlink_on_a_clmad_card_refuses(self) -> None:
+        reason = clmad_nvlink_verdict(_V12_9, "12.0")
+        self.assertIsNotNone(reason)
+        # Both sides of the mismatch, or the reader cannot act on it.
+        self.assertIn("12.9", reason)
+        self.assertIn("13.3", reason)
+
+    def test_clmad_nvlink_passes(self) -> None:
+        self.assertIsNone(clmad_nvlink_verdict(_V13_3, "12.0"))
+
+    def test_pre_clmad_card_never_blocks(self) -> None:
+        # No clmad at any toolchain there, so nothing to protect.
+        self.assertIsNone(clmad_nvlink_verdict(_V12_9, "9.0"))
+
+    def test_unknowns_never_block(self) -> None:
+        self.assertIsNone(clmad_nvlink_verdict(None, "12.0"))
+        self.assertIsNone(clmad_nvlink_verdict(_V12_9, None))
+        self.assertIsNone(clmad_nvlink_verdict("not a banner", "12.0"))
+        self.assertIsNone(clmad_nvlink_verdict(_V12_9, "sm_120a"))
 
 
 if __name__ == "__main__":

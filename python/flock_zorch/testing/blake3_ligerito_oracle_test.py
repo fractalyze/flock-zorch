@@ -41,7 +41,7 @@ from flock_zorch.testing._golden import (  # noqa: E402
 # The loader moved to `_golden` so a Bazel target can depend on it; this keeps
 # `load` importable from here, which is the name the gates already use.
 load = latest_blake3_golden
-from flock_zorch.testing._util import report  # noqa: E402
+from flock_zorch.testing._util import gate_device, report  # noqa: E402
 
 
 def substitute_device_witness(g):
@@ -149,7 +149,7 @@ def main() -> int:
         "(gates flock_zorch.witgen against flock end to end)",
     )
     args = ap.parse_args()
-    print(f"device {frx.devices()[0]}")
+    gate_device()
     m, results = run(args.golden, device_witness=args.witgen)
     return report(
         results,

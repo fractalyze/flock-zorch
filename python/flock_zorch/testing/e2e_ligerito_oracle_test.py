@@ -29,7 +29,7 @@ from flock_zorch.testing._golden import (  # noqa: E402
     read_ligerito_config,
     read_ligerito_proof,
 )
-from flock_zorch.testing._util import report  # noqa: E402
+from flock_zorch.testing._util import gate_device, report  # noqa: E402
 
 DOMAIN = b"flock-e2e-lig-v0"
 
@@ -170,7 +170,7 @@ def run():
 
 
 def main() -> int:
-    print(f"device {frx.devices()[0]}")
+    gate_device()
     m, results = run()
     return report(
         results,
