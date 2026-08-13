@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import json
 import os
 import subprocess
 import sys
@@ -73,7 +74,12 @@ from flock_zorch.testing._ptxas import (  # noqa: E402
     clmad_ptxas_verdict,
     ptxas_version_text,
 )
-from flock_zorch.testing._util import await_all, best, best_of  # noqa: E402
+from flock_zorch.testing._util import (  # noqa: E402
+    await_all,
+    best,
+    best_of,
+    json_row,
+)
 from flock_zorch.types import ProveFastResult  # noqa: E402
 
 PHASES = ("commit", "zerocheck", "lincheck", "open")
@@ -166,6 +172,119 @@ def gpu_provenance() -> tuple[str, int]:
 
     who = f", {len(others)} other compute proc" if others else ", no other compute proc"
     return f"{used}/{total} MiB, util {util}%{who}", len(others)
+
+
+def _ptxas_version() -> str | None:
+    """`ptxas --version`'s release line, or `None` when `ptxas` is not on
+    `PATH` — a CPU-only run, or the 13.3 check docs/measurement.md requires
+    has not been done. Never raises: a missing toolchain leaves this field
+    unset rather than blocking the report."""
+    try:
+        out = subprocess.run(
+            ["ptxas", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=True,
+        ).stdout
+    except Exception:
+        return None
+    line = next((ln for ln in out.splitlines() if "release" in ln), out)
+    return line.strip() or None
+
+
+def _driver_version(gpu: str | None) -> str | None:
+    """First `nvidia-smi` row's driver version, or `None` when the probe fails
+    (no `nvidia-smi`, a CPU run) — the same failure shape as `gpu_provenance`."""
+    try:
+        out = _smi("gpu=driver_version", gpu)
+    except Exception:
+        return None
+    first = next((ln.strip() for ln in out.splitlines() if ln.strip()), "")
+    return first or None
+
+
+def env_provenance() -> dict[str, str | None]:
+    """The toolchain/allocator facts docs/measurement.md says can silently
+    change what a number means without changing its shape: the `ptxas`
+    release (13.3 selects hardware `clmad`; anything else silently falls back
+    to the software GF(2^128) multiply, ~5.5x on the whole prove with no
+    warning) and the allocator env var (`cuda_async` inflates m32 ~14%)."""
+    return {
+        "ptxas": _ptxas_version(),
+        "driver": _driver_version(_visible_gpu()),
+        "allocator": os.environ.get("XLA_PYTHON_CLIENT_ALLOCATOR", "default"),
+    }
+
+
+def _peak_memory_bytes() -> int | None:
+    """Device high-water mark since process start, from
+    `frx.devices()[0].memory_stats()["peak_bytes_in_use"]`. `None` on a
+    backend that reports no stats — confirmed against frx: the CPU backend's
+    `memory_stats()` itself returns `None`, not a dict missing the key."""
+    stats = frx.devices()[0].memory_stats()
+    return stats.get("peak_bytes_in_use") if stats else None
+
+
+def _throughput_rows(
+    name: str,
+    n_hash: int,
+    wall_ms: float,
+    compile_ms: float | None,
+    peak_bytes: int | None,
+) -> list[dict]:
+    """The one row `--throughput` mode produces. A pure function of numbers
+    already computed elsewhere, so it needs neither a GPU nor a live prove to
+    exercise."""
+    return [
+        json_row(
+            "prove_phase_bench",
+            name,
+            "throughput",
+            throughput=n_hash * 1e3 / wall_ms,
+            latency=wall_ms,
+            compile_time=compile_ms / 1e3 if compile_ms is not None else None,
+            memory=peak_bytes,
+        )
+    ]
+
+
+def _phase_rows(
+    name: str,
+    parts: dict[str, float],
+    compile_ms: float | None,
+    peak_bytes: int | None,
+) -> list[dict]:
+    """The phase-split diagnostic mode's rows, one per `PHASES` entry.
+
+    No `throughput` metric on these: docs/measurement.md's own rule is that
+    the barriered split's wall time is for phase attribution, not a number to
+    compare against a goal (it runs ~14% slower than `--throughput`) — so a
+    throughput figure is only ever emitted under the `throughput` variant
+    `_throughput_rows` produces, never under `commit`/`zerocheck`/`lincheck`/
+    `open`.
+    """
+    compile_time = compile_ms / 1e3 if compile_ms is not None else None
+    return [
+        json_row(
+            "prove_phase_bench",
+            name,
+            phase,
+            latency=parts[phase],
+            compile_time=compile_time,
+            memory=peak_bytes,
+        )
+        for phase in PHASES
+    ]
+
+
+def build_report(rows: list[dict], env: dict) -> dict:
+    """The `--json` file's whole shape: `{"benchmarks": [...]}`, every row
+    stamped with the same `env` — one process measures under one toolchain,
+    so collect every circuit's rows first and call this once."""
+    for row in rows:
+        row["env"] = dict(env)
+    return {"benchmarks": rows}
 
 
 # ------------------------------------------------------------------- circuits
@@ -347,17 +466,24 @@ def make_prove(circ: Circuit, g, unpacked: bool, seed: int | None = None):
 # ---------------------------------------------------------------------- main
 
 
-def bench(circ: Circuit, args) -> None:
+def bench(circ: Circuit, args) -> list[dict]:
     """Measure one circuit and print its row. Scoped to a function so the golden
-    (~90 MB) and the circuit's device buffers are released before the next one."""
+    (~90 MB) and the circuit's device buffers are released before the next one.
+
+    Also returns this circuit's `--json` rows: a few dict literals over numbers
+    already computed for the printed row, cheap enough to build unconditionally
+    so only *writing* them to a file is gated on the flag.
+    """
     g = circ.ingest(args.golden)
     meta = g["meta"]
     n_hash = circ.hashes_per_proof(meta)
     prove = make_prove(circ, g, args.unpacked, seed=args.seed)
     phases = _phases(args)
+    name = f"{circ.name}_m{meta['m']}"
+    warmup_ms: list[float] = []
 
     if args.throughput:
-        wall = best(lambda: prove(), args.runs)
+        wall = best(lambda: prove(), args.runs, warmup_ms)
         print(
             f"{circ.name:>8} {meta['m']:>3} {n_hash:>8} "
             f"{wall:>9.2f}ms {n_hash * 1e3 / wall:>10.0f}"
@@ -367,13 +493,13 @@ def bench(circ: Circuit, args) -> None:
                 f"  {args.cpu_ms / wall:.2f}x vs same-instance flock CPU "
                 f"{args.cpu_ms:.0f}ms"
             )
-        return
+        return _throughput_rows(name, n_hash, wall, warmup_ms[0], _peak_memory_bytes())
 
     def timed_prove():
         times = {}
         return prove(times), times
 
-    wall, parts = best_of(timed_prove, args.runs)
+    wall, parts = best_of(timed_prove, args.runs, warmup_ms)
     total = sum(parts.values())
 
     print(
@@ -393,6 +519,7 @@ def bench(circ: Circuit, args) -> None:
             f"({100 * (wall - total) / wall:+.0f}%) of the prove is outside every "
             "phase — the split under-counts; instrumentation bug."
         )
+    return _phase_rows(name, parts, warmup_ms[0], _peak_memory_bytes())
 
 
 def main() -> int:
@@ -443,6 +570,14 @@ def main() -> int:
         action="store_true",
         help="measure even though the selected ptxas predates clmad "
         "(PTX ISA 9.3); the GF(2^128) multiply then runs as shift/XOR",
+    )
+    ap.add_argument(
+        "--json",
+        metavar="PATH",
+        help='also write a machine-readable {"benchmarks": [...]} report to '
+        "PATH, alongside the human-readable output above — one row per "
+        "circuit/variant the invoked mode produced (the throughput row in "
+        "--throughput mode, the commit/zerocheck/lincheck/open rows otherwise)",
     )
     args = ap.parse_args()
 
@@ -507,8 +642,17 @@ def main() -> int:
     print(hdr)
     print("-" * len(hdr))
 
+    rows: list[dict] = []
     for name in args.circuits:
-        bench(Circuit(name), args)
+        rows += bench(Circuit(name), args)
+
+    if args.json:
+        report = build_report(rows, env_provenance())
+        with open(args.json, "w") as f:
+            json.dump(report, f, indent=2)
+            f.write("\n")
+        print(f"\nJSON report written to {args.json}")
+
     return 0
 
 

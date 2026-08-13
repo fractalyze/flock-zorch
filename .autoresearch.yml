@@ -1,0 +1,25 @@
+# Benchmark manifest for the autoresearch dashboard.
+#
+# Maps 1:1 onto prove_phase_bench.py's --json rows: a `variant` here is one of
+# that script's "throughput" row (--throughput mode) or its "commit" /
+# "zerocheck" / "lincheck" / "open" rows (the default phase-split mode) — see
+# that script's --json flag and docs/measurement.md for what each means and
+# which one a goal may be compared against.
+version: 1
+benchmarks:
+  - suite: prove_phase_bench
+    name: blake3_m32
+    unit: hash/s
+    direction: higher
+    variants: [throughput, commit, zerocheck, lincheck, open]
+    # docs/measurement.md: only --throughput is a number to compare against a
+    # goal — the phase-split rows (drop --throughput) run ~14% slower and are
+    # for attribution only. Needs a 13.3 ptxas on PATH; see the README.
+    command: |
+      python python/flock_zorch/testing/prove_phase_bench.py blake3 --throughput --golden blake3_ligerito_golden_m32.bin --json out.json
+goals:
+  - title: "BLAKE3 5M hash/s"
+    benchmark: prove_phase_bench/blake3_m32/throughput
+    metric: throughput
+    target: 5000000
+    hardware: "RTX 5090"

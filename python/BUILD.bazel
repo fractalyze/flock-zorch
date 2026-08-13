@@ -210,6 +210,26 @@ py_test(
     ],
 )
 
+# Pure-host unit test (no golden, no GPU): the `--json` report's row/env
+# shape prove_phase_bench.py builds from already-computed numbers. Lists the
+# script itself as an extra src (it is a runnable, not a shared helper, so it
+# is deliberately not part of :test_support's glob) alongside real,
+# unmocked coverage of env_provenance()'s and _peak_memory_bytes()'s
+# CPU-without-nvidia-smi/ptxas fallback paths.
+py_test(
+    name = "prove_phase_bench_json_test",
+    size = "small",
+    srcs = [
+        "flock_zorch/testing/prove_phase_bench.py",
+        "flock_zorch/testing/prove_phase_bench_json_test.py",
+    ],
+    deps = [
+        ":flock_zorch",
+        ":test_support",
+        requirement("absl-py"),
+    ],
+)
+
 # No golden: the R1CS relation z == a AND b, a scalar big-int layout
 # reference, and hash-frx's independent compression as the math anchor.
 py_test(

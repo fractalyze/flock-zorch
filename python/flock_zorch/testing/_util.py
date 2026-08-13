@@ -59,16 +59,22 @@ def await_all(x):
     return x
 
 
-def best_of(fn, n=3):
+def best_of(fn, n=3, warmup_ms: list[float] | None = None):
     """Warmup-excluded best-of-`n` wall-clock ms, keeping the fastest run's own
     breakdown. `fn` returns `(result, detail)`; the returned `detail` is the one
     belonging to the run whose time is reported, so a caller that times sub-steps
     never mixes a total from one run with a split from another.
 
     One warmup call (its compile/first transfer excluded) precedes the timed
-    runs; `min` discards scheduler jitter.
+    runs; `min` discards scheduler jitter. That excluded call's own wall time is
+    itself worth reporting elsewhere (it is the compile cost this loop exists to
+    throw away) — pass a list and this appends it, additive so every existing
+    call keeps its unmodified 2-tuple return.
     """
+    t0 = time.perf_counter()
     await_all(fn()[0])
+    if warmup_ms is not None:
+        warmup_ms.append((time.perf_counter() - t0) * 1e3)
     best_ms, best_detail = float("inf"), None
     for _ in range(n):
         t0 = time.perf_counter()
@@ -80,9 +86,22 @@ def best_of(fn, n=3):
     return best_ms, best_detail
 
 
-def best(fn, n=3):
+def best(fn, n=3, warmup_ms: list[float] | None = None):
     """Best-of-`n` wall-clock ms for `fn()` — `best_of` with no per-run detail."""
-    return best_of(lambda: (fn(), None), n)[0]
+    return best_of(lambda: (fn(), None), n, warmup_ms)[0]
+
+
+def json_row(suite: str, name: str, variant: str, **metrics) -> dict:
+    """One autoresearch-shaped benchmark row: `{"suite", "name", "variant",
+    "metrics"}`. Drops any metric whose value is `None`, so a caller can pass
+    one it could not measure (e.g. `memory=None` on a backend `memory_stats`
+    does not support) without emitting a misleading null into the report."""
+    return {
+        "suite": suite,
+        "name": name,
+        "variant": variant,
+        "metrics": {k: v for k, v in metrics.items() if v is not None},
+    }
 
 
 def report(results, summary: str) -> int:
