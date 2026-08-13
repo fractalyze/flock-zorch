@@ -53,12 +53,17 @@ def clmad_ptxas_verdict(
 
 
 def ptxas_version_text() -> str | None:
-    """`ptxas --version` for the ptxas a run would pick up, or None.
+    """`ptxas --version` for the ptxas XLA will actually run, or None.
 
-    `$CUDA_ROOT/bin/ptxas` first — CUDA_ROOT, not PATH, is what selects the
-    toolchain (README's CUDA-13.3 note) — then PATH as the fallback probe.
+    XLA resolves ptxas from `CUDA_DIR`, then PATH — so that is the probe
+    order. `CUDA_ROOT` is deliberately NOT read: frx's Mosaic GPU module
+    exports `CUDA_ROOT=/usr/local/cuda` at import time as a libdevice hint
+    (`frx/experimental/mosaic/gpu/core.py`), so by the time this runs it
+    names a toolchain that plays no part in assembling the kernels — reading
+    it falsely refused a correctly-PATH'd run whose proves demonstrably
+    assembled clmad.
     """
-    root = os.environ.get("CUDA_ROOT", "")
+    root = os.environ.get("CUDA_DIR", "")
     candidate = os.path.join(root, "bin", "ptxas") if root else None
     ptxas = candidate if candidate and os.access(candidate, os.X_OK) else None
     ptxas = ptxas or shutil.which("ptxas")

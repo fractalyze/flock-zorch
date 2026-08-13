@@ -483,7 +483,7 @@ def main() -> int:
                 f"REFUSING to measure: {reason} — zerocheck/open inflate ~15x "
                 "and the wall reads as a regression, while the run poisons "
                 "this wheel's XLA compile cache with the slow executables.\n"
-                "Point CUDA_ROOT at a CUDA 13.3+ toolchain (README), wipe "
+                "Put a CUDA 13.3+ ptxas first on PATH (or set CUDA_DIR), wipe "
                 "JAX_COMPILATION_CACHE_DIR if a mis-toolchained run populated "
                 "it, or pass --allow-clmadless-ptxas for ratio-only work.",
                 file=sys.stderr,
