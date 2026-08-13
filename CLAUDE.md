@@ -53,6 +53,12 @@ The rules every change must respect:
   | grep '<phrase from the fix>'` — and pair it with a control phrase that
   predates the fix, so an empty result means "absent" and not "grep is wrong".
   Skipping this reads a still-broken wheel as the fix having failed.
+  **When the fix introduces no new string, this test cannot work** — a
+  pure-performance change (prime-ir#432 rewrote GHASH clmul as integer
+  multiplies) leaves the symbol names byte-identical, so `clmul` and
+  `select_xor` grep the same with and without it. Then the only reliable
+  check is behavioural: A/B the same benchmark against a known-good plugin
+  kept beside the new one. Keep the old dylib rather than overwriting it.
   The Metal plugin has no published wheel at all — the lockstep set is
   `frx/frxlib/frx-cuda12-*` — so `frx_plugins/xla_metal/*.dylib` is
   structurally selfbuilt, and rebuilding it without the same
