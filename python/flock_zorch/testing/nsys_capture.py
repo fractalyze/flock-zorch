@@ -14,8 +14,10 @@ Windows (`--window`, default `open`):
   `ring_switch.prove_batched`, `_combine_claims`, `_open_jitted` and
   `_flock_proof_dict`, plus a per-recursion-level breakdown.
 - **`commit`** — the L0 commit, with no sub-step ranges: it is one jitted
-  program, so its encode / layout-assembly / SHA-256 groups have to be read
-  off the kernel names in the report rather than fenced by NVTX.
+  program, so its encode / layout-assembly / leaf-hash groups have to be read
+  off the kernel names in the report rather than fenced by NVTX. `--tree`
+  selects the Merkle arm, and a commit number is only comparable to another on
+  the SAME arm: the two differ in kind, not by a constant.
 - **`zerocheck-urm`**, **`zerocheck-ml`** — one zerocheck `ProverRound` each.
   Zerocheck is why a window is round-level and not phase-level: its two rounds
   turned out to have OPPOSITE bindings — the round-1 URM composite
@@ -156,7 +158,22 @@ class _Profiler:
 # ----------------------------------------------------------------------- capture
 
 
-def _build_open(golden: str):
+def _resolve_tree(name: str):
+    """Merkle arm by name -> the tree object the ligerito seams take.
+
+    Resolved inside a builder rather than at import: `hash.merkle` pulls in frx,
+    which every builder configures for x64 first. Both arms hash by type, so
+    naming one explicitly is the same jit cache key as letting the seam default.
+    """
+    from flock_zorch.hash import merkle
+
+    return {
+        "sha256": merkle.GHASH_SHA256_TREE,
+        "blake3": merkle.GHASH_BLAKE3_TREE,
+    }[name]
+
+
+def _build_open(golden: str, tree: str):
     """Run the prove up to the open and return a replayable open thunk.
 
     The sequence mirrors `prove_phase_bench.make_prove` (commit -> zerocheck
@@ -188,7 +205,8 @@ def _build_open(golden: str):
     z = c_bits
     zlc = lincheck.stripe_to_device(g["zlc"], m, k_log)
 
-    root, pdata = zorch_ligerito.commit_flock_ligerito(cfg, z)
+    arm = _resolve_tree(tree)
+    root, pdata = zorch_ligerito.commit_flock_ligerito(cfg, z, arm)
     ch = Sha256Challenger(circ.domain)
     prover.bind_statement(ch, g["stmt"], root)
     _, zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch)
@@ -208,21 +226,27 @@ def _build_open(golden: str):
 
     def open_once():
         ch._t = t_snapshot
-        return await_all(prover.open_batch_ligerito(cfg, z, pdata, [ab, cc], ch))
+        return await_all(prover.open_batch_ligerito(cfg, z, pdata, [ab, cc], ch, arm))
 
     return open_once, meta
 
 
-def _build_commit(golden: str):
+def _build_commit(golden: str, tree: str):
     """Run only the ingest, then return a replayable thunk for the `commit`
     phase — `commit_flock_ligerito`, the same call `prove_phase_bench` times.
 
     No sub-steps, deliberately. `zorch.pcs.ligerito.prover._commit` is one
-    `frx.jit` program, so encode / layout-assembly / SHA-256 compression are
+    `frx.jit` program, so encode / layout-assembly / leaf compression are
     fused into a single dispatch and no Python-level NVTX range can separate
     them. The decomposition has to come from grouping the window's kernels by
     name in the report, which is how #205 produced its 40.2 / 50.9 / 7.8 split
     and is what makes this window's numbers comparable to it.
+
+    `--tree` picks the arm, and the two are not interchangeable as targets: the
+    SHA-256 arm is flock's default, but the 5M BLAKE3/s benchmark commits with
+    BLAKE3 (`prover.BENCHMARK_PROFILE`), whose leaf level is one fused
+    `hash_frx.blake3` composite rather than a pad/pack assembly. A commit number
+    is only comparable to another taken on the same arm.
 
     commit is the one phase with no prior state to rebuild: it consumes the
     witness straight off the golden, so unlike the open/zerocheck windows this
@@ -241,13 +265,15 @@ def _build_commit(golden: str):
     meta, cfg = g["meta"], g["cfg"]
     z = frx.device_put(g["z"])
 
+    arm = _resolve_tree(tree)
+
     def commit_once():
-        return await_all(zorch_ligerito.commit_flock_ligerito(cfg, z))
+        return await_all(zorch_ligerito.commit_flock_ligerito(cfg, z, arm))
 
     return commit_once, meta
 
 
-def _build_zerocheck(golden: str, which: str, equal_factors: bool = False):
+def _build_zerocheck(golden: str, tree: str, which: str, equal_factors: bool = False):
     """Run the prove up to one zerocheck `ProverRound` and return a replayable
     thunk for that round — `urm` for round-1's univariate skip, `ml` for the
     multilinear ladder.
@@ -294,7 +320,7 @@ def _build_zerocheck(golden: str, which: str, equal_factors: bool = False):
     z = c_bits  # same host array as the C track; saves 512 MiB at m32
     lincheck.stripe_to_device(g["zlc"], m, k_log)
 
-    root, _pdata = zorch_ligerito.commit_flock_ligerito(cfg, z)
+    root, _pdata = zorch_ligerito.commit_flock_ligerito(cfg, z, _resolve_tree(tree))
     ch = Sha256Challenger(circ.domain)
     prover.bind_statement(ch, g["stmt"], root)
 
@@ -368,18 +394,18 @@ _SUBSTEPS: dict[str, tuple[tuple[str, str, str], ...]] = {
 # name -> (build thunk, sub-steps). The capture/walls/report machinery below is
 # window-agnostic; only these two entries differ per window.
 WINDOWS: dict[str, tuple[Any, tuple[tuple[str, str, str], ...]]] = {
-    "open": (lambda golden: _build_open(golden), _SUBSTEPS["open"]),
-    "commit": (lambda golden: _build_commit(golden), ()),
+    "open": (_build_open, _SUBSTEPS["open"]),
+    "commit": (_build_commit, ()),
     "zerocheck-urm": (
-        lambda golden: _build_zerocheck(golden, "urm"),
+        lambda golden, tree: _build_zerocheck(golden, tree, "urm"),
         _SUBSTEPS["zerocheck-urm"],
     ),
     "zerocheck-ml": (
-        lambda golden: _build_zerocheck(golden, "ml"),
+        lambda golden, tree: _build_zerocheck(golden, tree, "ml"),
         _SUBSTEPS["zerocheck-ml"],
     ),
     "zerocheck-ml-sq": (
-        lambda golden: _build_zerocheck(golden, "ml", equal_factors=True),
+        lambda golden, tree: _build_zerocheck(golden, tree, "ml", equal_factors=True),
         _SUBSTEPS["zerocheck-ml-sq"],
     ),
 }
@@ -413,7 +439,7 @@ def run_capture(args) -> int:
     build, substeps = WINDOWS[args.window]
     nvtx = _Nvtx()
     prof = _Profiler()
-    once, meta = build(args.golden)
+    once, meta = build(args.golden, args.tree)
 
     for _ in range(2):  # compile + warm
         once()
@@ -432,7 +458,7 @@ def run_walls(args) -> int:
     import numpy as np
 
     build, _ = WINDOWS[args.window]
-    once, meta = build(args.golden)
+    once, meta = build(args.golden, args.tree)
     for _ in range(2):
         once()
 
@@ -610,6 +636,13 @@ def main() -> int:
         choices=tuple(WINDOWS),
         default="open",
         help="which prover window to isolate",
+    )
+    ap.add_argument(
+        "--tree",
+        choices=("sha256", "blake3"),
+        default="sha256",
+        help="Merkle arm to commit with; sha256 is flock's default, blake3 is "
+        "what the 5M BLAKE3/s benchmark profile commits with",
     )
     ap.add_argument("--walls", type=int, help="N un-profiled iterations")
     ap.add_argument("--report", help="exported nsys sqlite to analyze")
