@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass
+from functools import partial
 
 import frx
 import frx.numpy as fnp
@@ -69,12 +70,17 @@ class Blake3Stream:
     compressed: frx.Array
 
 
+_MODE = blake3.hash_mode()
+_KEY_WORDS = _MODE.key_words
+_MODE_FLAGS = U32(_MODE.flags)
+
+
 def _key_words():
-    return blake3.hash_mode().key_words
+    return _KEY_WORDS
 
 
 def _mode_flags():
-    return U32(blake3.hash_mode().flags)
+    return _MODE_FLAGS
 
 
 def init() -> Blake3Stream:
@@ -176,7 +182,7 @@ def _output(icv, blk, ctr, blen, flags) -> blake3.Output:
         ctr[None, :],
         blen[None],
         flags[None],
-        blake3.hash_mode().iv,
+        _MODE.iv,
     )
 
 
@@ -199,9 +205,16 @@ def _absorb_block(st: Blake3Stream, block_u8) -> Blake3Stream:
     return frx.lax.cond(last, lambda s: _push_chunk_cv(s, cv), lambda s: s, advanced)
 
 
+@frx.jit
 def absorb(st: Blake3Stream, msg) -> Blake3Stream:
     """Absorb `msg` (uint8 `[L]`, L static). Any split of a message absorbs to
-    the same state as absorbing it whole."""
+    the same state as absorbing it whole.
+
+    Jitted rather than inlined so the body is emitted once and shared by every
+    call site: as a plain function a transcript that absorbs three times per
+    round re-emits ~1,800 instructions three times, and the round loop is
+    unrolled on top of that.
+    """
     msg = fnp.asarray(msg, fnp.uint8).reshape(-1)
     length = msg.shape[0]
     if length == 0:
@@ -243,11 +256,13 @@ def absorb(st: Blake3Stream, msg) -> Blake3Stream:
     return _replace(st, block=fnp.where(keep, tail, fnp.uint8(0)), block_len=rest)
 
 
+@partial(frx.jit, static_argnums=(1,))
 def finalize(st: Blake3Stream, out_len: int):
     """Read `out_len` bytes of the root's extendable output: uint8 `[out_len]`.
 
     Non-mutating — the state is unchanged, matching the reference, so a
-    transcript can squeeze without ending its stream.
+    transcript can squeeze without ending its stream. Shared across call sites
+    for the same reason as `absorb`.
     """
     root_flags = (
         _mode_flags()
