@@ -2,8 +2,8 @@
 fork — the snark.fast acceptance in one test.
 
 Reproduces the harness worker's instance from (seed, log2) alone via the
-device chain (`witgen.blocks_from_seed` → `witness_blake3` →
-`lincheck_stripe`), proves under `prover.BENCHMARK_PROFILE` (callback BLAKE3
+device chain (`blake3_witness.blocks_from_seed` → `witness_blake3` →
+`lincheck_stripe`), proves under `prover.BLAKE3_PROFILE` (device BLAKE3
 Fiat-Shamir on the harness domain, BLAKE3 non-root-CV Merkle), serializes
 through `proof_io.bundle_bytes`, and compares ALL bytes against
 `bench_ligerito_golden.bin` — a bundle produced AND verified by the fork's

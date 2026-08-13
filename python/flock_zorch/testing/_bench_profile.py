@@ -10,8 +10,9 @@ from __future__ import annotations
 import frx
 import frx.numpy as fnp
 
-from flock_zorch import lincheck, proof_io, prover, witgen, zerocheck
+from flock_zorch import lincheck, proof_io, prover, zerocheck
 from flock_zorch.pcs import ligerito as zorch_ligerito
+from flock_zorch.r1cs_hashes import blake3_witness
 
 # flock_benchmark_common::DOMAIN — the harness pins this, not flock's default.
 BENCH_DOMAIN = b"flock-bench-v0"
@@ -55,11 +56,13 @@ class BenchProver:
         runs."""
         g, m, k_log, k_skip = self._g, self._m, self._k_log, self._k_skip
         ir = k_log - k_skip
-        profile = prover.BENCHMARK_PROFILE
+        profile = prover.BLAKE3_PROFILE
 
         seed_dev = frx.device_put(fnp.uint64(seed))
-        z, a, b = witgen.witness_blake3(*witgen.blocks_from_seed(seed_dev, m - k_log))
-        zlc = witgen.lincheck_stripe(z)
+        z, a, b = blake3_witness.witness_blake3(
+            *blake3_witness.blocks_from_seed(seed_dev, m - k_log)
+        )
+        zlc = blake3_witness.lincheck_stripe(z)
         z, a, b = (x.reshape(-1, 2) for x in (z, a, b))
 
         root, pdata = zorch_ligerito.commit_flock_ligerito(g["cfg"], z, profile.tree)
