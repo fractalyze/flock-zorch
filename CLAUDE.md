@@ -25,6 +25,17 @@ The rules every change must respect:
   size — e.g. `_OUTER_SPLIT_MIN`'s n≥16 outer-product emission — is never
   exercised by them, so byte-gate it with an m-variant golden
   (`blake3_ligerito_golden_m32.bin` reaches n=25) before claiming green.
+  **Exception — the BLAKE3 Fiat-Shamir arm has no proof golden and cannot get
+  one cheaply.** The `flock-core` / `flock-prover` deps are UPSTREAM
+  `succinctlabs/flock`, which has no BLAKE3 challenger, so every in-tree golden
+  is SHA-256-FS (`blake3_ligerito_golden.bin` is the blake3 *circuit* proved
+  with the SHA-256 challenger — the name misleads). That arm's absolute
+  reference is the hand-pasted `Layr-Labs/flock-challenge` fixtures in
+  `testing/blake3_challenger_test.py`; its prove path rides the SHA-256
+  goldens, which pin the call sites because a `ProveProfile` only swaps which
+  transcript they talk to. A real blake3-FS golden needs the fork added as a
+  second Cargo dep plus a dumper written against it — plan for that, don't
+  assume `dump_goldens.sh` can be pointed at it.
 - **Assemble zorch's blocks, never re-implement the scheme.** The prover is built
   from zorch's scheme-agnostic spine (the `ProverRound` / `VerifierRound`
   protocols and their drivers, Fiat-Shamir, `PCS`, fold, zero-check). flock-zorch adds only the flock-specific pieces the byte-match
