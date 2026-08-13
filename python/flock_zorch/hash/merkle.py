@@ -152,18 +152,23 @@ GHASH_SHA256_TREE = _Sha256MerkleTree(_GhashSha256LeafHasher(), _Sha256Compresso
 def _blake3_leaf_digest(rows):
     """Non-root BLAKE3 chaining value per leaf: uint8 `[B, L]` -> uint8 `[B, 32]`.
 
-    Marked on the GPU leg, the unmarked decomposition elsewhere — same bytes
-    either way, split on cost alone. With the emitter (GPU-only today, the
-    condition hash-frx's own suites key on) the whole leaf level is one
-    `hash_frx.blake3` composite carrying `non_root = 1`, fused to a single
-    kernel. Without one the marker inlines, and XLA's codegen of that inlined
-    body is super-linear in the compression count — a chunk-sized leaf does
-    not finish compiling — where the plain unrolled primitives compile in
-    seconds at the same shapes.
+    Marked, so the whole leaf level is one `hash_frx.blake3` composite carrying
+    `non_root = 1` and fuses to a single kernel. Both backends this runs on have
+    an emitter for it — GPU since fractalyze/xla#499, CPU since #507 — so the
+    fallback this used to keep for the CPU leg is gone.
+
+    That fallback was never about bytes, which are identical either way. It was
+    the compile cliff an unrecognized marker pays: the composite inlines and
+    XLA's codegen of the inlined body is super-linear in the compression count,
+    so a chunk-sized leaf did not finish compiling, where the plain unrolled
+    primitives compile in seconds at the same shapes. With the emitter present
+    the body is never codegen'd at all — a chunk-sized leaf compiles in ~1s.
+
+    A backend without a BLAKE3 emitter would pay that cliff again rather than
+    fall back. None is in use here; the seam to restore if one appears is
+    `blake3.unmarked_non_root_hash`, which is the same arithmetic unmarked.
     """
-    if frx.default_backend() == "gpu":
-        return blake3.non_root_digest(rows)
-    return blake3.unmarked_non_root_hash(rows, blake3.hash_mode())
+    return blake3.non_root_digest(rows)
 
 
 def _blake3_parent_digest(pairs):
