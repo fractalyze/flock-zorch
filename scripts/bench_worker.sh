@@ -16,6 +16,11 @@ export PATH="$HOME/.local/cuda13/bin:$PATH" # ptxas (the CUDA 13 toolchain)
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 export FRX_PLATFORMS=cuda,cpu
+# The harness SIGKILLs the previous trial's worker right before spawning the
+# next one, and the driver frees a killed process's VRAM asynchronously — a
+# fresh worker that preallocates 75% of the card races that free and OOMs.
+# On-demand allocation makes the overlap window cost only what is live.
+export XLA_PYTHON_CLIENT_PREALLOCATE=false
 PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"
 export PYTHONPATH
 
