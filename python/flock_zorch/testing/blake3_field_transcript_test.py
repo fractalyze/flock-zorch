@@ -159,13 +159,18 @@ class Blake3FieldTranscriptTest(unittest.TestCase):
 
 class RoundLoopTest(unittest.TestCase):
     """The leading indicator: the sumcheck round loop must compile INTO the
-    prove program under the device arm, and cannot under the callback arm.
+    prove program under the BLAKE3 arm.
 
-    Lives here rather than beside the full-prove parity gate because this needs
-    no golden — `lower` traces, it does not execute, so synthetic witness shapes
-    carry the same program structure and the check runs in CPU CI. The parity
-    gate needs the heavy blake3 golden, which CI does not dump, so it is a venv
-    gate like its sibling oracle tests.
+    Whether the loop is in the program is a tracing property, so this needs no
+    golden and no GPU — `lower` traces, it does not execute, so synthetic
+    witness shapes carry the same program structure and the check runs in CPU
+    CI. Check it before any wall-clock claim: a transcript that cannot be a
+    loop carry drops the count to zero and costs ~10x at m32, which is what the
+    retired host-callback arm did.
+
+    The SHA-256 arm is the control, exactly as in `blake3_challenger_test` — a
+    red BLAKE3 count with a green control is a BLAKE3-arm regression, both red
+    is the zerocheck itself losing its loops.
     """
 
     M = 22
@@ -183,21 +188,39 @@ class RoundLoopTest(unittest.TestCase):
 
         return frx.jit(run).lower(packed, packed, packed).as_text().count("while(")
 
-    def test_device_arm_keeps_the_round_loop(self):
-        from flock_zorch.blake3_challenger import (
-            Blake3CallbackChallenger,
-            Blake3DeviceChallenger,
+    def test_blake3_arm_keeps_the_round_loop(self):
+        from flock_zorch.blake3_challenger import Blake3DeviceChallenger
+
+        self.assertGreater(
+            self._whiles(Blake3DeviceChallenger),
+            0,
+            "the BLAKE3 arm's zerocheck lowered with no `while` loop — its "
+            "transcript stopped being usable as a loop carry, so the round "
+            "loop de-compiled into a host loop",
         )
 
-        device = self._whiles(Blake3DeviceChallenger)
-        callback = self._whiles(Blake3CallbackChallenger)
-        self.assertGreater(
-            device,
-            callback,
-            f"device arm kept {device} while-loops vs callback {callback} — a "
-            "host-backed transcript cannot be a loop carry, and keeping the "
-            "loop in the program is the whole point of the device arm",
-        )
+    def test_sha256_control_keeps_the_round_loop(self):
+        from flock_zorch.sha256_challenger import Sha256Challenger
+
+        self.assertGreater(self._whiles(Sha256Challenger), 0)
+
+
+class Blake3ProfileTest(unittest.TestCase):
+    """`BLAKE3_PROFILE` is composed of the device arm and the BLAKE3 tree.
+
+    `prove_phase_bench_test` pins that `--hash blake3` SELECTS this profile;
+    this pins what the profile IS. Without it, swapping the challenger back to
+    a host-backed one would leave every gate green while the prove lost its
+    round loop.
+    """
+
+    def test_profile_is_the_device_arm_and_the_blake3_tree(self):
+        from flock_zorch import prover
+        from flock_zorch.blake3_challenger import Blake3DeviceChallenger
+        from flock_zorch.hash import merkle
+
+        self.assertIs(prover.BLAKE3_PROFILE.challenger_cls, Blake3DeviceChallenger)
+        self.assertIs(prover.BLAKE3_PROFILE.tree, merkle.GHASH_BLAKE3_TREE)
 
 
 if __name__ == "__main__":

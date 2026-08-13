@@ -6,10 +6,10 @@ The property under test is the only one a streaming state has to have:
 oracle is `HostBlake3`, the same implementation `Blake3ByteTranscript` already
 hashes with, so a divergence here is this module's and not the fork's.
 
-Why this exists: the benchmark-profile transcript keeps its state on the host
-behind `io_callback`, which makes it un-threadable through a jitted loop — the
-sumcheck round loop then de-compiles into a host loop, worth ~10x of the
-snark.fast window at m32. A device transcript fixes that, and it needs a
+Why this exists: the BLAKE3 arm's first transcript kept its state on the host
+behind `io_callback`, which made it un-threadable through a jitted loop — the
+sumcheck round loop then de-compiled into a host loop, worth ~10x of the
+snark.fast window at m32. A device transcript fixed that, and it needs a
 resumable hash state whose SHAPE does not depend on how many bytes have been
 absorbed. Hence a streaming state rather than a growing buffer: inside a loop
 the absorbed length is a runtime value, and a one-shot digest needs a static

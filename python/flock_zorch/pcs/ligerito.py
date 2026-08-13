@@ -173,9 +173,12 @@ def _sample_distinct_positions(inner, block_len: int, count: int):
     state to CPU and the updated state plus positions back; the five m=28
     levels cost less than running a dedicated single-thread GPU chain.
 
-    A transcript WITHOUT the SHA-256 stream state (the benchmark profile's
-    callback transcript, whose Fiat-Shamir already runs on the host) takes the
-    backend-neutral sampler directly — there is no device chain to ship.
+    The offload is keyed on the concrete state because it ships that state's
+    leaves; any other transcript takes the backend-neutral sampler and runs the
+    chain on device. That is the BLAKE3 arm's path today, and it is where the
+    ~114 ms its `open` still gives up to the SHA-256 arm sits (per-level query
+    draws plus the two PoW grinds) — the same offload for `Blake3Stream` is the
+    named lever, not a rewrite of this function.
     """
     if not isinstance(inner, Sha256FieldTranscript):
         return _sample_distinct_positions_impl(inner, block_len, count)
