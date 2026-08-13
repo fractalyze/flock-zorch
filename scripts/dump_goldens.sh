@@ -17,11 +17,16 @@ cargo build --release --examples >/dev/null   # fetches flock (git rev dep) + bu
 
 CORE=(ligerito e2e_ligerito)
 HEAVY=(keccak_ligerito keccak_chain keccak3_ligerito sha2_ligerito blake3_ligerito)
+# From the flock-challenge FORK dep, not the upstream pin: the snark.fast
+# benchmark-profile bundle (BLAKE3 FS+Merkle, fork-verifier-accepted before
+# writing) that the GPU bench gate byte-compares. Fast (m=22), so it rides
+# with core.
+BENCH=(bench_ligerito)
 
 mkdir -p artifacts
 dump() { echo "  dump_$1"; "./target/release/examples/dump_$1"; }
 
-for d in "${CORE[@]}"; do dump "$d"; done
+for d in "${CORE[@]}" "${BENCH[@]}"; do dump "$d"; done
 
 if [ "${1:-core}" = all ]; then
   echo "-- heavy real hash-circuit goldens (slow) --"
