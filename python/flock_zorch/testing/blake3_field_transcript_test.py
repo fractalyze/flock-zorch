@@ -1,5 +1,13 @@
 # Copyright 2026 The Flock-Zorch Authors. SPDX-License-Identifier: Apache-2.0
-"""`Blake3FieldTranscript` against the host `Blake3Challenger`.
+"""zorch's `Blake3FieldTranscript`, as THIS repo wires it, against the host
+`Blake3Challenger`.
+
+The transcript itself is zorch's and is gated there against its own byte oracle.
+What that cannot check is the wiring: the fork pads its proof-of-work pre-image
+to a whole block where zorch's default stops at 40, so the device arm is only
+the fork's arm if `_initial_device_transcript` says so. Every device transcript
+below therefore comes from that function rather than from a bare `new` — a test
+that constructed its own would pass while the prover spoke a different wire.
 
 The host arm is already pinned to flock-challenge's own `FsChallenger` by
 `blake3_challenger_test`, so matching it here transitively pins the device arm
@@ -27,12 +35,19 @@ frx.config.update("jax_enable_x64", True)
 import frx.numpy as fnp  # noqa: E402
 
 from flock_zorch import ghash  # noqa: E402
-from flock_zorch.blake3_challenger import Blake3Challenger  # noqa: E402
-from flock_zorch.hash.blake3_field_transcript import (  # noqa: E402
-    Blake3FieldTranscript,
+from flock_zorch.blake3_challenger import (  # noqa: E402
+    Blake3Challenger,
+    _initial_device_transcript,
 )
 
 DOMAIN = b"flock-bench-v0"
+
+
+def _dev():
+    """The device transcript the prover actually runs — the fork's PoW width
+    included. Never `Blake3FieldTranscript.new` directly here: zorch's default
+    is the unpadded wire, so a bare construction would gate the wrong arm."""
+    return _initial_device_transcript(DOMAIN)
 
 
 def _g(vals):
@@ -85,7 +100,7 @@ class Blake3FieldTranscriptTest(unittest.TestCase):
 
     def test_matches_host_challenger(self):
         host = Blake3Challenger(DOMAIN)
-        dev = Blake3FieldTranscript.new(DOMAIN, fnp.binary_field_ghash)
+        dev = _dev()
         draws = []
         self._script(host, dev, draws)
         for name, want, got in draws:
@@ -98,9 +113,9 @@ class Blake3FieldTranscriptTest(unittest.TestCase):
     def test_scalar_and_slice_of_one_differ(self):
         """A guard on the gate itself: if these agreed, the test above would pass
         with the KIND tag ignored."""
-        a = Blake3FieldTranscript.new(DOMAIN, fnp.binary_field_ghash)
+        a = _dev()
         _, scalar = a.sample_scalar()
-        _, slice1 = Blake3FieldTranscript.new(DOMAIN, fnp.binary_field_ghash).sample(1)
+        _, slice1 = _dev().sample(1)
         self.assertFalse(
             np.array_equal(
                 ghash._ghash_to_lanes(np.asarray(scalar)),
@@ -115,7 +130,7 @@ class Blake3FieldTranscriptTest(unittest.TestCase):
         for bits in (0, 4, 9):
             with self.subTest(bits=bits):
                 host = Blake3Challenger(DOMAIN)
-                dev = Blake3FieldTranscript.new(DOMAIN, fnp.binary_field_ghash)
+                dev = _dev()
                 host.observe_label(b"pow")
                 dev = dev.observe_label(b"pow")
                 want = host.grind_pow(bits)
@@ -128,33 +143,6 @@ class Blake3FieldTranscriptTest(unittest.TestCase):
                     ghash._ghash_to_lanes(np.asarray(nxt_host)),
                     ghash._ghash_to_lanes(np.asarray(nxt_dev)),
                 )
-
-    def test_threads_a_jitted_loop(self):
-        """The reason the module exists: usable as a `fori_loop` carry, so a
-        round loop stays inside the compiled program."""
-
-        @frx.jit
-        def run():
-            t = Blake3FieldTranscript.new(DOMAIN, fnp.binary_field_ghash)
-
-            def body(_, carry):
-                t_, acc = carry
-                t_, c = t_.sample_scalar()
-                return t_, acc + c
-
-            _, acc = frx.lax.fori_loop(
-                0, 8, body, (t, fnp.zeros((), fnp.binary_field_ghash))
-            )
-            return acc
-
-        host = Blake3Challenger(DOMAIN)
-        want = _g([0])[0]
-        for _ in range(8):
-            want = want + host.sample_f128()
-        np.testing.assert_array_equal(
-            ghash._ghash_to_lanes(np.asarray(run())),
-            ghash._ghash_to_lanes(np.asarray(want)),
-        )
 
 
 class RoundLoopTest(unittest.TestCase):

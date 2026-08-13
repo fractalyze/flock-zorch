@@ -45,6 +45,7 @@ from dataclasses import dataclass
 import frx.numpy as fnp
 import numpy as np
 from hash_frx.blake3.byte_hashes import HostBlake3
+from zorch.blake3_field_transcript import Blake3FieldTranscript
 from zorch.byte_transcript import (
     ByteHashTranscript,
     _leading_zero_bits_ok,
@@ -54,7 +55,6 @@ from zorch.byte_transcript import (
 
 from flock_zorch import fs
 from flock_zorch.ghash import _ghash_to_lanes, _lanes_to_ghash
-from flock_zorch.hash.blake3_field_transcript import Blake3FieldTranscript
 
 _F128_BYTES = 16
 # The fork's BLAKE3 PoW pre-image length: state digest (32) ‖ nonce (8) ‖ zero
@@ -193,8 +193,15 @@ def _initial_device_transcript(domain: bytes):
     immutable and every challenger replaces `_t` rather than mutating it, so
     one seeded state is safe to share between proves. `Sha256Challenger` does
     the same for the same reason.
+
+    `pow_preimage_bytes` is the fork's, not zorch's default: the fork pads its
+    PoW pre-image to a whole block where the canonical wire stops at 40. Drop
+    the argument and everything still compiles and most tests still pass — only
+    the proof goldens catch it, because every challenge after the grind moves.
     """
-    return Blake3FieldTranscript.new(domain, fnp.binary_field_ghash)
+    return Blake3FieldTranscript.new(
+        domain, fnp.binary_field_ghash, pow_preimage_bytes=_POW_BLOCK
+    )
 
 
 class Blake3DeviceChallenger:

@@ -34,16 +34,15 @@ run eager device transcript hops, which are CPU-safe.
 from __future__ import annotations
 
 import frx
-import frx.numpy as fnp
 import numpy as np
 from absl.testing import absltest
 
 from flock_zorch.blake3_challenger import (
     Blake3Challenger,
     Blake3DeviceChallenger,
+    _initial_device_transcript,
 )
 from flock_zorch.ghash import _lanes_to_ghash, to_lanes
-from flock_zorch.hash.blake3_field_transcript import Blake3FieldTranscript
 from flock_zorch.sha256_challenger import Sha256Challenger
 
 _DOMAIN = b"flock-bench-v0"
@@ -176,7 +175,7 @@ class DeviceTranscriptForkGateTest(absltest.TestCase):
     the host row."""
 
     def test_one_jitted_zone_matches_the_fork(self):
-        t = Blake3FieldTranscript.new(_DOMAIN, fnp.binary_field_ghash)
+        t = _initial_device_transcript(_DOMAIN)
         root = np.frombuffer(_ROOT, np.uint8)
         _, s1, v1, v2, v5, s2, n0, n12, s3 = _fixture_zone(
             t, _g(_OBS_SCALAR), _g(_OBS_SLICE), root
@@ -209,7 +208,7 @@ class DeviceTranscriptForkGateTest(absltest.TestCase):
             t = t.observe_label(_LABEL)
             return frx.lax.scan(lambda t, _: t.sample_scalar(), t, None, length=3)
 
-        _, draws = chain(Blake3FieldTranscript.new(_DOMAIN, fnp.binary_field_ghash))
+        _, draws = chain(_initial_device_transcript(_DOMAIN))
         got = [_wire(np.asarray(draws)[i]) for i in range(3)]
         self.assertEqual(got, want)
 
