@@ -46,22 +46,27 @@ from flock_zorch.zerocheck.prover import ZerocheckProver
 class ProveProfile:
     """Which Fiat-Shamir and Merkle arms a prove runs.
 
-    `FLOCK_PROFILE` is flock's default (device SHA-256 FS, SHA-256 Merkle) —
-    the arm every golden byte-gates. `BENCHMARK_PROFILE` is the
-    flock-challenge harness's (BLAKE3 FS, BLAKE3 non-root-CV Merkle) — what
-    their verifier accepts. The profile changes WHICH bytes the proof is, not
-    the protocol: both run the same reductions and the same open."""
+    Named for the hash because the two that ship pair their choices:
+    `SHA256_PROFILE` is SHA-256 for both and is flock's default — the arm every
+    golden byte-gates; `BLAKE3_PROFILE` is BLAKE3 for both (non-root-CV Merkle)
+    and is what the flock-challenge harness's verifier accepts. The fields stay
+    separate because the pairing is a fact about those two, not a constraint: a
+    mixed arm is expressible and one was built while attributing the gap between
+    them.
+
+    A profile changes WHICH bytes the proof is, not the protocol — both run the
+    same reductions and the same open, so their timings are comparable."""
 
     challenger_cls: type
     tree: object
 
 
-FLOCK_PROFILE = ProveProfile(Sha256Challenger, merkle.GHASH_SHA256_TREE)
+SHA256_PROFILE = ProveProfile(Sha256Challenger, merkle.GHASH_SHA256_TREE)
 # The device BLAKE3 transcript, not the callback one it replaces: a host-backed
 # transcript cannot be carried by a jitted loop, so the sumcheck round loop
 # de-compiles into a host loop and the prove runs ~10x slower at m32.
 # `Blake3CallbackChallenger` remains the byte oracle the two are pinned against.
-BENCHMARK_PROFILE = ProveProfile(Blake3DeviceChallenger, merkle.GHASH_BLAKE3_TREE)
+BLAKE3_PROFILE = ProveProfile(Blake3DeviceChallenger, merkle.GHASH_BLAKE3_TREE)
 
 
 @frx.jit
@@ -258,7 +263,7 @@ def prove_fast(
     re-transfer). `cfg` is the flock Ligerito config; `circuit` a
     `LincheckCircuit` for real hash R1CS (None uses the dense a0/b0 path — the
     identity gate). a = A·z, b = B·z; for the identity R1CS a = b = c = z."""
-    profile = FLOCK_PROFILE if profile is None else profile
+    profile = SHA256_PROFILE if profile is None else profile
     prover = FlockProver(cfg, m, k_log, k_skip, circuit, tree=profile.tree)
     return prover.prove(
         R1csClaim(statement_digest=statement_digest),

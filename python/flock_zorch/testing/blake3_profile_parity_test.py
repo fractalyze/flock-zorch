@@ -1,5 +1,5 @@
 # Copyright 2026 The Flock-Zorch Authors. SPDX-License-Identifier: Apache-2.0
-"""`BENCHMARK_PROFILE`'s device transcript against the callback arm it replaced.
+"""`BLAKE3_PROFILE`'s device transcript against the callback arm it replaced.
 
 The swap is only allowed to change how the transcript is computed, never what
 the proof is: the fork's verifier accepts these bytes. So the gate is a full
@@ -119,8 +119,8 @@ class Blake3ProfileParityTest(unittest.TestCase):
     def test_benchmark_profile_is_the_device_arm(self):
         """The swap itself — without this the parity test above would pass while
         the profile still pointed at the callback arm."""
-        self.assertIs(prover.BENCHMARK_PROFILE.challenger_cls, Blake3DeviceChallenger)
-        self.assertIs(prover.BENCHMARK_PROFILE.tree, merkle.GHASH_BLAKE3_TREE)
+        self.assertIs(prover.BLAKE3_PROFILE.challenger_cls, Blake3DeviceChallenger)
+        self.assertIs(prover.BLAKE3_PROFILE.tree, merkle.GHASH_BLAKE3_TREE)
 
 
 if __name__ == "__main__":
