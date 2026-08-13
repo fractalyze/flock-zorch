@@ -27,12 +27,9 @@ from __future__ import annotations
 
 import frx.numpy as fnp
 from zorch.poly.eq import expand_eq_family, expand_eq_to_hypercube
-from zorch.sumcheck.domain import compressed_domain, split_pairs, summand_evals
-from zorch.sumcheck.prover import ProductSummand
+from zorch.sumcheck.domain import split_pairs
 
 from flock_zorch import ghash
-
-_PRODUCT2 = ProductSummand(2)._combine
 
 U64 = fnp.uint64
 ONE = fnp.asarray([1, 0], dtype=U64)  # F128::ONE = {lo: 1, hi: 0}
@@ -90,16 +87,33 @@ def round_pair_eq(ag, bg, eq, r0g):
     """The per-round message core, taking an eq table the caller precomputed
     (one `build_eq_suffix_tables` chain serves every round).
 
-    The message `[G(1), G(∞)]` is zorch's compressed product round on the low bind:
-    `summand_evals` over `compressed_domain(1)` with the eq suffix as the per-point
-    weight and `msb=False` (`s(∞)`'s char-2 `(a1−a0)` is flock's `(a0+a1)`)."""
-    g_one, g_inf = summand_evals(
-        fnp.stack([ag, bg]),
-        _PRODUCT2,
-        compressed_domain(1, ag.dtype),
-        weight=eq,
-        msb=False,
-    )
+    The message is `[r₀·G(1), G(∞)]` with `G(X) = Σ eq·a(X)·b(X)` on the low
+    bind, so `G(1) = Σ eq·a₁·b₁` and `G(∞) = Σ eq·(a₀+a₁)·(b₀+b₁)` (char-2
+    turns zorch's `(a₁−a₀)` into flock's `(a₀+a₁)`).
+
+    Hand-written so the operands stay strided views of the one array read —
+    this is the canonical statement of that trade; the deferred kernels below
+    cite it. Routing through `summand_evals` instead made `(a₀+a₁, b₀+b₁)` a
+    separate elementwise fusion that XLA materialized in full before the reduce
+    could consume it: at blake3 m=28 a `ghash[2, 2097152]` temporary, 67 MB
+    written and read straight back, and the widest fusion in the whole ladder
+    (85% of its kLoop output elements). Removing it cut `_mlv_sumcheck` from
+    51.0 ms to 23.0 ms and the whole prove from 295.8 ms to 246.4 ms.
+
+    **This is a workaround, and the real fix is not here.** A wide elementwise
+    producer feeding a reduce is the textbook `kInput` fusion, so the defect is
+    either XLA's fusion heuristic or — more portably — `summand_evals`'s own
+    formulation, which materializes the domain axis (`combine` over
+    `vmap(domain.sample)`) before reducing and so hands every zorch round
+    builder the same temporary. Fixing it there would let this route back
+    through the shared helper; until then `inf_product.py` still pays it.
+
+    Byte-identical: same field operations on the same values, and GF sums
+    reorder freely (add is XOR, multiply is exact)."""
+    a0, a1 = split_pairs(ag)
+    b0, b1 = split_pairs(bg)
+    g_one = fnp.sum(eq * (a1 * b1))
+    g_inf = fnp.sum(eq * ((a0 + a1) * (b0 + b1)))
     return r0g * g_one, g_inf
 
 
@@ -151,10 +165,9 @@ def round_pair_eq_deferred(ag, bg, eq_next):
     array read. Evaluate with `eval_deferred` once ρ_i is drawn; the caller
     scales G(1) by its r₀ as usual.
 
-    The six reductions are hand-written rather than routed through
-    `summand_evals` (cf. `round_pair_eq`): the operands stay strided views of
-    the one array read and the Karatsuba structure stays legible — the same
-    trade `round_pair_eq_sq` makes."""
+    The six reductions are hand-written for the reason `round_pair_eq` records,
+    and here the Karatsuba structure stays legible too — the same trade
+    `round_pair_eq_sq` makes."""
     a4 = ag.reshape(-1, 4)
     b4 = bg.reshape(-1, 4)
 
