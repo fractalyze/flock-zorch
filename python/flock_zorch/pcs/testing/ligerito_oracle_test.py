@@ -30,7 +30,7 @@ from flock_zorch.testing._golden import (  # noqa: E402
     open_golden,
     read_ligerito_config,
 )
-from flock_zorch.testing._util import report  # noqa: E402
+from flock_zorch.testing._util import gate_device, report  # noqa: E402
 
 
 def load():
@@ -76,7 +76,7 @@ def run():
 
 
 def main() -> int:
-    print(f"device {frx.devices()[0]}")
+    gate_device()
     g, results = run()
     return report(
         results,

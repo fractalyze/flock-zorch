@@ -42,7 +42,7 @@ from flock_zorch.testing._golden import (  # noqa: E402
     read_ligerito_proof,
     swap_device_witness,
 )
-from flock_zorch.testing._util import report  # noqa: E402
+from flock_zorch.testing._util import gate_device, report  # noqa: E402
 
 
 def load(golden: str = "sha2_ligerito_golden.bin"):
@@ -170,7 +170,7 @@ def main() -> int:
         "(gates flock_zorch.witgen_sha2 against flock end to end)",
     )
     args = ap.parse_args()
-    print(f"device {frx.devices()[0]}")
+    gate_device()
     m, results = run(device_witness=args.witgen)
     return report(
         results,

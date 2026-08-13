@@ -46,7 +46,7 @@ from flock_zorch.testing._golden import (  # noqa: E402
     swap_device_witness,
     unpack_bits,
 )
-from flock_zorch.testing._util import report  # noqa: E402
+from flock_zorch.testing._util import gate_device, report  # noqa: E402
 
 
 def load():
@@ -171,7 +171,7 @@ def main() -> int:
         "(gates flock_zorch.witgen_keccak against flock end to end)",
     )
     args = ap.parse_args()
-    print(f"device {frx.devices()[0]}")
+    gate_device()
     m, results = run(device_witness=args.witgen)
     return report(
         results,
