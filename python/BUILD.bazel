@@ -80,9 +80,13 @@ py_test(
 # Fork-fixture byte gate for the benchmark profile's BLAKE3 Fiat-Shamir arm:
 # every draw and grind nonce vs transcripts dumped from flock-challenge's own
 # FsChallenger, plus the existing SHA-256 challenger as the sequence control.
+# "medium", not "small": the fixtures drive the DEVICE transcript, whose two
+# grinds trace a while loop over a 4096-wide compression apiece. That is real
+# device work where the retired host arm only ran numpy, and it overran the
+# 60s small budget on CI.
 py_test(
     name = "blake3_challenger_test",
-    size = "small",
+    size = "medium",
     srcs = ["flock_zorch/testing/blake3_challenger_test.py"],
     deps = [
         ":flock_zorch",
