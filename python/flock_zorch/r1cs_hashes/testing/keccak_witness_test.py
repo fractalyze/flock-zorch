@@ -1,5 +1,5 @@
 # Copyright 2026 The Flock-Zorch Authors. SPDX-License-Identifier: Apache-2.0
-"""Native unit test for `flock_zorch.witgen_keccak` (no golden).
+"""Native unit test for `flock_zorch.r1cs_hashes.keccak_witness` (no golden).
 
 Runs against both members of the family — single keccak and keccak3 — since
 they share an emitter and differ only in the lane map. Independent checks, so a
@@ -40,9 +40,8 @@ import numpy as np
 from absl.testing import absltest, parameterized
 from hash_frx.keccak.permutation import KeccakF1600
 
-from flock_zorch import witgen_keccak as wk
-from flock_zorch.lincheck import keccak as lincheck_keccak
-from flock_zorch.lincheck import keccak3 as lincheck_keccak3
+from flock_zorch.r1cs_hashes import keccak3_lincheck, keccak_lincheck
+from flock_zorch.r1cs_hashes import keccak_witness as wk
 
 _N_BLOCKS = 4
 _ONES = np.uint64(0xFFFF_FFFF_FFFF_FFFF)
@@ -69,8 +68,8 @@ class _Case(NamedTuple):
     lincheck: object
 
 
-_KECCAK = _Case(wk.KECCAK, wk.witness_keccak, lincheck_keccak)
-_KECCAK3 = _Case(wk.KECCAK3, wk.witness_keccak3, lincheck_keccak3)
+_KECCAK = _Case(wk.KECCAK, wk.witness_keccak, keccak_lincheck)
+_KECCAK3 = _Case(wk.KECCAK3, wk.witness_keccak3, keccak3_lincheck)
 
 _CIRCUITS = (
     {"testcase_name": "_keccak", "case": _KECCAK},
@@ -203,7 +202,7 @@ class WitgenKeccakTest(parameterized.TestCase):
         writes lane by lane.
         """
         spec, lk = case.spec, case.lincheck
-        wlc = lincheck_keccak._WLC
+        wlc = keccak_lincheck._WLC
         if spec.n_sub == 1:
             col0, col24, rows_t = [lk._COL_STATE0], [lk._COL_STATE24], [lk._ROWS_T]
         else:
@@ -236,7 +235,7 @@ class WitgenKeccakTest(parameterized.TestCase):
     def test_round_constants_and_rho_offsets_agree_with_the_lincheck_circuit(self):
         # Reached from hash_frx here and hand-transcribed from flock's Rust
         # there, so this is the only thing pinning that transcription.
-        lk = lincheck_keccak
+        lk = keccak_lincheck
         self.assertEqual(wk.N_LANES, lk.N_LANES)
         self.assertEqual(wk.LANE_BITS, lk.LANE_BITS)
         self.assertEqual(wk.N_ROUNDS, lk.N_T)

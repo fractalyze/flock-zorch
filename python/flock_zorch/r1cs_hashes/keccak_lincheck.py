@@ -1,3 +1,4 @@
+# Copyright 2026 The Flock-Zorch Authors. SPDX-License-Identifier: Apache-2.0
 """Keccak-f[1600] lincheck circuit walker — Python port of flock's
 `KeccakLincheckCircuit::fold_alpha_batched` (`crates/flock-prover/src/r1cs_hashes/
 keccak.rs:695-829`). Task #14, M1.

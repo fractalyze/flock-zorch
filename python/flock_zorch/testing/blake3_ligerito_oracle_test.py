@@ -28,10 +28,10 @@ from flock_zorch import (  # noqa: E402
     ghash,  # noqa: E402
     lincheck,
     prover,
-    witgen,
     zerocheck,
 )
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
+from flock_zorch.r1cs_hashes import blake3_witness  # noqa: E402
 from flock_zorch.sha256_challenger import Sha256Challenger  # noqa: E402
 from flock_zorch.testing._golden import (  # noqa: E402
     latest_blake3_golden,
@@ -49,22 +49,24 @@ def substitute_device_witness(g):
     it into `g`, so the standard gates below exercise the witgen path.
 
     The compression inputs come out of the golden's z prefix
-    (`witgen.extract_inputs`), so no extra fixture exists to go stale. The
+    (`blake3_witness.extract_inputs`), so no extra fixture exists to go stale. The
     proof gates then transitively pin witgen against flock: one diverging
     witness bit flips every Fiat-Shamir draw after it. This is what catches
     witgen drifting from flock's layout across a pin bump + golden re-dump —
     an event every golden-fed gate is green through by construction.
     """
-    z, a, b = witgen.witness_blake3(*witgen.extract_inputs(g["z"]))
+    z, a, b = blake3_witness.witness_blake3(*blake3_witness.extract_inputs(g["z"]))
     # Dispatch the stripe before the blocking D2H compare pulls below, so it
     # overlaps them instead of serializing after ~1.5 GiB of transfer.
-    zlc = witgen.lincheck_stripe(z)
+    zlc = blake3_witness.lincheck_stripe(z)
     z, a, b = (x.reshape(-1, 2) for x in (z, a, b))
     checks = [
         (f"witgen {k} vs golden", np.array_equal(np.asarray(v), g[k]))
         for k, v in zip("zab", (z, a, b))
     ]
-    ref = np.frombuffer(g["zlc"], np.uint8).reshape(-1, witgen.STRIPE_BYTES_PER_GROUP)
+    ref = np.frombuffer(g["zlc"], np.uint8).reshape(
+        -1, blake3_witness.STRIPE_BYTES_PER_GROUP
+    )
     checks.append(("witgen zlc vs golden", np.array_equal(np.asarray(zlc), ref)))
     g["z"], g["a"], g["b"] = z, a, b
     g["zlc"] = zlc
@@ -146,7 +148,7 @@ def main() -> int:
         "--witgen",
         action="store_true",
         help="regenerate the witness on device from the golden's own blocks "
-        "(gates flock_zorch.witgen against flock end to end)",
+        "(gates flock_zorch.r1cs_hashes.blake3_witness against flock end to end)",
     )
     args = ap.parse_args()
     print(f"device {frx.devices()[0]}")

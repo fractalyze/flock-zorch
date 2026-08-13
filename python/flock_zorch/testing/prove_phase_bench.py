@@ -65,8 +65,9 @@ frx.config.update("jax_enable_x64", True)
 
 import frx.numpy as fnp  # noqa: E402
 
-from flock_zorch import lincheck, prover, witgen, zerocheck  # noqa: E402
+from flock_zorch import lincheck, prover, zerocheck  # noqa: E402
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
+from flock_zorch.r1cs_hashes import blake3_witness  # noqa: E402
 from flock_zorch.testing._golden import unpack_bits  # noqa: E402
 from flock_zorch.testing._ptxas import (  # noqa: E402
     clmad_ptxas_verdict,
@@ -200,7 +201,7 @@ def _csc(g):
 
 
 def _keccak3_circuit(_g):
-    from flock_zorch.lincheck.keccak3 import Keccak3LincheckCircuit
+    from flock_zorch.r1cs_hashes.keccak3_lincheck import Keccak3LincheckCircuit
 
     return Keccak3LincheckCircuit()
 
@@ -231,7 +232,7 @@ class Circuit:
     def n_sub(self) -> int:
         """Hashes packed into one 2^k_log block."""
         if self.name == "keccak3":
-            from flock_zorch.lincheck.keccak3 import N_SUB
+            from flock_zorch.r1cs_hashes.keccak3_lincheck import N_SUB
 
             return N_SUB  # 3 independent Keccak-f[1600] permutations per block
         return 1
@@ -319,9 +320,9 @@ def make_prove(circ: Circuit, g, unpacked: bool, seed: int | None = None, profil
         else:
 
             def _witgen():
-                blocks = witgen.blocks_from_seed(seed_dev, m - k_log)
-                z3, a3, b3 = witgen.witness_blake3(*blocks)
-                zlc3 = witgen.lincheck_stripe(z3)
+                blocks = blake3_witness.blocks_from_seed(seed_dev, m - k_log)
+                z3, a3, b3 = blake3_witness.witness_blake3(*blocks)
+                zlc3 = blake3_witness.lincheck_stripe(z3)
                 return a3.reshape(-1, 2), b3.reshape(-1, 2), z3.reshape(-1, 2), zlc3
 
             wit_a, wit_b, wit_c, wit_zlc = phase("witgen", _witgen)

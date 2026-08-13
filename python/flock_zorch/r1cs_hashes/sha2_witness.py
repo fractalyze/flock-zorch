@@ -3,7 +3,8 @@
 
 Emits the packed `z`/`a`/`b` bit-streams for a batch of SHA-256 compressions,
 bit-identical to flock-prover's `r1cs_hashes::sha2` witness builder, the way
-`witgen` already does for BLAKE3 and `witgen_keccak` for the keccak family.
+`blake3_witness` already does for BLAKE3 and `keccak_witness` for the keccak
+family.
 
 sha2 is the bridge between the two families: it packs tightly like BLAKE3, so
 fields straddle 64-bit word boundaries, but it also materializes Ch and Maj as
@@ -36,10 +37,10 @@ single-bit selectors. And because the constant wire is not mid-block, nothing
 here needs BLAKE3's `extract_inputs` one-bit unshift: `H_in` and `M_in` are
 word-aligned and read straight out of the packed z.
 
-The R1CS is `a AND b = z` per bit, in the row forms `witgen_pack` documents;
+The R1CS is `a AND b = z` per bit, in the row forms `common` documents;
 sha2 is the circuit that uses all three.
 
-Emission is `witgen_pack.emit`, shared with BLAKE3, and sha2 is the reason it
+Emission is `common.emit`, shared with BLAKE3, and sha2 is the reason it
 addresses fields by offset rather than walking a bit cursor: sha2's computation
 order is not its bit order, with `ch_and` for every round living at bits
 [1024, 3072) but produced interleaved with that round's carries at 5,120 and
@@ -54,7 +55,13 @@ import frx.numpy as fnp
 import numpy as np
 from hash_frx.word import rotr
 
-from flock_zorch.witgen_pack import CARRY_BITS, ONES32, WORD_BITS, add_row, emit
+from flock_zorch.r1cs_hashes.common import (
+    CARRY_BITS,
+    ONES32,
+    WORD_BITS,
+    add_row,
+    emit,
+)
 
 K_LOG = 15
 K = 1 << K_LOG

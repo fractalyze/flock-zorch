@@ -3,9 +3,9 @@
 
 Emits the packed `z`/`a`/`b` bit-streams for a batch of Keccak permutations,
 bit-identical to flock-prover's `r1cs_hashes::{keccak,keccak3}` witness
-builders, the way `witgen` already does for BLAKE3. The prove consumes exactly
-these buffers, so producing them on device removes the host generation pass and
-its H2D crossing.
+builders, the way `blake3_witness` already does for BLAKE3. The prove consumes
+exactly these buffers, so producing them on device removes the host generation
+pass and its H2D crossing.
 
 Layout, in whole u64 LANES rather than bit offsets — this is the structural
 difference from BLAKE3. flock packs a keccak state into a 2,048-bit aligned

@@ -45,6 +45,10 @@ The rules every change must respect:
 
 ## Porting a witness layout from flock
 
+The four hash circuits live together in `python/flock_zorch/r1cs_hashes/`,
+mirroring flock's own `flock-prover/src/r1cs_hashes/`; that package's
+`__init__.py` is the map of which module carries what.
+
 - **The `*_BASE` / `*_POS` constants are the spec; the `//!` header diagram is
   not.** They disagree in `r1cs_hashes/sha2.rs` at the pinned rev (the header
   puts `Z_CONST` at bit 512, the constants at 31,400 — so every field from `M`
@@ -56,12 +60,12 @@ The rules every change must respect:
   surfacing as "the proof diverges" after a kernel exists.
 - **The packing model differs by circuit family.** blake3 and sha2 pack fields
   tightly, so values straddle 64-bit words and every field needs shift
-  arithmetic — both go through `witgen_pack.emit`, which addresses fields by
-  bit offset rather than walking a cursor, because neither circuit produces its
-  fields in bit order. keccak and keccak3 place each state in a 2,048-bit
-  aligned slot and write whole u64 lanes, so their "field list" is a lane map
-  with no shift arithmetic at all. Parameterizing by `K_LOG` alone does not
-  cover this.
+  arithmetic — both go through `r1cs_hashes.common.emit`, which addresses
+  fields by bit offset rather than walking a cursor, because neither circuit
+  produces its fields in bit order. keccak and keccak3 place each state in a
+  2,048-bit aligned slot and write whole u64 lanes, so their "field list" is a
+  lane map with no shift arithmetic at all. Parameterizing by `K_LOG` alone does
+  not cover this.
 
 ## Native `binary_field_ghash` dtype gotchas
 
