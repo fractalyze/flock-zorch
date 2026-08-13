@@ -3,7 +3,7 @@
 
 The host arm is already pinned to flock-challenge's own `FsChallenger` by
 `blake3_challenger_test`, so matching it here transitively pins the device arm
-to the fork — which is what lets `BENCHMARK_PROFILE` swap onto it without the
+to the fork — which is what lets `BLAKE3_PROFILE` swap onto it without the
 wire moving.
 
 Fiat-Shamir makes this gate sharp for free: every draw binds the whole prefix,

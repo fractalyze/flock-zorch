@@ -118,6 +118,26 @@ py_test(
     ],
 )
 
+# `--hash` must select a whole arm and name it in the output: a wall-clock
+# number from this harness means nothing without knowing which Fiat-Shamir and
+# Merkle hashes produced it, and one attributed to the wrong arm survives into an
+# issue. Pure host wiring, no golden and no device.
+py_test(
+    name = "prove_phase_bench_test",
+    size = "small",
+    # The harness itself rides in srcs: it is a script, so no library carries it
+    # (`py_library` excludes testing/, `test_support` globs only `_*.py`).
+    srcs = [
+        "flock_zorch/testing/prove_phase_bench.py",
+        "flock_zorch/testing/prove_phase_bench_test.py",
+    ],
+    main = "flock_zorch/testing/prove_phase_bench_test.py",
+    deps = [
+        ":flock_zorch",
+        ":test_support",
+    ],
+)
+
 # No target for `blake3_profile_parity_test`: it proves the m22 blake3 golden
 # under both transcript arms, and that golden is in dump_goldens.sh's HEAVY set,
 # which CI does not dump. It is a venv gate like the other hash-circuit oracle

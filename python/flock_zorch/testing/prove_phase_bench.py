@@ -67,7 +67,6 @@ import frx.numpy as fnp  # noqa: E402
 
 from flock_zorch import lincheck, prover, witgen, zerocheck  # noqa: E402
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
-from flock_zorch.sha256_challenger import Sha256Challenger  # noqa: E402
 from flock_zorch.testing._golden import unpack_bits  # noqa: E402
 from flock_zorch.testing._ptxas import (  # noqa: E402
     clmad_ptxas_verdict,
@@ -77,6 +76,28 @@ from flock_zorch.testing._util import await_all, best, best_of  # noqa: E402
 from flock_zorch.types import ProveFastResult  # noqa: E402
 
 PHASES = ("commit", "zerocheck", "lincheck", "open")
+
+
+# The hash names the whole arm because the two shipped profiles pair their FS
+# and Merkle choices: flock's is SHA-256 for both, the flock-challenge harness's
+# is BLAKE3 for both. Mixed arms are expressible (`ProveProfile` takes the two
+# separately, and one was measured while attributing the gap between these) but
+# are not a configuration anything ships, so they are not offered here.
+HASH_ARMS = {"sha256": "SHA256_PROFILE", "blake3": "BLAKE3_PROFILE"}
+
+
+def _profile(args):
+    """The arm this run measures.
+
+    Changes WHICH bytes the proof is, not the protocol — both run the same
+    reductions and the same open, so the two are directly comparable.
+
+    It does NOT change what is timed. This harness measures witgen -> open and
+    never serializes; the harness worker's window additionally includes
+    `proof_io.bundle_bytes`. Picking `blake3` gets you the harness's arm, not
+    its scope.
+    """
+    return getattr(prover, HASH_ARMS[args.hash])
 
 
 def _phases(args):
@@ -242,7 +263,7 @@ class Circuit:
 # -------------------------------------------------------------------- timing
 
 
-def make_prove(circ: Circuit, g, unpacked: bool, seed: int | None = None):
+def make_prove(circ: Circuit, g, unpacked: bool, seed: int | None = None, profile=None):
     """Returns a `prove(times) -> result` running one full prove.
 
     With `times`, every phase is awaited and recorded into it. There is exactly
@@ -250,6 +271,7 @@ def make_prove(circ: Circuit, g, unpacked: bool, seed: int | None = None):
     inter-phase glue billed to nobody would make the split silently under-count
     the prove it claims to decompose.
     """
+    profile = prover.SHA256_PROFILE if profile is None else profile
     meta, cfg = g["meta"], g["cfg"]
     m, k_log, k_skip = meta["m"], meta["k_log"], meta["k_skip"]
     ir = k_log - k_skip
@@ -306,8 +328,8 @@ def make_prove(circ: Circuit, g, unpacked: bool, seed: int | None = None):
             wit_z = wit_c
 
         def _commit():
-            root, pdata = zorch_ligerito.commit_flock_ligerito(cfg, wit_z)
-            ch = Sha256Challenger(circ.domain)
+            root, pdata = zorch_ligerito.commit_flock_ligerito(cfg, wit_z, profile.tree)
+            ch = profile.challenger_cls(circ.domain)
             prover.bind_statement(ch, stmt, root)
             return pdata, ch
 
@@ -321,7 +343,9 @@ def make_prove(circ: Circuit, g, unpacked: bool, seed: int | None = None):
         def _open(zc, x_ab, lc):
             ab = fnp.concatenate([lc.claim.r_inner_rest, x_ab.x_outer], axis=0)
             cc = fnp.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
-            return prover.open_batch_ligerito(cfg, wit_z, pdata, [ab, cc], ch)
+            return prover.open_batch_ligerito(
+                cfg, wit_z, pdata, [ab, cc], ch, profile.tree
+            )
 
         pdata, ch = phase("commit", _commit)
         # The claim, not the wire proof: `ZerocheckProof` holds wire fields
@@ -353,7 +377,7 @@ def bench(circ: Circuit, args) -> None:
     g = circ.ingest(args.golden)
     meta = g["meta"]
     n_hash = circ.hashes_per_proof(meta)
-    prove = make_prove(circ, g, args.unpacked, seed=args.seed)
+    prove = make_prove(circ, g, args.unpacked, seed=args.seed, profile=_profile(args))
     phases = _phases(args)
 
     if args.throughput:
@@ -432,6 +456,16 @@ def main() -> int:
         "of ingesting the golden's; the golden still supplies the circuit "
         "constants. The window is then snark.fast-comparable minus proof "
         "serialization.",
+    )
+    ap.add_argument(
+        "--hash",
+        choices=sorted(HASH_ARMS),
+        default="sha256",
+        help="Fiat-Shamir + Merkle hash: 'sha256' is flock's arm, the one every "
+        "golden byte-gates; 'blake3' is the flock-challenge harness's. Swaps "
+        "BOTH arms, unlike nsys_capture's --tree, which swaps the Merkle arm "
+        "alone. Does not change what is timed — serialization is outside this "
+        "window either way.",
     )
     ap.add_argument(
         "--allow-contended",

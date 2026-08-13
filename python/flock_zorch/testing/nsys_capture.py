@@ -244,7 +244,7 @@ def _build_commit(golden: str, tree: str):
 
     `--tree` picks the arm, and the two are not interchangeable as targets: the
     SHA-256 arm is flock's default, but the 5M BLAKE3/s benchmark commits with
-    BLAKE3 (`prover.BENCHMARK_PROFILE`), whose leaf level is one fused
+    BLAKE3 (`prover.BLAKE3_PROFILE`), whose leaf level is one fused
     `hash_frx.blake3` composite rather than a pad/pack assembly. A commit number
     is only comparable to another taken on the same arm.
 
