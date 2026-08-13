@@ -13,7 +13,8 @@ artifacts/sha2_ligerito_golden.bin):
       python/flock_zorch/testing/sha2_ligerito_oracle_test.py
 
 `--witgen` additionally regenerates the witness on device from the golden's own
-blocks, which puts `flock_zorch.witgen_sha2` under the same proof-level gate.
+blocks, which puts `flock_zorch.r1cs_hashes.sha2_witness` under the same
+proof-level gate.
 """
 
 import argparse
@@ -30,10 +31,10 @@ from flock_zorch import (  # noqa: E402
     ghash,  # noqa: E402
     lincheck,
     prover,
-    witgen_sha2,
     zerocheck,
 )
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
+from flock_zorch.r1cs_hashes import sha2_witness  # noqa: E402
 from flock_zorch.sha256_challenger import Sha256Challenger  # noqa: E402
 from flock_zorch.testing._golden import (  # noqa: E402
     ligerito_proof_results,
@@ -89,12 +90,12 @@ def substitute_device_witness(g):
     below exercise the witgen path.
 
     The compression inputs come out of the golden's own z prefix
-    (`witgen_sha2.extract_inputs`), so no extra fixture exists to go stale.
+    (`sha2_witness.extract_inputs`), so no extra fixture exists to go stale.
 
     sha2's lincheck stripe has no device port yet, so substituting `zlc` would
     gate something that does not exist; it is left as the golden's.
     """
-    streams = witgen_sha2.witness_sha2(*witgen_sha2.extract_inputs(g["z"]))
+    streams = sha2_witness.witness_sha2(*sha2_witness.extract_inputs(g["z"]))
     return swap_device_witness(g, "witgen_sha2", streams)
 
 
@@ -167,7 +168,7 @@ def main() -> int:
         "--witgen",
         action="store_true",
         help="regenerate the witness on device from the golden's own blocks "
-        "(gates flock_zorch.witgen_sha2 against flock end to end)",
+        "(gates flock_zorch.r1cs_hashes.sha2_witness against flock end to end)",
     )
     args = ap.parse_args()
     gate_device()

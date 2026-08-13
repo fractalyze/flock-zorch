@@ -89,7 +89,13 @@ class CscCircuit:
     Runs **on device** as a column-sorted prefix-XOR scan (`_seg_xor_fold`) — handles
     the skewed const_pin column degree (a padded gather would blow up, an atomic
     XOR-scatter would hotspot) without either. `const_pin` carries the +β pin column.
-    (The construction-time column sort is host, once.)"""
+    (The construction-time column sort is host, once.)
+
+    This is why blake3 and sha2 have no per-circuit lincheck module: their goldens
+    carry populated A₀/B₀, so a caller builds one of these from `a0_rows`/`b0_rows`
+    directly. keccak and keccak3 ship EMPTY A₀/B₀ stubs, so their constraint
+    definition exists only as the procedural walkers in
+    `flock_zorch.r1cs_hashes.{keccak,keccak3}_lincheck`."""
 
     def __init__(self, a0_rows, b0_rows, k: int, const_pin=None):
         self.k = k
@@ -167,8 +173,9 @@ class LincheckCircuit(Protocol):
     protocol, varying only the column-marginal fold. `fold_alpha_batched` returns
     comb[c] = α·(A₀ᵀ·eq_inner)[c] ⊕ (B₀ᵀ·eq_inner)[c]; `const_pin` is the +β pin
     column, or None. `CscCircuit` (device seg-scan) and the `KeccakLincheckCircuit`
-    / `Keccak3LincheckCircuit` host walkers match it structurally — no inheritance,
-    no shared base. `@runtime_checkable` so `lincheck_circuit_protocol_test` can
+    / `Keccak3LincheckCircuit` walkers (in `flock_zorch.r1cs_hashes`, with their
+    circuits) match it structurally — no inheritance, no shared base.
+    `@runtime_checkable` so `lincheck_circuit_protocol_test` can
     assert conformance at runtime; that checks member presence, not the fold's math
     (the byte-match oracle gates pin that)."""
 

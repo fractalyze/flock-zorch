@@ -1,10 +1,11 @@
 # Copyright 2026 The Flock-Zorch Authors. SPDX-License-Identifier: Apache-2.0
 """One-kernel BLAKE3 R1CS witness emission.
 
-Byte-identical to `witgen.witness_blake3`, produced by a single Pallas program
-per tile of compressions instead of an XLA fusion per slice of the output.
+Byte-identical to `blake3_witness.witness_blake3`, produced by a single Pallas
+program per tile of compressions instead of an XLA fusion per slice of the
+output.
 
-Why a kernel. `witgen_pack.emit` assembles all 256 output words of a stream in
+Why a kernel. `common.emit` assembles all 256 output words of a stream in
 one expression, which makes the stream one fusion, and that fusion has to keep
 the sequential 336-row chain live while it assembles them: `ptxas` puts 11 of
 the module's 19 kernels at the 255-register cap with up to 716 B/thread
@@ -37,14 +38,14 @@ from frx.experimental import pallas as pl
 from frx.experimental.pallas import triton as plgpu
 from hash_frx.blake3.compress import IV, ROUNDS
 
-from flock_zorch.witgen import (
+from flock_zorch.r1cs_hashes.blake3_witness import (
     _G_LANES,
     _SCHEDULE,
     STRIPE_BYTES_PER_GROUP,
     STRIPE_USEFUL_WORDS,
     WORDS_PER_BLOCK,
 )
-from flock_zorch.witgen_pack import CARRY_BITS, ONES32, add_row
+from flock_zorch.r1cs_hashes.common import CARRY_BITS, ONES32, add_row
 
 # Rows per program. Measured on an RTX 5090 writing this [N, 256] u64 shape
 # with the per-word store this kernel uses: 16 rows reaches 1254 GB/s against a
@@ -222,13 +223,13 @@ def _kernel(cv_ref, m_ref, ctr_ref, bl_ref, fl_ref, z_ref, a_ref, b_ref):
 
 @frx.jit
 def witness_blake3(cv, m, counter, block_len, flags):
-    """Packed z/a/b witness streams, byte-identical to `witgen.witness_blake3`.
+    """Packed z/a/b witness streams, byte-identical to `blake3_witness.witness_blake3`.
 
     cv: uint32 [N, 8], m: uint32 [N, 16], counter: uint64 [N],
     block_len/flags: uint32 [N] -> three uint64 [N, 256] arrays.
 
     GPU only — Triton has no CPU lowering. Reach this through
-    `witgen.witness_blake3`, which keeps the portable path for everything else.
+    `blake3_witness.witness_blake3`, which keeps the portable path for everything else.
     """
     n = cv.shape[0]
     pad = -n % _BLOCK_ROWS  # the grid is whole programs, so fill a short tile
@@ -261,7 +262,7 @@ def witness_blake3(cv, m, counter, block_len, flags):
 def _transpose_8x8_bits(x):
     """Hacker's Delight 7-3 on the 8x8 bit matrix in each u64 (byte i = row i).
 
-    The device twin of `witgen._transpose_8x8_bits`; every mask is under 2^63,
+    The device twin of `blake3_witness._transpose_8x8_bits`; every mask is under 2^63,
     so none of them need `_u64`.
     """
     t = (x ^ (x >> fnp.uint64(7))) & fnp.uint64(0x00AA_00AA_00AA_00AA)
@@ -299,10 +300,10 @@ def _stripe_kernel(z_ref, out_ref):
 @frx.jit
 def lincheck_stripe(z):
     """The lincheck byte stripe from a packed z stream, byte-identical to
-    `witgen.lincheck_stripe`.
+    `blake3_witness.lincheck_stripe`.
 
     z: uint64 [N, 256] with N a multiple of `_STRIPE_ROWS` -> uint8
-    [N/8, 16384]. GPU only; reach it through `witgen.lincheck_stripe`.
+    [N/8, 16384]. GPU only; reach it through `blake3_witness.lincheck_stripe`.
 
     Left as its own kernel rather than folded into the witness emission: folding
     was measured, and it cost the emit 27% of its throughput (765 -> 561 GB/s)

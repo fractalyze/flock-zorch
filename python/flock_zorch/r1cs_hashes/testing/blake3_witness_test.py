@@ -1,5 +1,5 @@
 # Copyright 2026 The Flock-Zorch Authors. SPDX-License-Identifier: Apache-2.0
-"""Native unit test for `flock_zorch.witgen` (no golden).
+"""Native unit test for `flock_zorch.r1cs_hashes.blake3_witness` (no golden).
 
 Independent checks, so a layout slip and a math slip cannot mask each other:
 
@@ -43,8 +43,8 @@ import numpy as np
 from absl.testing import absltest
 from hash_frx.blake3.compress import IV, compress
 
-from flock_zorch import witgen
 from flock_zorch.pcs import pack
+from flock_zorch.r1cs_hashes import blake3_witness
 
 
 def _rand_inputs(rng, n):
@@ -98,10 +98,10 @@ def _ref_streams(cv, m, counter, block_len, flags):
     for v in (t_lo, t_hi, int(block_len), int(flags)):
         put_lin(v)
 
-    for r in range(witgen.ROUNDS):
-        sched = witgen._SCHEDULE[r]
+    for r in range(blake3_witness.ROUNDS):
+        sched = blake3_witness._SCHEDULE[r]
         for g in range(8):
-            la, lb, lc, ld = witgen._G_LANES[g]
+            la, lb, lc, ld = blake3_witness._G_LANES[g]
             mx, my = int(m[sched[2 * g]]), int(m[sched[2 * g + 1]])
             a0, b0, c0, d0 = state[la], state[lb], state[lc], state[ld]
             rows = []
@@ -131,7 +131,7 @@ def _ref_streams(cv, m, counter, block_len, flags):
 
     for w in range(8):
         put_lin(state[w + 8] ^ int(cv[w]))
-    assert pos["z"] == witgen.USEFUL_BITS
+    assert pos["z"] == blake3_witness.USEFUL_BITS
 
     for w in range(8):  # back-fill the reserved out_lo slot
         v = state[w] ^ state[w + 8]
@@ -144,7 +144,10 @@ def _ref_streams(cv, m, counter, block_len, flags):
 
 def _words(x):
     return np.array(
-        [(x >> (64 * i)) & ((1 << 64) - 1) for i in range(witgen.WORDS_PER_BLOCK)],
+        [
+            (x >> (64 * i)) & ((1 << 64) - 1)
+            for i in range(blake3_witness.WORDS_PER_BLOCK)
+        ],
         dtype=np.uint64,
     )
 
@@ -155,7 +158,7 @@ class WitgenTest(absltest.TestCase):
         super().setUpClass()
         rng = np.random.default_rng(0xF17C)
         cls.inputs = _rand_inputs(rng, 8)
-        z, a, b = witgen.witness_blake3(*cls.inputs)
+        z, a, b = blake3_witness.witness_blake3(*cls.inputs)
         cls.z, cls.a, cls.b = map(np.asarray, (z, a, b))
         cls.refs = [_ref_streams(*(x[i] for x in cls.inputs)) for i in range(8)]
 
@@ -171,7 +174,7 @@ class WitgenTest(absltest.TestCase):
     def test_pallas_kernel_matches_portable_emission(self):
         if frx.default_backend() != "gpu":
             self.skipTest("the Pallas kernel has no CPU lowering")
-        from flock_zorch import witgen_pallas
+        from flock_zorch.r1cs_hashes import blake3_witness_pallas
 
         # Same batch size the fixture uses, deliberately: a Triton compile of
         # this kernel costs ~390 s per distinct shape, and reusing the shape
@@ -179,8 +182,8 @@ class WitgenTest(absltest.TestCase):
         # not a multiple of the 16-row tile, so it exercises the pad-and-slice
         # path — the exact-tile path is the same code with pad == 0.
         inputs = _rand_inputs(np.random.default_rng(0xA11A5), 8)
-        want = witgen._witness_blake3_xla(*inputs)
-        got = witgen_pallas.witness_blake3(*inputs)
+        want = blake3_witness._witness_blake3_xla(*inputs)
+        got = blake3_witness_pallas.witness_blake3(*inputs)
         for name, w, g in zip("zab", want, got):
             np.testing.assert_array_equal(
                 np.asarray(w), np.asarray(g), f"{name} stream"
@@ -189,24 +192,29 @@ class WitgenTest(absltest.TestCase):
     def test_pallas_stripe_matches_portable_stripe(self):
         if frx.default_backend() != "gpu":
             self.skipTest("the Pallas kernel has no CPU lowering")
-        from flock_zorch import witgen_pallas
+        from flock_zorch.r1cs_hashes import blake3_witness_pallas
 
         # Random words rather than a real witness: the stripe is a pure bit
         # transpose, and random bits exercise it harder than the structured
         # zeros a witness carries in its padding. The fixture's 8 blocks are
         # below the kernel's tile, so this needs its own batch.
         rng = np.random.default_rng(0x57819E)
-        n = witgen_pallas.stripe_rows()
+        n = blake3_witness_pallas.stripe_rows()
         z = frx.device_put(
-            rng.integers(0, 1 << 64, size=(n, witgen.WORDS_PER_BLOCK), dtype=np.uint64)
+            rng.integers(
+                0,
+                1 << 64,
+                size=(n, blake3_witness.WORDS_PER_BLOCK),
+                dtype=np.uint64,
+            )
         )
         np.testing.assert_array_equal(
-            np.asarray(witgen._lincheck_stripe_xla(z)),
-            np.asarray(witgen_pallas.lincheck_stripe(z)),
+            np.asarray(blake3_witness._lincheck_stripe_xla(z)),
+            np.asarray(blake3_witness_pallas.lincheck_stripe(z)),
         )
 
     def test_extract_inputs_roundtrip(self):
-        got = witgen.extract_inputs(self.z.reshape(-1, 2))
+        got = blake3_witness.extract_inputs(self.z.reshape(-1, 2))
         for name, want, have in zip(
             ("cv", "m", "counter", "block_len", "flags"), self.inputs, got
         ):
@@ -215,10 +223,12 @@ class WitgenTest(absltest.TestCase):
     def test_lincheck_stripe_matches_host_port(self):
         # 8 blocks of 2^14 bits = one stripe group = a 2^17-bit witness.
         want = np.frombuffer(
-            pack.pack_z_lincheck_from_packed(self.z.reshape(-1, 2), 17, witgen.K_LOG),
+            pack.pack_z_lincheck_from_packed(
+                self.z.reshape(-1, 2), 17, blake3_witness.K_LOG
+            ),
             np.uint8,
-        ).reshape(1, witgen.STRIPE_BYTES_PER_GROUP)
-        got = np.asarray(witgen.lincheck_stripe(self.z))
+        ).reshape(1, blake3_witness.STRIPE_BYTES_PER_GROUP)
+        got = np.asarray(blake3_witness.lincheck_stripe(self.z))
         np.testing.assert_array_equal(got, want)
 
     def test_blocks_from_seed_matches_splitmix_reference(self):
@@ -233,7 +243,7 @@ class WitgenTest(absltest.TestCase):
             z = ((z ^ (z >> 27)) * 0x94D0_49BB_1331_11EB) & mask
             draws.append((z ^ (z >> 31)) & 0xFFFF_FFFF)
         want = np.array(draws, np.uint32).reshape(-1, 25)
-        cv, m, counter, block_len, flags = witgen.blocks_from_seed(
+        cv, m, counter, block_len, flags = blake3_witness.blocks_from_seed(
             np.uint64(seed), log2
         )
         np.testing.assert_array_equal(np.asarray(cv), want[:, 0:8])
@@ -251,7 +261,7 @@ class WitgenTest(absltest.TestCase):
             axis=1,
         )
         out = np.asarray(compress(cv, m, ctr, block_len, flags))
-        lo_start, hi_start = 8 * 32, witgen.USEFUL_BITS - 8 * 32
+        lo_start, hi_start = 8 * 32, blake3_witness.USEFUL_BITS - 8 * 32
         z_bits = np.unpackbits(
             self.z.view(np.uint8).reshape(self.z.shape[0], -1),
             axis=1,

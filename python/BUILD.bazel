@@ -183,6 +183,9 @@ py_test(
 
 # Pure-host unit test (no golden): the lincheck circuit seam Protocol —
 # asserts every circuit `lincheck.prove(circuit=)` accepts conforms structurally.
+# It stays under lincheck/ with the Protocol it pins, and reaches across to the
+# per-circuit walkers in flock_zorch/r1cs_hashes/, which is the whole point:
+# the seam holds with no inheritance and no shared base.
 py_test(
     name = "lincheck_circuit_protocol_test",
     size = "small",
@@ -234,9 +237,9 @@ py_test(
 # No golden: the R1CS relation z == a AND b, a scalar big-int layout
 # reference, and hash-frx's independent compression as the math anchor.
 py_test(
-    name = "witgen_test",
+    name = "blake3_witness_test",
     size = "medium",
-    srcs = ["flock_zorch/testing/witgen_test.py"],
+    srcs = ["flock_zorch/r1cs_hashes/testing/blake3_witness_test.py"],
     deps = [
         ":flock_zorch",
         ":test_support",
@@ -246,11 +249,12 @@ py_test(
 
 # No golden: the R1CS relation z == a AND b, hash-frx's independent Keccak-f
 # permutation as the math anchor, chi's operand aliasing as the wiring pin, and
-# a layout cross-check against the lincheck circuit's copy of the same offsets.
+# a layout cross-check against the lincheck circuit's copy of the same offsets
+# (`keccak_lincheck` / `keccak3_lincheck`, now the file next door).
 py_test(
-    name = "witgen_keccak_test",
+    name = "keccak_witness_test",
     size = "medium",
-    srcs = ["flock_zorch/testing/witgen_keccak_test.py"],
+    srcs = ["flock_zorch/r1cs_hashes/testing/keccak_witness_test.py"],
     deps = [
         ":flock_zorch",
         requirement("absl-py"),
@@ -261,9 +265,9 @@ py_test(
 # that shares no packing code with the emitter, and hash-frx's independent
 # compression as the math anchor.
 py_test(
-    name = "witgen_sha2_test",
+    name = "sha2_witness_test",
     size = "large",  # ~57s: sha2's emit is ~2x blake3's row count
-    srcs = ["flock_zorch/testing/witgen_sha2_test.py"],
+    srcs = ["flock_zorch/r1cs_hashes/testing/sha2_witness_test.py"],
     deps = [
         ":flock_zorch",
         requirement("absl-py"),

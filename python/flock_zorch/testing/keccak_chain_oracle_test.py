@@ -26,8 +26,10 @@ import frx.numpy as fnp  # noqa: E402
 
 from flock_zorch import ghash, lincheck, prover, zerocheck  # noqa: E402
 from flock_zorch.lincheck import chain  # noqa: E402
-from flock_zorch.lincheck.keccak import KeccakLincheckCircuit  # noqa: E402
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
+from flock_zorch.r1cs_hashes.keccak_lincheck import (  # noqa: E402
+    KeccakLincheckCircuit,
+)
 from flock_zorch.sha256_challenger import Sha256Challenger  # noqa: E402
 from flock_zorch.testing._golden import (  # noqa: E402
     ligerito_proof_results,

@@ -17,8 +17,12 @@ import frx
 frx.config.update("jax_enable_x64", True)  # ghash ops at flock_zorch import need x64
 
 from flock_zorch.lincheck import CscCircuit, LincheckCircuit  # noqa: E402
-from flock_zorch.lincheck.keccak import KeccakLincheckCircuit  # noqa: E402
-from flock_zorch.lincheck.keccak3 import Keccak3LincheckCircuit  # noqa: E402
+from flock_zorch.r1cs_hashes.keccak3_lincheck import (  # noqa: E402
+    Keccak3LincheckCircuit,
+)
+from flock_zorch.r1cs_hashes.keccak_lincheck import (  # noqa: E402
+    KeccakLincheckCircuit,
+)
 
 
 class _MissingFold:

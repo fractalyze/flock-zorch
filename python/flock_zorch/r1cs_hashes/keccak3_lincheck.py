@@ -1,3 +1,4 @@
+# Copyright 2026 The Flock-Zorch Authors. SPDX-License-Identifier: Apache-2.0
 """3-wide Keccak-f[1600] lincheck circuit walker — Python port of flock's
 `keccak3::KeccakLincheckCircuit::fold_alpha_batched` (`crates/flock-prover/src/
 r1cs_hashes/keccak3.rs:449-484`). Task #14, M3b — the headline keccak backend.
@@ -7,14 +8,14 @@ keccak3 packs THREE independent keccak permutations per block at K_LOG=17 (usefu
 the single-keccak transpose recurrence — one `_accumulate_subkeccak` per
 sub-keccak over its column region, merged by XOR into a shared `comb` plus one
 shared const row. The device fold, the θ∘ρ∘π preimage maps and the gather helpers
-are reused verbatim from `keccak` (flock reuses `super::keccak` likewise)
-via the shared `_fold_walker`. Plugs into `lincheck.prove(circuit=)` like the
-single walker; const_pin = the shared Z_CONST.
+are reused verbatim from `keccak_lincheck` (flock reuses `super::keccak`
+likewise) via the shared `_fold_walker`. Plugs into `lincheck.prove(circuit=)`
+like the single walker; const_pin = the shared Z_CONST.
 """
 
 import numpy as np
 
-from flock_zorch.lincheck.keccak import (
+from flock_zorch.r1cs_hashes.keccak_lincheck import (
     _WLC,
     LANE_BITS,
     N_T,

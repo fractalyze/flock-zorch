@@ -1,5 +1,5 @@
 # Copyright 2026 The Flock-Zorch Authors. SPDX-License-Identifier: Apache-2.0
-"""Native unit test for `flock_zorch.witgen_sha2` (no golden).
+"""Native unit test for `flock_zorch.r1cs_hashes.sha2_witness` (no golden).
 
 Independent checks, so a layout slip and a math slip cannot mask each other:
 
@@ -32,7 +32,7 @@ import numpy as np
 from absl.testing import absltest
 from hash_frx.sha256 import compress
 
-from flock_zorch import witgen_sha2 as ws
+from flock_zorch.r1cs_hashes import sha2_witness as ws
 
 _N_BLOCKS = 4
 _ONES32 = (1 << 32) - 1

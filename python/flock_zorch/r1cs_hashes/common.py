@@ -1,13 +1,14 @@
 # Copyright 2026 The Flock-Zorch Authors. SPDX-License-Identifier: Apache-2.0
-"""Bit-packing shared by the tightly-packed R1CS witness circuits.
+"""Bit-packing shared by the tightly-packed R1CS witness circuits (flock's
+`r1cs_hashes/common.rs`).
 
-`witgen` (BLAKE3) and `witgen_sha2` both pack their fields tightly, so values
+`blake3_witness` and `sha2_witness` both pack their fields tightly, so values
 straddle 64-bit word boundaries and every field needs shift arithmetic. They
 differ only in their layouts, which is what this module factors out: the
 offset-addressed emitter and flock's ADD row.
 
-The keccak family does not go through here. `witgen_keccak` places each state in
-a 2,048-bit aligned slot and writes whole u64 lanes, so its "field list" is a
+The keccak family does not go through here. `keccak_witness` places each state
+in a 2,048-bit aligned slot and writes whole u64 lanes, so its "field list" is a
 lane map with no shifts at all and its rows have no carries.
 """
 
@@ -47,8 +48,8 @@ def add_row(x, y):
     identity.
 
     A plain int mask rather than `fnp.uint32(...)`: this body is traced both by
-    XLA and, through `witgen_pallas`, by Triton, and a per-call `fnp` scalar
-    would be an eager device constant on every one of those calls.
+    XLA and, through `blake3_witness_pallas`, by Triton, and a per-call `fnp`
+    scalar would be an eager device constant on every one of those calls.
     """
     s = x + y
     left, right = (s ^ y) & _MASK31, (s ^ x) & _MASK31

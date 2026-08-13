@@ -20,11 +20,11 @@ words; every offset is a compile-time constant):
     [15153, 15409)  out_hi[w] = state[w+8] ^ cv[w]
     [15409, 16384)  zero padding
 
-The R1CS is `a AND b = z` per bit, in the row forms `witgen_pack` documents.
+The R1CS is `a AND b = z` per bit, in the row forms `common` documents.
 Only `b_new`/`d_new` need lin rows: `a_2`/`c_2` are already pinned as ADD-row
 sums.
 
-Emission is `witgen_pack.emit`, shared with sha2: each of the 256 output words
+Emission is `common.emit`, shared with sha2: each of the 256 output words
 is assembled directly from the u32 field values, every bit offset a
 compile-time constant, so a field lands in one word (or straddles two) with
 static shifts and all-constant regions (the b-stream's lin masks, the constant
@@ -46,7 +46,13 @@ from frx import lax
 from hash_frx.blake3.compress import IV, MSG_PERMUTATION, ROUNDS
 from hash_frx.word import rotr
 
-from flock_zorch.witgen_pack import CARRY_BITS, ONES32, WORD_BITS, add_row, emit
+from flock_zorch.r1cs_hashes.common import (
+    CARRY_BITS,
+    ONES32,
+    WORD_BITS,
+    add_row,
+    emit,
+)
 
 K_LOG = 14
 K = 1 << K_LOG
@@ -101,21 +107,21 @@ def witness_blake3(cv, m, counter, block_len, flags):
     cv: uint32 [N, 8], m: uint32 [N, 16], counter: uint64 [N],
     block_len/flags: uint32 [N] -> three uint64 [N, 256] arrays (z, a, b).
 
-    GPU runs `witgen_pallas`'s fused kernel, which walks the chain once for all
-    three streams and stores each output word as it is finished; this XLA
-    expression stays as the portable path and as the kernel's oracle, which is
-    how `zorch.utils.binary_field.byte_select_xor_reduce` splits the same way.
+    GPU runs `blake3_witness_pallas`'s fused kernel, which walks the chain once
+    for all three streams and stores each output word as it is finished; this
+    XLA expression stays as the portable path and as the kernel's oracle, which
+    is how `zorch.utils.binary_field.byte_select_xor_reduce` splits the same way.
     The kernel is Triton, so it has no CPU lowering at all ("Only interpret
     mode is supported on CPU backend") — the split is forced, not a tuning
-    choice. `witgen_test` byte-compares the two wherever both can run.
+    choice. `blake3_witness_test` byte-compares the two wherever both can run.
     """
     if frx.default_backend() != "gpu":
         return _witness_blake3_xla(cv, m, counter, block_len, flags)
-    # Deferred: witgen_pallas reads this module's layout constants, so a
+    # Deferred: blake3_witness_pallas reads this module's layout constants, so a
     # module-scope import here would be a cycle.
-    from flock_zorch import witgen_pallas
+    from flock_zorch.r1cs_hashes import blake3_witness_pallas
 
-    return witgen_pallas.witness_blake3(cv, m, counter, block_len, flags)
+    return blake3_witness_pallas.witness_blake3(cv, m, counter, block_len, flags)
 
 
 @frx.jit
@@ -282,16 +288,19 @@ def lincheck_stripe(z):
 
     z: uint64 [N, 256] with N divisible by 8 -> uint8 [N/8, 16384].
 
-    GPU runs `witgen_pallas`'s kernel where the batch allows it; this XLA
-    expression is the portable path and the kernel's oracle, the same split
+    GPU runs `blake3_witness_pallas`'s kernel where the batch allows it; this
+    XLA expression is the portable path and the kernel's oracle, the same split
     `witness_blake3` makes. Batches that are not a whole number of the kernel's
     tile fall through to it as well — real proves are powers of two, and
     padding a stripe would mean inventing blocks.
     """
-    from flock_zorch import witgen_pallas
+    from flock_zorch.r1cs_hashes import blake3_witness_pallas
 
-    if frx.default_backend() == "gpu" and z.shape[0] % witgen_pallas.stripe_rows() == 0:
-        return witgen_pallas.lincheck_stripe(z)
+    if (
+        frx.default_backend() == "gpu"
+        and z.shape[0] % blake3_witness_pallas.stripe_rows() == 0
+    ):
+        return blake3_witness_pallas.lincheck_stripe(z)
     return _lincheck_stripe_xla(z)
 
 
@@ -303,8 +312,8 @@ def _lincheck_stripe_xla(z):
     Byte `g*16384 + i*64 + c*8 + t` holds, in bit r, bit `i*64 + c*8 + t`
     of block `8g + r`'s z — flock's stripe layout, one byte per bit column
     covering all 8 blocks of the group. The device twin of the host port
-    `flock_zorch.pcs.pack.pack_z_lincheck_from_packed`; witgen_test pins
-    the two byte-identical.
+    `flock_zorch.pcs.pack.pack_z_lincheck_from_packed`; blake3_witness_test
+    pins the two byte-identical.
     """
     n = z.shape[0]
     if n % 8:

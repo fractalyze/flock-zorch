@@ -15,7 +15,8 @@ artifacts/keccak_ligerito_golden.bin):
       python/flock_zorch/testing/keccak_ligerito_oracle_test.py
 
 `--witgen` additionally regenerates the witness on device from the golden's own
-states, which puts `flock_zorch.witgen_keccak` under the same proof-level gate.
+states, which puts `flock_zorch.r1cs_hashes.keccak_witness` under the same
+proof-level gate.
 """
 
 import argparse
@@ -32,11 +33,13 @@ from flock_zorch import (  # noqa: E402
     ghash,  # noqa: E402
     lincheck,
     prover,
-    witgen_keccak,
     zerocheck,
 )
-from flock_zorch.lincheck.keccak import KeccakLincheckCircuit  # noqa: E402
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
+from flock_zorch.r1cs_hashes import keccak_witness  # noqa: E402
+from flock_zorch.r1cs_hashes.keccak_lincheck import (  # noqa: E402
+    KeccakLincheckCircuit,
+)
 from flock_zorch.sha256_challenger import Sha256Challenger  # noqa: E402
 from flock_zorch.testing._golden import (  # noqa: E402
     ligerito_proof_results,
@@ -96,8 +99,8 @@ def substitute_device_witness(g):
     device port yet, so substituting `zlc` would gate something that does not
     exist; it is left as the golden's.
     """
-    spec = witgen_keccak.KECCAK
-    streams = witgen_keccak.witness_keccak(witgen_keccak.extract_inputs(g["z"], spec))
+    spec = keccak_witness.KECCAK
+    streams = keccak_witness.witness_keccak(keccak_witness.extract_inputs(g["z"], spec))
     return swap_device_witness(g, "witgen_keccak", streams)
 
 
@@ -168,7 +171,7 @@ def main() -> int:
         "--witgen",
         action="store_true",
         help="regenerate the witness on device from the golden's own states "
-        "(gates flock_zorch.witgen_keccak against flock end to end)",
+        "(gates flock_zorch.r1cs_hashes.keccak_witness against flock end to end)",
     )
     args = ap.parse_args()
     gate_device()
