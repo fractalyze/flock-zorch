@@ -6,12 +6,12 @@ framing over a resumable state, so observes and samples carry native
 `binary_field_ghash` elements and the transcript itself is a pytree a jitted
 round loop can carry.
 
-**Why it exists.** `Blake3CallbackChallenger` keeps its state on the host behind
-`io_callback`. That is correct but un-threadable, and the cost is not the host
-hop: with it in place the sumcheck's round loop cannot compile into the prove
-program at all (`jit__mlv_sumcheck` drops from 35,992 HLO instructions with 192
+**Why it exists.** The arm this replaced kept its state on the host behind
+`io_callback`. That was correct but un-threadable, and the cost was not the host
+hop: with it in place the sumcheck's round loop could not compile into the prove
+program at all (`jit__mlv_sumcheck` dropped from 35,992 HLO instructions with 192
 `while` loops to 2,912 with none), which is ~10x of the window snark.fast
-scores. The callback arm stays as the byte oracle.
+scores. `Blake3Challenger` (host) remains the byte oracle.
 
 The wire is `zorch.byte_transcript`'s, with the fork's two BLAKE3 deviations:
 the squeeze is an XOF read rather than a counter-block squeeze, and the PoW

@@ -19,36 +19,31 @@ per-hash divergences (both read from the fork's `challenger.rs`):
   is zero-padded from 40 to 64 bytes (a whole-block single-chunk message is
   what BLAKE3's batched kernels want); the SHA-256 arm's pre-image stays 40.
 
-The substrate is hash-frx's host BLAKE3 (`HostBlake3`): the Fiat-Shamir chain
-is strictly sequential and every draw is read back immediately, which is the
-case the host rows exist for. Two consumers sit on the byte transcript:
+Two rows ship, mirroring what the SHA-256 arm gets from zorch:
 
-- `Blake3Challenger` — the eager reference (`Sha256Challenger`'s flock-core
-  API over host bytes), the twin everything else is pinned against.
-- `Blake3CallbackTranscript` / `Blake3CallbackChallenger` — the prove-path
-  arm: the device transcript's method surface as a pytree whose every op is
-  one ordered `io_callback` into the host transcript, so the four
-  transcript-threading jitted zones (zerocheck ML ladder, lincheck
-  prove_inf_product, ring-switch reduce, the Ligerito open) run UNCHANGED
-  under the benchmark profile.
+- `Blake3ByteTranscript` / `Blake3Challenger` — the host reference, over
+  hash-frx's `HostBlake3`. zorch's `ByteHashTranscript` fills this role for
+  SHA-256; the fork's two BLAKE3 deviations are not upstream, so flock hosts
+  its own. This is the byte oracle the device row is pinned against.
+- `Blake3DeviceChallenger` — the prove path: `Sha256Challenger`'s surface over
+  the device `Blake3FieldTranscript`, whose state is a fixed-shape pytree, so
+  the four transcript-threading jitted zones (zerocheck ML ladder, lincheck
+  prove_inf_product, ring-switch reduce, the Ligerito open) carry it through
+  their loops instead of de-compiling into host loops.
 
 Byte-gated against transcripts dumped from the fork (d866043) by
-`testing/blake3_challenger_test.py`, which also carries the dump recipe.
+`testing/blake3_challenger_test.py`, which also carries the dump recipe;
+`testing/blake3_field_transcript_test.py` pins the device row against the host
+one, op for op.
 """
 
 from __future__ import annotations
 
-import dataclasses
 import functools
-import itertools
 from dataclasses import dataclass
 
-import frx
 import frx.numpy as fnp
 import numpy as np
-from frx import Array
-from frx.experimental import io_callback
-from frx.tree_util import register_dataclass
 from hash_frx.blake3.byte_hashes import HostBlake3
 from zorch.byte_transcript import (
     ByteHashTranscript,
@@ -58,7 +53,7 @@ from zorch.byte_transcript import (
 )
 
 from flock_zorch import fs
-from flock_zorch.ghash import _ghash_to_lanes, _lanes_to_ghash, from_ghash, to_ghash
+from flock_zorch.ghash import _ghash_to_lanes, _lanes_to_ghash
 from flock_zorch.hash.blake3_field_transcript import Blake3FieldTranscript
 
 _F128_BYTES = 16
@@ -189,272 +184,6 @@ class Blake3Challenger:
         return bool(ok)
 
 
-# --- jit-threadable arm: the callback transcript -----------------------------
-#
-# The prove path threads its transcript as a traced pytree through jitted
-# programs (the zerocheck ML ladder, lincheck's prove_inf_product, the whole
-# Ligerito open). `Blake3ByteTranscript` is a host object and cannot ride
-# those, and a device BLAKE3 duplex does not exist (BLAKE3 is a tree/XOF, not
-# a fixed-midstate Merkle-Damgard stream like SHA-256). The bridge: a pytree
-# with the device transcript's method surface whose every op is one ORDERED
-# `io_callback` into a host `Blake3ByteTranscript`. The jitted programs run
-# unchanged; the FS chain — which is serial by construction — runs on the
-# host, exactly where the fork itself runs it.
-#
-# The pytree carries two uint32 scalars and nothing static: `token` threads a
-# data dependence through every op (belt to the ordered-effects braces), and
-# `handle` keys the host-state registry AS A TRACED VALUE — a static handle
-# would make every new transcript a new jit cache key, recompiling the prove
-# per trial. Field elements cross the callback boundary as uint64 lanes
-# (zk_dtypes do not ride io_callback); the bitcast lives at the edges.
-
-_CALLBACK_STATES: dict[int, Blake3ByteTranscript] = {}
-_HANDLES = itertools.count()
-
-
-def _state(handle) -> Blake3ByteTranscript:
-    return _CALLBACK_STATES[int(handle)]
-
-
-# Module-level callbacks (stable identity across traces); the label/count
-# arguments ride as arrays so nothing is closure-captured.
-
-
-def _cb_observe_label(handle, tok, label_u8):
-    _CALLBACK_STATES[int(handle)] = _state(handle).observe_label(
-        np.asarray(label_u8).tobytes()
-    )
-    return np.asarray(tok)
-
-
-def _cb_observe_bytes(handle, tok, data_u8):
-    _CALLBACK_STATES[int(handle)] = _state(handle).observe_bytes(
-        np.asarray(data_u8).tobytes()
-    )
-    return np.asarray(tok)
-
-
-def _cb_observe_scalar(handle, tok, lanes):
-    t = _state(handle)
-    for row in np.asarray(lanes).reshape(-1, 2):
-        t = t.observe_scalar(np.ascontiguousarray(row, dtype=np.uint64).tobytes())
-    _CALLBACK_STATES[int(handle)] = t
-    return np.asarray(tok)
-
-
-def _cb_observe_slice(handle, tok, lanes):
-    rows = np.ascontiguousarray(np.asarray(lanes).reshape(-1, 2), dtype=np.uint64)
-    _CALLBACK_STATES[int(handle)] = _state(handle).observe_slice(
-        rows.tobytes(), rows.shape[0]
-    )
-    return np.asarray(tok)
-
-
-def _cb_sample_scalar(handle, tok):
-    t, buf = _state(handle).sample_scalar(_F128_BYTES)
-    _CALLBACK_STATES[int(handle)] = t
-    return np.asarray(tok), np.frombuffer(buf, np.uint64).copy()
-
-
-def _cb_sample_slice(handle, tok, n):
-    n = int(n)
-    t, buf = _state(handle).sample_slice(n, _F128_BYTES)
-    _CALLBACK_STATES[int(handle)] = t
-    return np.asarray(tok), np.frombuffer(buf, np.uint64).reshape(n, 2).copy()
-
-
-def _cb_grind(handle, tok, bits):
-    t, nonce = _state(handle).grind_pow(int(bits))
-    _CALLBACK_STATES[int(handle)] = t
-    return np.asarray(tok), np.uint64(nonce)
-
-
-def _cb_check_witness(handle, tok, witness, bits):
-    t, ok = _state(handle).verify_pow(int(witness), bits=int(bits))
-    _CALLBACK_STATES[int(handle)] = t
-    return np.asarray(tok), np.bool_(ok)
-
-
-_U32 = fnp.uint32
-_U64 = fnp.uint64
-
-
-def _tok_shape():
-    return frx.ShapeDtypeStruct((), _U32)
-
-
-@register_dataclass
-@dataclasses.dataclass(frozen=True)
-class Blake3CallbackTranscript:
-    """The device transcript's method surface over a host BLAKE3 byte
-    transcript, one ordered `io_callback` per op. Threads jitted zones and
-    `lax.scan` bodies unchanged; byte-gated (eager AND through one jitted
-    program) against the fork fixtures by `testing/blake3_challenger_test.py`.
-
-    `field`/`has_dedicated_fusion` mirror `Sha256FieldTranscript`'s surface;
-    `has_dedicated_fusion` is False, so consumers take their plain
-    decomposition paths (no fused-FS marker exists for this arm)."""
-
-    token: Array
-    handle: Array
-
-    @classmethod
-    def new(cls, domain: bytes) -> Blake3CallbackTranscript:
-        handle = next(_HANDLES)
-        _CALLBACK_STATES[handle] = Blake3ByteTranscript.new(bytes(domain), HostBlake3())
-        return cls(token=fnp.zeros((), _U32), handle=fnp.full((), handle, dtype=_U32))
-
-    @property
-    def field(self):
-        return fnp.binary_field_ghash
-
-    @property
-    def has_dedicated_fusion(self) -> bool:
-        return False
-
-    def _tok(self, cb, *args) -> Blake3CallbackTranscript:
-        tok = io_callback(
-            cb, _tok_shape(), self.handle, self.token, *args, ordered=True
-        )
-        return dataclasses.replace(self, token=tok)
-
-    def observe_label(self, label: bytes) -> Blake3CallbackTranscript:
-        label_u8 = np.frombuffer(bytes(label), np.uint8)
-        return self._tok(_cb_observe_label, label_u8)
-
-    def observe_bytes(self, data) -> Blake3CallbackTranscript:
-        return self._tok(_cb_observe_bytes, fnp.asarray(data, fnp.uint8).reshape(-1))
-
-    def observe_scalar(self, x) -> Blake3CallbackTranscript:
-        """Scalar-framed observe — `x` 0-d for one op, `[n]` for n ops (the
-        `Sha256FieldTranscript.observe_scalar` contract)."""
-        return self._tok(_cb_observe_scalar, from_ghash(x).reshape(-1, 2))
-
-    def observe(self, values) -> Blake3CallbackTranscript:
-        return self._tok(_cb_observe_slice, from_ghash(values).reshape(-1, 2))
-
-    def sample_scalar(self) -> tuple[Blake3CallbackTranscript, Array]:
-        tok, lanes = io_callback(
-            _cb_sample_scalar,
-            (_tok_shape(), frx.ShapeDtypeStruct((2,), _U64)),
-            self.handle,
-            self.token,
-            ordered=True,
-        )
-        return dataclasses.replace(self, token=tok), to_ghash(lanes)
-
-    def sample(self, n: int) -> tuple[Blake3CallbackTranscript, Array]:
-        tok, lanes = io_callback(
-            _cb_sample_slice,
-            (_tok_shape(), frx.ShapeDtypeStruct((n, 2), _U64)),
-            self.handle,
-            self.token,
-            np.uint32(n),
-            ordered=True,
-        )
-        return dataclasses.replace(self, token=tok), to_ghash(lanes)
-
-    def observe_and_sample(self, values, n: int = 1):
-        return self.observe(values).sample(n)
-
-    def grind(self, pow_bits: int) -> tuple[Blake3CallbackTranscript, Array]:
-        tok, nonce = io_callback(
-            _cb_grind,
-            (_tok_shape(), frx.ShapeDtypeStruct((), _U64)),
-            self.handle,
-            self.token,
-            np.uint32(pow_bits),
-            ordered=True,
-        )
-        return dataclasses.replace(self, token=tok), nonce
-
-    def check_witness(self, witness, *, pow_bits: int):
-        tok, ok = io_callback(
-            _cb_check_witness,
-            (_tok_shape(), frx.ShapeDtypeStruct((), fnp.bool_)),
-            self.handle,
-            self.token,
-            fnp.asarray(witness, _U64),
-            np.uint32(pow_bits),
-            ordered=True,
-        )
-        return dataclasses.replace(self, token=tok), ok
-
-
-class Blake3CallbackChallenger:
-    """`Sha256Challenger`'s exact surface over the callback transcript — the
-    benchmark profile's prove-path challenger. Eager touchpoints call the
-    wrapper methods; the four transcript-threading zones take and reassign
-    `._t` (the `Blake3CallbackTranscript` pytree) exactly as they do the
-    device SHA-256 transcript."""
-
-    def __init__(self, domain: bytes):
-        self._t = Blake3CallbackTranscript.new(bytes(domain))
-
-    def observe_label(self, label: bytes) -> None:
-        self._t = self._t.observe_label(label)
-
-    def observe_bytes(self, data) -> None:
-        if isinstance(data, (bytes, bytearray, memoryview)):
-            data = np.frombuffer(data, np.uint8)
-        self._t = self._t.observe_bytes(data)
-
-    def observe_f128(self, g) -> None:
-        """Observe F128 — a scalar or a slice, framed by shape (flock
-        scalar-frames a single element, slice-frames many)."""
-        if fnp.ndim(g) == 0:
-            self._t = self._t.observe_scalar(g)
-        else:
-            self._t = self._t.observe(g)
-
-    def sample_f128(self, n: int | None = None):
-        """Bare `sample_f128()` is a scalar draw; `sample_f128(n)` a length-`n`
-        slice — the two frame differently on the wire."""
-        if n is None:
-            self._t, g = self._t.sample_scalar()
-            return g
-        self._t, g = self._t.sample(n)
-        return g
-
-    def grind_pow(self, bits: int) -> int:
-        self._t, witness = self._t.grind(bits)
-        return int(witness)
-
-    # --- zorch `Transcript` seam (mirrors `Sha256Challenger`) ---------------
-
-    @property
-    def field(self):
-        return self._t.field
-
-    @property
-    def has_dedicated_fusion(self) -> bool:
-        return self._t.has_dedicated_fusion
-
-    def observe(self, values) -> "Blake3CallbackChallenger":
-        self._t = self._t.observe(values)
-        return self
-
-    def sample(self, n: int = 1) -> tuple["Blake3CallbackChallenger", object]:
-        self._t, out = self._t.sample(n)
-        return self, out
-
-    def observe_and_sample(
-        self, values, n: int = 1
-    ) -> tuple["Blake3CallbackChallenger", object]:
-        self._t, out = self._t.observe_and_sample(values, n)
-        return self, out
-
-    def grind(self, pow_bits: int) -> tuple["Blake3CallbackChallenger", object]:
-        self._t, witness = self._t.grind(pow_bits)
-        return self, witness
-
-    def check_witness(
-        self, witness, *, pow_bits: int
-    ) -> tuple["Blake3CallbackChallenger", object]:
-        self._t, ok = self._t.check_witness(witness, pow_bits=pow_bits)
-        return self, ok
-
-
 @functools.lru_cache(maxsize=None)
 def _initial_device_transcript(domain: bytes):
     """Memoize the seeded device state per domain.
@@ -469,23 +198,22 @@ def _initial_device_transcript(domain: bytes):
 
 
 class Blake3DeviceChallenger:
-    """`Blake3CallbackChallenger`'s surface over the device transcript — the
-    benchmark profile's prove-path challenger.
+    """`Sha256Challenger`'s surface over the device transcript — the BLAKE3
+    profile's prove-path challenger, and the structural twin of the SHA-256 one.
 
-    The callback arm is correct but keeps its state on the host, so a jitted
-    round loop cannot carry it: the sumcheck loop de-compiles into a host loop.
-    `Blake3FieldTranscript`'s state is a fixed-shape pytree, so the loops stay
-    inside the compiled program.
+    `Blake3FieldTranscript`'s state is a fixed-shape pytree, so a jitted round
+    loop carries it and the sumcheck loop stays inside the compiled program.
+    (`Blake3Challenger` cannot: a host transcript is not a pytree, and a prove
+    driven by one de-compiles its round loop into a host loop — measured ~10x
+    at m32. `testing/blake3_field_transcript_test.py::RoundLoopTest` is the
+    leading indicator and needs no GPU.)
 
     Every op goes through `fs`, not through the transcript directly: an eager
     transcript op dispatches each of its internal primitives separately and
     re-traces the whole program on every call (measured ~1.4-2.1 s per
     `sample_f128` here against 0.1 ms through the cached hop). That is the
-    `Sha256Challenger` arrangement; the callback arm cannot use it because its
-    state is on the host, which is why the two look different.
-
-    The callback arm stays as the byte oracle the two are pinned against
-    (`blake3_profile_parity_test`), field for field.
+    `Sha256Challenger` arrangement, and routing around it is what made the
+    first device implementation look 4.3x SLOWER than the host arm it replaced.
     """
 
     def __init__(self, domain: bytes):

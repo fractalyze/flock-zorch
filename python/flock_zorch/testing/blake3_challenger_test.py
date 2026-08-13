@@ -28,20 +28,22 @@ Three pins, in dependency order:
 The BLAKE3 grind fixture (nonce 4541) deliberately crosses the challenger's
 4096-nonce grind window, so the multi-window scan path is exercised.
 
-Pure host except the SHA-256 control (eager device transcript hops, CPU-safe).
+The host row runs on numpy; the device rows (BLAKE3 and the SHA-256 control)
+run eager device transcript hops, which are CPU-safe.
 """
 from __future__ import annotations
 
 import frx
+import frx.numpy as fnp
 import numpy as np
 from absl.testing import absltest
 
 from flock_zorch.blake3_challenger import (
-    Blake3CallbackChallenger,
-    Blake3CallbackTranscript,
     Blake3Challenger,
+    Blake3DeviceChallenger,
 )
 from flock_zorch.ghash import _lanes_to_ghash, to_lanes
+from flock_zorch.hash.blake3_field_transcript import Blake3FieldTranscript
 from flock_zorch.sha256_challenger import Sha256Challenger
 
 _DOMAIN = b"flock-bench-v0"
@@ -149,8 +151,8 @@ class Blake3ChallengerForkGateTest(absltest.TestCase):
 
 @frx.jit
 def _fixture_zone(t, x_scalar, x_slice, root):
-    """The whole fixture sequence as ONE jitted program — every op an ordered
-    io_callback into the host transcript."""
+    """The whole fixture sequence as ONE jitted program — every op a device
+    computation on the threaded transcript state."""
     t = t.observe_label(_LABEL)
     t = t.observe_scalar(x_scalar)
     t, s1 = t.sample_scalar()
@@ -166,13 +168,15 @@ def _fixture_zone(t, x_scalar, x_slice, root):
     return t, s1, v1, v2, v5, s2, n0, n12, s3
 
 
-class CallbackTranscriptForkGateTest(absltest.TestCase):
-    """The prove-path arm: the callback transcript through jitted zones. The
-    fixture pin here is what licenses swapping it into the four
-    transcript-threading zones unchanged."""
+class DeviceTranscriptForkGateTest(absltest.TestCase):
+    """The prove-path arm: the device transcript through jitted zones. The
+    fixture pin here is what licenses threading it through the four
+    transcript-carrying zones, and it pins the device row to the fork
+    DIRECTLY — `blake3_field_transcript_test` only reaches the fork through
+    the host row."""
 
     def test_one_jitted_zone_matches_the_fork(self):
-        t = Blake3CallbackTranscript.new(_DOMAIN)
+        t = Blake3FieldTranscript.new(_DOMAIN, fnp.binary_field_ghash)
         root = np.frombuffer(_ROOT, np.uint8)
         _, s1, v1, v2, v5, s2, n0, n12, s3 = _fixture_zone(
             t, _g(_OBS_SCALAR), _g(_OBS_SLICE), root
@@ -191,7 +195,7 @@ class CallbackTranscriptForkGateTest(absltest.TestCase):
 
     def test_eager_wrapper_matches_the_fork(self):
         # The same ops OUTSIDE any jit zone — the eager touchpoints' path.
-        got = _drive(Blake3CallbackChallenger(_DOMAIN))
+        got = _drive(Blake3DeviceChallenger(_DOMAIN))
         self.assertEqual(got, _BLAKE3)
 
     def test_scan_body_matches_the_eager_challenger(self):
@@ -205,15 +209,15 @@ class CallbackTranscriptForkGateTest(absltest.TestCase):
             t = t.observe_label(_LABEL)
             return frx.lax.scan(lambda t, _: t.sample_scalar(), t, None, length=3)
 
-        _, draws = chain(Blake3CallbackTranscript.new(_DOMAIN))
+        _, draws = chain(Blake3FieldTranscript.new(_DOMAIN, fnp.binary_field_ghash))
         got = [_wire(np.asarray(draws)[i]) for i in range(3)]
         self.assertEqual(got, want)
 
     def test_check_witness_mirror(self):
-        c = Blake3CallbackChallenger(_DOMAIN)
+        c = Blake3DeviceChallenger(_DOMAIN)
         c.observe_label(_LABEL)
         nonce = c.grind_pow(12)
-        v = Blake3CallbackChallenger(_DOMAIN)
+        v = Blake3DeviceChallenger(_DOMAIN)
         v.observe_label(_LABEL)
         v2, ok = v.check_witness(np.uint64(nonce), pow_bits=12)
         self.assertTrue(bool(np.asarray(ok)))
