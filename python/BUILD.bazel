@@ -89,6 +89,41 @@ py_test(
     ],
 )
 
+# The incremental BLAKE3 hasher as a fixed-shape device state, against
+# hash-frx's one-shot BLAKE3: absorbing a message in any sequence of pieces must
+# equal hashing it whole, the extendable read must match at every length the
+# transcript squeezes, and the state must survive a jitted loop as a carry —
+# the last is why the module exists. "large" because the split matrix traces one
+# program per pattern.
+py_test(
+    name = "blake3_stream_test",
+    size = "medium",
+    srcs = ["flock_zorch/testing/blake3_stream_test.py"],
+    deps = [
+        ":flock_zorch",
+    ],
+)
+
+# The device BLAKE3 Fiat-Shamir transcript against the host challenger the fork
+# fixtures already pin, so matching here pins the device arm to the fork
+# transitively. Every draw binds the whole prefix, so one wrong byte anywhere
+# surfaces at the next sample; scalar-vs-slice framing is exercised both ways,
+# with a guard that the two genuinely differ.
+py_test(
+    name = "blake3_field_transcript_test",
+    size = "medium",
+    srcs = ["flock_zorch/testing/blake3_field_transcript_test.py"],
+    deps = [
+        ":flock_zorch",
+    ],
+)
+
+# No target for `blake3_profile_parity_test`: it proves the m22 blake3 golden
+# under both transcript arms, and that golden is in dump_goldens.sh's HEAVY set,
+# which CI does not dump. It is a venv gate like the other hash-circuit oracle
+# tests. Its leading indicator — the round loop staying in the compiled program
+# — needs no golden and rides in blake3_field_transcript_test instead.
+
 # Fork-fixture byte gate for the benchmark profile's BLAKE3 Merkle arm: leaf
 # non-root chaining values at every leaf shape class, parent compressions, and
 # composed tree roots vs the fork's own merkle module; SHA-256 as the control.

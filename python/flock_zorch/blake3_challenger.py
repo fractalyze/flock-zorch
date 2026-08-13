@@ -39,6 +39,7 @@ Byte-gated against transcripts dumped from the fork (d866043) by
 from __future__ import annotations
 
 import dataclasses
+import functools
 import itertools
 from dataclasses import dataclass
 
@@ -56,7 +57,9 @@ from zorch.byte_transcript import (
     _validate_pow_bits,
 )
 
+from flock_zorch import fs
 from flock_zorch.ghash import _ghash_to_lanes, _lanes_to_ghash, from_ghash, to_ghash
+from flock_zorch.hash.blake3_field_transcript import Blake3FieldTranscript
 
 _F128_BYTES = 16
 # The fork's BLAKE3 PoW pre-image length: state digest (32) ‖ nonce (8) ‖ zero
@@ -448,5 +451,101 @@ class Blake3CallbackChallenger:
     def check_witness(
         self, witness, *, pow_bits: int
     ) -> tuple["Blake3CallbackChallenger", object]:
+        self._t, ok = self._t.check_witness(witness, pow_bits=pow_bits)
+        return self, ok
+
+
+@functools.lru_cache(maxsize=None)
+def _initial_device_transcript(domain: bytes):
+    """Memoize the seeded device state per domain.
+
+    `Blake3FieldTranscript.new` absorbs the domain through the full device
+    absorb program — 0.5 s of trace per construction. Array values are
+    immutable and every challenger replaces `_t` rather than mutating it, so
+    one seeded state is safe to share between proves. `Sha256Challenger` does
+    the same for the same reason.
+    """
+    return Blake3FieldTranscript.new(domain, fnp.binary_field_ghash)
+
+
+class Blake3DeviceChallenger:
+    """`Blake3CallbackChallenger`'s surface over the device transcript — the
+    benchmark profile's prove-path challenger.
+
+    The callback arm is correct but keeps its state on the host, so a jitted
+    round loop cannot carry it: the sumcheck loop de-compiles into a host loop.
+    `Blake3FieldTranscript`'s state is a fixed-shape pytree, so the loops stay
+    inside the compiled program.
+
+    Every op goes through `fs`, not through the transcript directly: an eager
+    transcript op dispatches each of its internal primitives separately and
+    re-traces the whole program on every call (measured ~1.4-2.1 s per
+    `sample_f128` here against 0.1 ms through the cached hop). That is the
+    `Sha256Challenger` arrangement; the callback arm cannot use it because its
+    state is on the host, which is why the two look different.
+
+    The callback arm stays as the byte oracle the two are pinned against
+    (`blake3_profile_parity_test`), field for field.
+    """
+
+    def __init__(self, domain: bytes):
+        self._t = _initial_device_transcript(bytes(domain))
+
+    def observe_label(self, label: bytes) -> None:
+        self._t = fs.observe_label(self._t, label)
+
+    def observe_bytes(self, data) -> None:
+        if isinstance(data, (bytes, bytearray, memoryview)):
+            data = np.frombuffer(data, np.uint8)
+        else:
+            data = fnp.asarray(data, fnp.uint8).reshape(-1)
+        self._t = fs.observe_bytes(self._t, data)
+
+    def observe_f128(self, g) -> None:
+        if fnp.ndim(g) == 0:
+            self._t = fs.observe_scalar(self._t, g)
+        else:
+            self._t = fs.observe_slice(self._t, g)
+
+    def sample_f128(self, n: int | None = None):
+        if n is None:
+            self._t, g = fs.sample_scalar(self._t)
+            return g
+        self._t, g = fs.sample_slice(self._t, n)
+        return g
+
+    def grind_pow(self, bits: int) -> int:
+        self._t, witness = fs.grind(self._t, bits)
+        return int(witness)
+
+    @property
+    def field(self):
+        return self._t.field
+
+    @property
+    def has_dedicated_fusion(self) -> bool:
+        return self._t.has_dedicated_fusion
+
+    def observe(self, values) -> "Blake3DeviceChallenger":
+        self._t = self._t.observe(values)
+        return self
+
+    def sample(self, n: int = 1) -> tuple["Blake3DeviceChallenger", object]:
+        self._t, out = self._t.sample(n)
+        return self, out
+
+    def observe_and_sample(
+        self, values, n: int = 1
+    ) -> tuple["Blake3DeviceChallenger", object]:
+        self._t, out = self._t.observe_and_sample(values, n)
+        return self, out
+
+    def grind(self, pow_bits: int) -> tuple["Blake3DeviceChallenger", object]:
+        self._t, witness = self._t.grind(pow_bits)
+        return self, witness
+
+    def check_witness(
+        self, witness, *, pow_bits: int
+    ) -> tuple["Blake3DeviceChallenger", object]:
         self._t, ok = self._t.check_witness(witness, pow_bits=pow_bits)
         return self, ok

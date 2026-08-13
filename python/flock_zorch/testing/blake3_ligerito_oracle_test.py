@@ -34,51 +34,14 @@ from flock_zorch import (  # noqa: E402
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
 from flock_zorch.sha256_challenger import Sha256Challenger  # noqa: E402
 from flock_zorch.testing._golden import (  # noqa: E402
+    latest_blake3_golden,
     ligerito_proof_results,
-    open_golden,
-    read_ligerito_config,
-    read_ligerito_proof,
 )
+
+# The loader moved to `_golden` so a Bazel target can depend on it; this keeps
+# `load` importable from here, which is the name the gates already use.
+load = latest_blake3_golden
 from flock_zorch.testing._util import report  # noqa: E402
-
-
-def load(golden: str = "blake3_ligerito_golden.bin"):
-    """Ingest a golden. `golden` names a file under `artifacts/`, so the same
-    loader serves the m-variant dumps (`..._golden_m24.bin`) a size sweep needs."""
-    rd = open_golden(golden)
-    assert bytes(rd.take(8)) == b"FLKBL_01", "bad magic"
-    meta = dict(
-        m=rd.u(),
-        k_log=rd.u(),
-        k_skip=rd.u(),
-        useful_bits=rd.u(),
-        const_pin=rd.u(),
-        lir=rd.u(),
-        lbs=rd.u(),
-        n_blocks_log=rd.u(),
-        log_n=rd.u(),
-    )
-    cfg = read_ligerito_config(rd)
-    g = dict(
-        meta=meta,
-        cfg=cfg,
-        stmt=bytes(rd.raw(32)),
-        root=rd.raw(32),
-        z=rd.fv(),
-        a=rd.fv(),
-        b=rd.fv(),
-    )
-    g["zlc"] = bytes(rd.raw(rd.u()))
-    g["a0_rows"] = rd.rowsu()
-    g["b0_rows"] = rd.rowsu()
-    g["zc"] = dict(
-        r1ab=rd.fv(), r1c=rd.fv(), mlv=rd.pair(), fa=rd.f(), fb=rd.f(), fc=rd.f()
-    )
-    g["lc"] = dict(rounds=rd.pair(), zp=rd.fv())
-    g["rs"] = [rd.fv() for _ in range(rd.u())]
-    lig = read_ligerito_proof(rd)
-    g["lig"] = lig
-    return g
 
 
 def substitute_device_witness(g):

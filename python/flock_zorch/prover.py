@@ -20,7 +20,7 @@ from frx import Array
 from zorch.stage import ProveResult, ProverStage, TrivialClaim
 
 from flock_zorch import ghash
-from flock_zorch.blake3_challenger import Blake3CallbackChallenger
+from flock_zorch.blake3_challenger import Blake3DeviceChallenger
 from flock_zorch.hash import merkle
 
 # noqa: F401  (re-exported for callers)
@@ -48,17 +48,20 @@ class ProveProfile:
 
     `FLOCK_PROFILE` is flock's default (device SHA-256 FS, SHA-256 Merkle) —
     the arm every golden byte-gates. `BENCHMARK_PROFILE` is the
-    flock-challenge harness's (BLAKE3 FS via the callback transcript, BLAKE3
-    non-root-CV Merkle) — what their verifier accepts. The profile changes
-    WHICH bytes the proof is, not the protocol: both run the same reductions
-    and the same open."""
+    flock-challenge harness's (BLAKE3 FS, BLAKE3 non-root-CV Merkle) — what
+    their verifier accepts. The profile changes WHICH bytes the proof is, not
+    the protocol: both run the same reductions and the same open."""
 
     challenger_cls: type
     tree: object
 
 
 FLOCK_PROFILE = ProveProfile(Sha256Challenger, merkle.GHASH_SHA256_TREE)
-BENCHMARK_PROFILE = ProveProfile(Blake3CallbackChallenger, merkle.GHASH_BLAKE3_TREE)
+# The device BLAKE3 transcript, not the callback one it replaces: a host-backed
+# transcript cannot be carried by a jitted loop, so the sumcheck round loop
+# de-compiles into a host loop and the prove runs ~10x slower at m32.
+# `Blake3CallbackChallenger` remains the byte oracle the two are pinned against.
+BENCHMARK_PROFILE = ProveProfile(Blake3DeviceChallenger, merkle.GHASH_BLAKE3_TREE)
 
 
 @frx.jit
