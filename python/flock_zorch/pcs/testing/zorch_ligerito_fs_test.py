@@ -26,6 +26,7 @@ frx.config.update("jax_platforms", "cpu")
 import frx.numpy as fnp  # noqa: E402
 from frx import lax  # noqa: E402
 from frx.tree_util import tree_map  # noqa: E402
+from zorch.blake3_field_transcript import Blake3FieldTranscript  # noqa: E402
 from zorch.coding.reed_solomon import ReedSolomon  # noqa: E402
 from zorch.pcs.ligerito.config import LigeritoConfig  # noqa: E402
 from zorch.pcs.ligerito.prover import LigeritoProver  # noqa: E402
@@ -35,7 +36,6 @@ from zorch.poly.multilinear import eval_mle  # noqa: E402
 from zorch.sha256_field_transcript import Sha256FieldTranscript  # noqa: E402
 
 from flock_zorch.hash import merkle  # noqa: E402
-from flock_zorch.hash.blake3_field_transcript import Blake3FieldTranscript  # noqa: E402
 from flock_zorch.pcs import ligerito as flock_ligerito  # noqa: E402
 from flock_zorch.pcs.ligerito import (  # noqa: E402
     FlockChoreography,
@@ -273,6 +273,8 @@ def test_query_chain_ship_lockstep():
     """The CPU-shipped query chain equals the backend-neutral sampler for BOTH
     device-state arms — shipping moves where the chain runs, never what it
     absorbs, so positions and every post-chain state leaf must match."""
+    # Bare `new` is right here even for the BLAKE3 arm: the sampler never
+    # grinds, so the fork's PoW pre-image width cannot reach this path.
     for cls in (Sha256FieldTranscript, Blake3FieldTranscript):
         inner = cls.new(DOMAIN, fnp.binary_field_ghash)
         shipped_t, shipped_pos = flock_ligerito._sample_distinct_positions(inner, 64, 5)

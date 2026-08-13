@@ -10,6 +10,7 @@ py_library(
     imports = ["."],
     visibility = ["//visibility:public"],
     deps = [
+        "@zorch//zorch:blake3_field_transcript",
         "@zorch//zorch:byte_transcript",
         "@zorch//zorch:prove",
         "@zorch//zorch:round",
@@ -93,29 +94,17 @@ py_test(
     ],
 )
 
-# The incremental BLAKE3 hasher as a fixed-shape device state, against
-# hash-frx's one-shot BLAKE3: absorbing a message in any sequence of pieces must
-# equal hashing it whole, the extendable read must match at every length the
-# transcript squeezes, and the state must survive a jitted loop as a carry —
-# the last is why the module exists. "large" because the split matrix traces one
-# program per pattern.
-py_test(
-    name = "blake3_stream_test",
-    size = "medium",
-    srcs = ["flock_zorch/testing/blake3_stream_test.py"],
-    deps = [
-        ":flock_zorch",
-    ],
-)
+# No target for the BLAKE3 hasher state or the device transcript's framing:
+# both modules live upstream now (hash-frx's `blake3/streaming.py`, zorch's
+# `blake3_field_transcript.py`) and are gated there against their own oracles.
+# What stays below is only what upstream has no way to check — how THIS repo
+# uses them.
 
-# The device BLAKE3 Fiat-Shamir transcript against the host challenger the fork
-# fixtures already pin, so matching here pins the device arm to the fork
-# transitively. Every draw binds the whole prefix, so one wrong byte anywhere
-# surfaces at the next sample; scalar-vs-slice framing is exercised both ways,
-# with a guard that the two genuinely differ. Also carries the two checks that
-# need no golden: the round loop staying in the compiled program (the leading
-# indicator for a transcript that stopped being a loop carry) and what
-# BLAKE3_PROFILE is composed of.
+# The two checks that are flock's rather than the transcript's: the Fiat-Shamir
+# round loop staying inside the compiled program (the leading indicator for a
+# transcript that stopped being a loop carry), and what BLAKE3_PROFILE is
+# composed of. The framing, scalar-vs-slice and grind halves moved upstream with
+# the module.
 py_test(
     name = "blake3_field_transcript_test",
     size = "medium",
