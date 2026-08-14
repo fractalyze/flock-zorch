@@ -94,6 +94,22 @@ The benchmark itself — how to run it and what it has published — is in
 - **A phase is not a target.** `zerocheck` bundles the round-1 URM extend and the
   multilinear ladder, whose relative sizes invert with `m`. Split to the prover
   round before scoping work off a phase number.
+- **A de-fusion saving is a per-LAUNCH cost, so it scales with the producer's
+  batch width — not with the work.** Re-measure one whenever the batching
+  changes, not only when the code under the marker changes. Marking the BLAKE3
+  PoW hash was priced at 2,517 kernels of the m32 `open` against a 2^12 grind
+  window; against zorch's 2^16 default the same change removed **691**, because
+  a 16× wider window does the same search in 16× fewer launches and the fusion
+  overhead is charged per launch. The measurement was right both times and the
+  number is only meaningful beside the batch it was taken at.
+- **Fit two sizes before quoting a share, when a cost has both a per-round and a
+  per-window (or per-batch) component.** A small `m` sees almost none of the
+  per-window half and reads the split wrong: the same grinds were 19% of the
+  m22 kernel excess and 40% of the m32 one, because m22 spends ~10 windows on
+  10 grinding rounds where m32 spends 162 on 21. Solving both points together
+  separated ~84 kernels per round from ~25 per window — neither size alone
+  could. "Attribute at m22, confirm at m32" is right for finding a mechanism
+  and wrong for pricing one.
 - **Latency vs arithmetic: busy from nsys, wall from a clean run.** nsys inflates
   *host* dispatch ~2×, so inter-kernel gaps on its timeline are contaminated;
   on-device kernel durations are not. Pass `--cuda-graph-trace=node` or
