@@ -75,7 +75,18 @@ The rules every change must respect:
   `frx/frxlib/frx-cuda12-*` — so `frx_plugins/xla_metal/*.dylib` is
   structurally selfbuilt, and rebuilding it without the same
   `--override_repository=` flags silently drops whatever unlanded fix it
-  carried. A regression whose size matches a known lever's is that, not your
+  carried. **On macOS/arm64 `frxlib` goes further: only the releases are
+  published, not the dev snapshots this file pins**, so
+  `pip install -r requirements.in` cannot resolve and the local Metal rig
+  cannot follow main from wheels at all. Build `frx` + `frxlib` +
+  `frx-metal-pjrt` together from the one jax commit whose build timestamp
+  matches the pinned version (`build/build.py build --wheels=...` with
+  `--override_repository=xla=` at that commit's `XLA_COMMIT`, then
+  `build/frx_rename.py`), and install every wheel with `--no-deps` — a
+  plain `pip install hash-frx` re-resolves `frx` off the index and undoes
+  the set. Install the plugin as the `frx-metal-pjrt` **wheel**, never by
+  copying the dylib: `metal_plugin_extension.so` and `version.py` must move
+  with it or they mismatch the next time frxlib's version changes. A regression whose size matches a known lever's is that, not your
   change.
 - **A `fused_region` decomposition is a fallback, not the code that runs.**
   `ZorchFusedRegionRewriter` routes the composite to its kCustom emitter on
