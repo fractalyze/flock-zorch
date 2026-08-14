@@ -59,6 +59,18 @@ The rules every change must respect:
   `select_xor` grep the same with and without it. Then the only reliable
   check is behavioural: A/B the same benchmark against a known-good plugin
   kept beside the new one. Keep the old dylib rather than overwriting it.
+  **But never A/B two selfbuilt plugins built from different base commits.** A
+  selfbuilt plugin encodes its whole source tree, not just the change you are
+  testing, and a day of unrelated commits is easily worth more than the change.
+  This has already produced one confidently-reported +46% that evaporated when
+  the two arms were rebuilt from the same base (fractalyze/xla#528). Either
+  rebuild both arms from one base, or — much cheaper — drive the change from a
+  runtime knob and leave the binary fixed: `xla_gpu_max_fusion_ir_size`
+  (fractalyze/xla#510) is the model. When `XLA_FLAGS` rejects a flag your
+  selfbuilt plugin knows but the installed frx wheel does not, pass it as
+  `frx.jit(..., compiler_options={...})`, which reaches the plugin's compiler
+  directly — JAX allows it on the top-level jit only, and nested jits inline
+  into the parent's module so the parent's option already covers them.
   The Metal plugin has no published wheel at all — the lockstep set is
   `frx/frxlib/frx-cuda12-*` — so `frx_plugins/xla_metal/*.dylib` is
   structurally selfbuilt, and rebuilding it without the same
