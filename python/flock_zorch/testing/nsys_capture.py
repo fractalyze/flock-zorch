@@ -26,6 +26,13 @@ Windows (`--window`, default `open`):
   arithmetic-bound at ~9x its read roofline, the multilinear ladder
   bandwidth-bound with its folds already at 90% of peak — so a zerocheck-level
   number cannot pick either one's lever.
+- **`lincheck`** — the whole lincheck phase, fenced into its comb / partial-fold
+  / inf-product / claim sub-steps. Phase-level rather than round-level: its
+  three steps run inside one `prove_rounds` call with no jit boundary between
+  them, so the NVTX sub-steps already separate them. Added to price the
+  Fiat-Shamir arm here — the barriered phase split puts +5.23 ms of the m32
+  BLAKE3-FS deficit in this phase, and a phase wall cannot say which hop
+  owns it.
 
 Modes:
 
@@ -378,6 +385,63 @@ def _build_zerocheck(golden: str, arms: Arms, which: str, equal_factors: bool = 
     return round_once, meta
 
 
+def _build_lincheck(golden: str, arms: Arms):
+    """Run the prove up to the lincheck and return a replayable lincheck thunk.
+
+    The sequence mirrors `prove_phase_bench.make_prove` (commit -> zerocheck ->
+    lincheck) — keep the two in sync; the bench is the authority on the phase
+    bodies.
+
+    Phase-level, unlike zerocheck: `lincheck.prove` drives comb -> product
+    sumcheck -> claim through one `prove_rounds` call with no jit boundary
+    between the steps, so the sub-step ranges fence them inside a single window
+    and a round-level split would add nothing.
+    """
+    import frx
+
+    frx.config.update("jax_enable_x64", True)
+
+    from flock_zorch import lincheck, prover, zerocheck
+    from flock_zorch.pcs import ligerito as zorch_ligerito
+    from flock_zorch.testing._util import await_all
+    from flock_zorch.testing.prove_phase_bench import Circuit
+
+    circ = Circuit("blake3")
+    g = circ.ingest(golden)
+    meta, cfg = g["meta"], g["cfg"]
+    m, k_log, k_skip = meta["m"], meta["k_log"], meta["k_skip"]
+    ir = k_log - k_skip
+    circuit = circ.build(g)
+
+    a_bits, b_bits, c_bits = (frx.device_put(x) for x in (g["a"], g["b"], g["z"]))
+    z = c_bits  # one upload for the C track and the commit, as in `_build_open`
+    zlc = lincheck.stripe_to_device(g["zlc"], m, k_log)
+
+    root, pdata = zorch_ligerito.commit_flock_ligerito(cfg, z, _resolve_tree(arms.tree))
+    ch = _resolve_fs(arms.fs)(circ.domain)
+    prover.bind_statement(ch, g["stmt"], root)
+    _, zc = zerocheck.prove_packed(a_bits, b_bits, c_bits, m, ch=ch)
+    x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, ir)
+    await_all(zc)
+    # The lincheck reads only the stripe and the zerocheck's claim point. The
+    # witness tracks (1 GiB packed at m32) and the Ligerito prover data would
+    # otherwise hold the BFC pool for the whole replay loop, which is the m32
+    # OOM `_build_open` records ("Failed to get module function").
+    del a_bits, b_bits, c_bits, z, pdata
+
+    t_snapshot = ch._t  # immutable pytree: assignment replays the transcript
+
+    def lincheck_once():
+        ch._t = t_snapshot
+        return await_all(
+            lincheck.prove(
+                zlc, None, None, x_ab, m, k_log, k_skip, ch=ch, circuit=circuit
+            )
+        )
+
+    return lincheck_once, meta
+
+
 _SUBSTEPS: dict[str, tuple[tuple[str, str, str], ...]] = {
     "open": (
         ("flock_zorch.pcs.ring_switch", "prove_batched", "open/ring_switch"),
@@ -420,6 +484,28 @@ _SUBSTEPS: dict[str, tuple[tuple[str, str, str], ...]] = {
             "zerocheck-urm/interpolate",
         ),
     ),
+    # All five patch `lincheck.prover` for the same reason zerocheck patches its
+    # own prover: the round bodies resolve these in that module's globals, and
+    # `_seg_xor_fold` is reached through `CscCircuit.fold_alpha_batched`, whose
+    # lookup is there too — not in `._csc_fold`, where defining it would leave
+    # the wrapper unused. `_lagrange_weights` is the claim round's call; the one
+    # inside `build_quirky_eq_table` is under a warm `frx.jit` and does not
+    # re-trace, so it contributes no nested range.
+    "lincheck": (
+        ("flock_zorch.lincheck.prover", "build_quirky_eq_table", "lincheck/eq_table"),
+        ("flock_zorch.lincheck.prover", "_seg_xor_fold", "lincheck/csc_fold"),
+        (
+            "flock_zorch.lincheck.prover",
+            "partial_fold_packed_z",
+            "lincheck/partial_fold",
+        ),
+        ("flock_zorch.lincheck.prover", "prove_inf_product", "lincheck/inf_product"),
+        (
+            "flock_zorch.lincheck.prover",
+            "_lagrange_weights",
+            "lincheck/lagrange_weights",
+        ),
+    ),
 }
 
 # name -> (build thunk, sub-steps). The capture/walls/report machinery below is
@@ -439,6 +525,7 @@ WINDOWS: dict[str, tuple[Any, tuple[tuple[str, str, str], ...]]] = {
         lambda golden, arms: _build_zerocheck(golden, arms, "ml", equal_factors=True),
         _SUBSTEPS["zerocheck-ml-sq"],
     ),
+    "lincheck": (_build_lincheck, _SUBSTEPS["lincheck"]),
 }
 
 
