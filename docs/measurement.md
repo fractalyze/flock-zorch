@@ -75,6 +75,51 @@ The benchmark itself — how to run it and what it has published — is in
   override checkout against the `MODULE.bazel` pin. A stale override once hid a
   +35% m32 throughput difference (#200 erratum) — every m32 wall measured under
   it had to be thrown away.
+- **When the fix adds no new string, the marker grep in `CLAUDE.md` cannot
+  verify it — and the obvious fallback is a trap.** A pure-performance change
+  (prime-ir#432 rewrote GHASH clmul as integer multiplies) leaves symbol names
+  byte-identical: `clmul` and `select_xor` grep the same with and without it.
+  The only reliable check is then behavioural, A/B against a known-good plugin
+  kept beside the new one — but **never A/B two selfbuilt plugins built from
+  different base commits.** A selfbuilt plugin encodes its whole source tree,
+  and a day of unrelated commits easily outweighs the change under test; that
+  produced one confidently-reported +46% which evaporated when both arms were
+  rebuilt from one base (fractalyze/xla#528). Either rebuild both arms from the
+  same base, or — much cheaper — drive the change from a runtime knob and leave
+  the binary fixed (`xla_gpu_max_fusion_ir_size`, fractalyze/xla#510, is the
+  model). If `XLA_FLAGS` rejects a flag your selfbuilt plugin knows but the
+  installed frx wheel does not, pass it as `frx.jit(..., compiler_options={...})`
+  — allowed on the top-level jit only, and nested jits inline into the parent's
+  module so the parent's option covers them.
+- **On Metal the plugin is structurally selfbuilt, and it lags xla main.** There
+  is no published Metal wheel — the lockstep set is `frx/frxlib/frx-cuda12-*` —
+  and on macOS/arm64 only `frxlib` *releases* are published, not the dev
+  snapshots `requirements.in` pins, so `pip install -r requirements.in` cannot
+  resolve and the local rig cannot follow main from wheels at all. Three
+  consequences, each of which has cost a session:
+  - **The plugin can predate the kernel you are measuring.** The pin chain runs
+    jax → its `XLA_COMMIT`, so the plugin trails xla main by however far the jax
+    pin trails, and a PR merged after that pin is absent with no error. A full
+    re-ranking campaign ran against a plugin two commits before the kernel it
+    was measuring (fractalyze/xla#512); the only tell was a phase that refused
+    to move. Both commits shared a date, so only the DAG answers it:
+    `git merge-base --is-ancestor <pr-merge-sha> <plugin-build-sha>`. Record the
+    plugin's xla sha beside any published number.
+  - **The version string cannot distinguish two stacks** — a rebuild reads
+    `0.10.2.dev0+selfbuilt` before and after, so `pip list` is useless; diff the
+    dylib's md5.
+  - **Rebuilding the dylib alone does not work.** Dropping an xla-main
+    `pjrt_c_api_metal_plugin.dylib` beside the older wheels took blake3 m=28
+    from 302 ms to 1780–2855 ms, **~55× of it in lincheck**, with the byte gate
+    passing 18/18 throughout. Only the dylib was swapped, so the pathology is on
+    the plugin-vs-wheels axis: build `frx` + `frxlib` + `frx-metal-pjrt`
+    together from the one jax commit whose build timestamp matches the pinned
+    version (`build/build.py build --wheels=...` with
+    `--override_repository=xla=` at that commit's `XLA_COMMIT`, then
+    `build/frx_rename.py`), install every wheel `--no-deps` (a plain
+    `pip install hash-frx` re-resolves `frx` off the index and undoes the set),
+    and install the plugin as the **wheel** so `metal_plugin_extension.so` and
+    `version.py` move with it. Budget ~90 min; `jaxlib` is 74 of it.
 - **Do not set `XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async` by default.** At m32 it
   *inflates* the prove **~14%** — 71.8 ms without it vs 81.6 ms with it, means
   of three fresh processes per arm, `--throughput` best-of-10 each,
