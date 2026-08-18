@@ -94,6 +94,26 @@ The rules every change must respect:
   dylib was swapped in that test, so the pathology is on the plugin-vs-wheels
   axis specifically: there is no cheap way to A/B one xla kernel change on
   Metal, only a full matched rebuild of all four wheels.
+- **The stack lags xla main by construction — prove the kernel is in the binary
+  before you attribute anything to it.** The pin chain runs jax → its
+  `XLA_COMMIT`, so the plugin trails xla main by however far the jax pin trails,
+  and an xla PR merged after that pin is simply absent. No error, no warning.
+  A whole re-ranking campaign was run against a plugin two commits before the
+  kernel it was measuring (fractalyze/xla#512), and the tell was a phase that
+  refused to move; both commits carried the same date, so only the DAG answers
+  it:
+
+  ```bash
+  git -C <xla> merge-base --is-ancestor <pr-merge-sha> <plugin-build-sha> \
+    && echo present || echo ABSENT
+  ```
+
+  Record the plugin's xla sha next to every published number. "Built from a
+  self-consistent stack" and "contains the change under test" are independent
+  claims, and the pinning discipline above actively works against the second.
+  **The version string cannot distinguish two stacks** — a rebuild reads
+  `0.10.2.dev0+selfbuilt` before and after, so `pip list` is useless here; diff
+  the dylib's md5.
 - **A `fused_region` decomposition is a fallback, not the code that runs.**
   `ZorchFusedRegionRewriter` routes the composite to its kCustom emitter on
   **Metal as well as CUDA** (`MetalCompiler : GpuCompiler` does not override the
