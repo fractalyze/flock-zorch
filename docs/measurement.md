@@ -75,6 +75,51 @@ The benchmark itself — how to run it and what it has published — is in
   override checkout against the `MODULE.bazel` pin. A stale override once hid a
   +35% m32 throughput difference (#200 erratum) — every m32 wall measured under
   it had to be thrown away.
+- **When the fix adds no new string, the marker grep in `CLAUDE.md` cannot
+  verify it — and the obvious fallback is a trap.** A pure-performance change
+  (prime-ir#432 rewrote GHASH clmul as integer multiplies) leaves symbol names
+  byte-identical: `clmul` and `select_xor` grep the same with and without it.
+  The only reliable check is then behavioural, A/B against a known-good plugin
+  kept beside the new one — but **never A/B two selfbuilt plugins built from
+  different base commits.** A selfbuilt plugin encodes its whole source tree,
+  and a day of unrelated commits easily outweighs the change under test; that
+  produced one confidently-reported +46% which evaporated when both arms were
+  rebuilt from one base (fractalyze/xla#528). Either rebuild both arms from the
+  same base, or — much cheaper — drive the change from a runtime knob and leave
+  the binary fixed (`xla_gpu_max_fusion_ir_size`, fractalyze/xla#510, is the
+  model). If `XLA_FLAGS` rejects a flag your selfbuilt plugin knows but the
+  installed frx wheel does not, pass it as `frx.jit(..., compiler_options={...})`
+  — allowed on the top-level jit only, and nested jits inline into the parent's
+  module so the parent's option covers them.
+- **On Metal the plugin is structurally selfbuilt, and it lags xla main.** There
+  is no published Metal wheel — the lockstep set is `frx/frxlib/frx-cuda12-*` —
+  and on macOS/arm64 only `frxlib` *releases* are published, not the dev
+  snapshots `requirements.in` pins, so `pip install -r requirements.in` cannot
+  resolve and the local rig cannot follow main from wheels at all. Three
+  consequences, each of which has cost a session:
+  - **The plugin can predate the kernel you are measuring.** The pin chain runs
+    jax → its `XLA_COMMIT`, so the plugin trails xla main by however far the jax
+    pin trails, and a PR merged after that pin is absent with no error. A full
+    re-ranking campaign ran against a plugin two commits before the kernel it
+    was measuring (fractalyze/xla#512); the only tell was a phase that refused
+    to move. Both commits shared a date, so only the DAG answers it:
+    `git merge-base --is-ancestor <pr-merge-sha> <plugin-build-sha>`. Record the
+    plugin's xla sha beside any published number.
+  - **The version string cannot distinguish two stacks** — a rebuild reads
+    `0.10.2.dev0+selfbuilt` before and after, so `pip list` is useless; diff the
+    dylib's md5.
+  - **Rebuilding the dylib alone does not work.** Dropping an xla-main
+    `pjrt_c_api_metal_plugin.dylib` beside the older wheels took blake3 m=28
+    from 302 ms to 1780–2855 ms, **~55× of it in lincheck**, with the byte gate
+    passing 18/18 throughout. Only the dylib was swapped, so the pathology is on
+    the plugin-vs-wheels axis: build `frx` + `frxlib` + `frx-metal-pjrt`
+    together from the one jax commit whose build timestamp matches the pinned
+    version (`build/build.py build --wheels=...` with
+    `--override_repository=xla=` at that commit's `XLA_COMMIT`, then
+    `build/frx_rename.py`), install every wheel `--no-deps` (a plain
+    `pip install hash-frx` re-resolves `frx` off the index and undoes the set),
+    and install the plugin as the **wheel** so `metal_plugin_extension.so` and
+    `version.py` move with it. Budget ~90 min; `jaxlib` is 74 of it.
 - **Do not set `XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async` by default.** At m32 it
   *inflates* the prove **~14%** — 71.8 ms without it vs 81.6 ms with it, means
   of three fresh processes per arm, `--throughput` best-of-10 each,
@@ -91,9 +136,65 @@ The benchmark itself — how to run it and what it has published — is in
   `Δphase_ms / Δhashes` across two sizes; a term whose per-hash cost *rises* sets
   the ceiling, one that *falls* is a floor being spread. The marginal predicted
   the m32 ranking two size steps early — the absolute share never did.
+- **Match the estimator before comparing two numbers.** `--runs N` is
+  **best-of-N within one process**, so the numbers in this repo's issues and
+  commit messages are already *minima*. Comparing a mean or a single shot
+  against one manufactures a regression out of nothing: on one unchanged binary,
+  min-of-10 reproduced a published m=28 baseline to **2.1%** while the mean over
+  those same 10 read **23% worse**. A tracked "45% regression on main" that
+  blocked an issue for two sessions was exactly that mismatch, not a code
+  change. Quote minima across N independent *processes*, and take a marginal
+  from the min-wall run at each leg coherently — per-phase minima mixed across
+  runs sum to a run that never happened.
+- **On Apple Silicon neither leg is single-shot-safe.** The `<0.1%` busy / few-
+  percent wall figures below are RTX 5090 numbers. On an M4 Pro, 10 independent
+  processes on one binary spanned **302–405 ms at m=28** and 128–151 ms at m=26
+  — 34% and 18%. Small-n repeats understate that tail (three draws from a
+  right-skewed distribution usually miss it), and it is not thermal: a 7-minute
+  idle did not recover the fast reading, and `pmset -g therm` logged no warning
+  level. Take n≈10 per leg on Metal before quoting anything.
+- **When the two arms could not be measured back to back, use the untouched
+  phases as an internal control.** A quieter machine lifts *every* phase, so a
+  change is attributable only if the phase it targets moves while the others
+  hold still. That is what made xla#512 readable across a busy-afternoon control
+  and a 1 a.m. treatment: `zerocheck` fell 61% while `open`, `commit` and
+  `lincheck` drifted slightly the *wrong* way. The converse caution — small
+  marginals differenced from two noisy legs are "unchanged within the method's
+  resolution", not regressions.
 - **A phase is not a target.** `zerocheck` bundles the round-1 URM extend and the
   multilinear ladder, whose relative sizes invert with `m`. Split to the prover
-  round before scoping work off a phase number.
+  round before scoping work off a phase number. The inversion is not subtle: on
+  Metal the URM extend read 83% of `zerocheck` at m22 and 22% at m28, with the
+  ladder going the other way, so a target picked off the m22 split is the wrong
+  one. Whatever splits the phase must re-run the real entry point and
+  byte-compare its output — a split that does not reproduce the wire is timing a
+  different computation, and the `sum` vs phase-wall gap only catches unbilled
+  glue, not a divergent one.
+- **A `fused_region` decomposition is a fallback, not the code that runs.**
+  `ZorchFusedRegionRewriter` routes the composite to its kCustom emitter on
+  **Metal as well as CUDA** (`MetalCompiler : GpuCompiler` does not override the
+  pipeline), so timing or optimizing the Python body — `_urm._round1_partial_decomp`
+  and friends — measures nothing that executes. A whole four-way split of
+  round-1 was scoped against that body before anyone checked. Confirm what a
+  region lowered to before profiling it:
+  `frx.jit(fn).lower(...).compile().as_text()` gives the optimized HLO, which
+  `XLA_FLAGS` will not — it dumps only the input module at PJRT level. The fix
+  then belongs in `xla/backends/gpu/codegen/emitters/`, not in Python.
+- **A branch inside a `@jit` is decided at trace time, so a monkeypatch A/B
+  measures one arm twice.** Swapping something the traced function reads —
+  `frx.default_backend()`, a feature flag, anything behind an `if` — and timing
+  again is a cache hit on the first arm's graph unless `frx.clear_caches()` runs
+  between arms. The failure is silent and *reassuring*: it reports exactly 1.0×
+  with byte-identical results, which reads as "this branch costs nothing". Treat
+  a perfect 1.00× tie between two supposedly different implementations as
+  evidence you measured one of them. With the clear added, the same experiment
+  said the other branch does not even lower on that platform. (Same shape as the
+  `xla_gpu_cuda_data_dir` cache-key trap above, one level up.)
+- **Do not calibrate a per-op cost from a kernel containing one of that op.** On
+  Metal the first GF(2^128) multiply in a kernel cost ~2 ns/element while each
+  additional one cost ~11.65, with emitted op counts perfectly linear in between
+  and the unroll factor ruled out. Any budget built on the single-op number is
+  off by 6×. Take the slope across k ops per element, and read the marginal.
 - **Latency vs arithmetic: busy from nsys, wall from a clean run.** nsys inflates
   *host* dispatch ~2×, so inter-kernel gaps on its timeline are contaminated;
   on-device kernel durations are not. Pass `--cuda-graph-trace=node` or
