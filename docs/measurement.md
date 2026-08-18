@@ -170,6 +170,16 @@ The benchmark itself — how to run it and what it has published — is in
   byte-compare its output — a split that does not reproduce the wire is timing a
   different computation, and the `sum` vs phase-wall gap only catches unbilled
   glue, not a divergent one.
+- **A `fused_region` decomposition is a fallback, not the code that runs.**
+  `ZorchFusedRegionRewriter` routes the composite to its kCustom emitter on
+  **Metal as well as CUDA** (`MetalCompiler : GpuCompiler` does not override the
+  pipeline), so timing or optimizing the Python body — `_urm._round1_partial_decomp`
+  and friends — measures nothing that executes. A whole four-way split of
+  round-1 was scoped against that body before anyone checked. Confirm what a
+  region lowered to before profiling it:
+  `frx.jit(fn).lower(...).compile().as_text()` gives the optimized HLO, which
+  `XLA_FLAGS` will not — it dumps only the input module at PJRT level. The fix
+  then belongs in `xla/backends/gpu/codegen/emitters/`, not in Python.
 - **A branch inside a `@jit` is decided at trace time, so a monkeypatch A/B
   measures one arm twice.** Swapping something the traced function reads —
   `frx.default_backend()`, a feature flag, anything behind an `if` — and timing
