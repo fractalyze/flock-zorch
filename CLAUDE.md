@@ -75,7 +75,8 @@ The rules every change must respect:
   `frx/frxlib/frx-cuda12-*` — so `frx_plugins/xla_metal/*.dylib` is
   structurally selfbuilt, and rebuilding it without the same
   `--override_repository=` flags silently drops whatever unlanded fix it
-  carried. **On macOS/arm64 `frxlib` goes further: only the releases are
+  carried. A regression whose size matches a known lever's is that, not your
+  change. **On macOS/arm64 `frxlib` goes further: only the releases are
   published, not the dev snapshots this file pins**, so
   `pip install -r requirements.in` cannot resolve and the local Metal rig
   cannot follow main from wheels at all. Build `frx` + `frxlib` +
@@ -86,8 +87,7 @@ The rules every change must respect:
   plain `pip install hash-frx` re-resolves `frx` off the index and undoes
   the set. Install the plugin as the `frx-metal-pjrt` **wheel**, never by
   copying the dylib: `metal_plugin_extension.so` and `version.py` must move
-  with it or they mismatch the next time frxlib's version changes. A regression whose size matches a known lever's is that, not your
-  change.
+  with it or they mismatch the next time frxlib's version changes.
 - **A `fused_region` decomposition is a fallback, not the code that runs.**
   `ZorchFusedRegionRewriter` routes the composite to its kCustom emitter on
   **Metal as well as CUDA** (`MetalCompiler : GpuCompiler` does not override the
