@@ -87,7 +87,13 @@ The rules every change must respect:
   plain `pip install hash-frx` re-resolves `frx` off the index and undoes
   the set. Install the plugin as the `frx-metal-pjrt` **wheel**, never by
   copying the dylib: `metal_plugin_extension.so` and `version.py` must move
-  with it or they mismatch the next time frxlib's version changes.
+  with it or they mismatch the next time frxlib's version changes. That
+  mismatch is not theoretical and it is not a crash — dropping an xla-main
+  dylib beside the older wheels took blake3 m=28 from 302 ms to 1780–2855 ms
+  (**~55x on lincheck**) while the byte gate passed 18/18 throughout. Only the
+  dylib was swapped in that test, so the pathology is on the plugin-vs-wheels
+  axis specifically: there is no cheap way to A/B one xla kernel change on
+  Metal, only a full matched rebuild of all four wheels.
 - **A `fused_region` decomposition is a fallback, not the code that runs.**
   `ZorchFusedRegionRewriter` routes the composite to its kCustom emitter on
   **Metal as well as CUDA** (`MetalCompiler : GpuCompiler` does not override the
