@@ -91,6 +91,31 @@ The benchmark itself — how to run it and what it has published — is in
   `Δphase_ms / Δhashes` across two sizes; a term whose per-hash cost *rises* sets
   the ceiling, one that *falls* is a floor being spread. The marginal predicted
   the m32 ranking two size steps early — the absolute share never did.
+- **Match the estimator before comparing two numbers.** `--runs N` is
+  **best-of-N within one process**, so the numbers in this repo's issues and
+  commit messages are already *minima*. Comparing a mean or a single shot
+  against one manufactures a regression out of nothing: on one unchanged binary,
+  min-of-10 reproduced a published m=28 baseline to **2.1%** while the mean over
+  those same 10 read **23% worse**. A tracked "45% regression on main" that
+  blocked an issue for two sessions was exactly that mismatch, not a code
+  change. Quote minima across N independent *processes*, and take a marginal
+  from the min-wall run at each leg coherently — per-phase minima mixed across
+  runs sum to a run that never happened.
+- **On Apple Silicon neither leg is single-shot-safe.** The `<0.1%` busy / few-
+  percent wall figures below are RTX 5090 numbers. On an M4 Pro, 10 independent
+  processes on one binary spanned **302–405 ms at m=28** and 128–151 ms at m=26
+  — 34% and 18%. Small-n repeats understate that tail (three draws from a
+  right-skewed distribution usually miss it), and it is not thermal: a 7-minute
+  idle did not recover the fast reading, and `pmset -g therm` logged no warning
+  level. Take n≈10 per leg on Metal before quoting anything.
+- **When the two arms could not be measured back to back, use the untouched
+  phases as an internal control.** A quieter machine lifts *every* phase, so a
+  change is attributable only if the phase it targets moves while the others
+  hold still. That is what made xla#512 readable across a busy-afternoon control
+  and a 1 a.m. treatment: `zerocheck` fell 61% while `open`, `commit` and
+  `lincheck` drifted slightly the *wrong* way. The converse caution — small
+  marginals differenced from two noisy legs are "unchanged within the method's
+  resolution", not regressions.
 - **A phase is not a target.** `zerocheck` bundles the round-1 URM extend and the
   multilinear ladder, whose relative sizes invert with `m`. Split to the prover
   round before scoping work off a phase number. The inversion is not subtle: on
