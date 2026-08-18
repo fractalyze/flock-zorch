@@ -34,6 +34,23 @@ the split is an upper bound rather than a headline throughput measurement.
 `Sum` versus `wall` is printed as a self-check on the instrumentation: a gap
 there means work escaped every phase.
 
+`--split <phase>` expands one phase into its steps, because a phase is not a
+target (`docs/measurement.md`) and on Metal `open` / `zerocheck` / `commit` now
+sit within 7% of each other, so the phase column alone cannot pick work. A
+split inlines the phase body, which is a re-derivation, so it is checked two
+ways by `--split-verify`:
+
+  * the proof must stay byte-identical to the unsplit prove, and
+  * the split prove's **wall** must not exceed the unsplit prove's.
+
+The second is not redundant. Splitting can change how a phase COMPILES while
+still computing the same proof: calling a step eagerly collapses a compiled
+program into a per-op dispatch chain (~25x here), and rebuilding a jit inside
+the timed function recompiles on every prove (~29x). Both stay byte-identical
+AND inside the sum-vs-wall check, because the inflated work really is inside a
+phase. Only the wall comparison sees them. Run `--split-verify` whenever the
+split or the phase body changes.
+
 Run (`CUDA_ROOT` must point at a **13.3** toolchain — `/usr/local/cuda` is not
 necessarily one, and 12.9 silently selects the software GF(2^128) multiply,
 worth ~5.5x on the whole prove; verify with `ptxas --version`. Do NOT reach for
@@ -65,8 +82,9 @@ frx.config.update("jax_enable_x64", True)
 
 import frx.numpy as fnp  # noqa: E402
 
-from flock_zorch import lincheck, prover, zerocheck  # noqa: E402
+from flock_zorch import ghash, lincheck, prover, zerocheck  # noqa: E402
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
+from flock_zorch.pcs import ring_switch  # noqa: E402
 from flock_zorch.r1cs_hashes import blake3_witness  # noqa: E402
 from flock_zorch.testing._golden import unpack_bits  # noqa: E402
 from flock_zorch.testing._ptxas import (  # noqa: E402
@@ -101,10 +119,26 @@ def _profile(args):
     return getattr(prover, HASH_ARMS[args.hash])
 
 
+# `--split open` replaces the `open` column with the three steps
+# `prover.open_batch_mixed_ligerito` runs in order. Splitting is what makes a
+# phase a target (`docs/measurement.md`): `open` is one of three phases now
+# within 7% of each other on Metal, so the phase number alone cannot pick work.
+OPEN_STEPS = ("open.ring_switch", "open.combine", "open.ligerito")
+COMMIT_STEPS = ("commit.encode", "commit.leaves", "commit.merkle")
+SPLITS = {"open": ("open", OPEN_STEPS), "commit": ("commit", COMMIT_STEPS)}
+
+
 def _phases(args):
     """Phase columns for this invocation: seed mode owns an extra leading
-    `witgen` phase (seed->blocks->witness->stripe)."""
-    return (("witgen",) + PHASES) if args.seed is not None else PHASES
+    `witgen` phase (seed->blocks->witness->stripe), and `--split <phase>`
+    expands that phase into its steps, in place."""
+    phases = PHASES
+    spec = SPLITS.get(getattr(args, "split", None))
+    if spec is not None:
+        name, steps = spec
+        i = phases.index(name)
+        phases = phases[:i] + steps + phases[i + 1 :]
+    return (("witgen",) + phases) if args.seed is not None else phases
 
 
 # ---------------------------------------------------------------- GPU provenance
@@ -264,7 +298,14 @@ class Circuit:
 # -------------------------------------------------------------------- timing
 
 
-def make_prove(circ: Circuit, g, unpacked: bool, seed: int | None = None, profile=None):
+def make_prove(
+    circ: Circuit,
+    g,
+    unpacked: bool,
+    seed: int | None = None,
+    profile=None,
+    split: str | None = None,
+):
     """Returns a `prove(times) -> result` running one full prove.
 
     With `times`, every phase is awaited and recorded into it. There is exactly
@@ -306,6 +347,8 @@ def make_prove(circ: Circuit, g, unpacked: bool, seed: int | None = None, profil
         z = frx.device_put(g["z"])
         zlc = lincheck.stripe_to_device(zlc, m, k_log)
 
+    _commit_jits: dict = {}
+
     def prove(times=None):
         def phase(name, fn):
             if times is None:
@@ -334,6 +377,56 @@ def make_prove(circ: Circuit, g, unpacked: bool, seed: int | None = None, profil
             prover.bind_statement(ch, stmt, root)
             return pdata, ch
 
+        def _commit_split():
+            """`_commit` with a barrier between encode, transpose and Merkle.
+
+            Reaches through `commit_flock_ligerito` -> `LigeritoProver.commit`
+            -> `zorch.pcs.matrix_commit.commit_matrix`, whose three statements
+            are the split. Like `_open_split` this is a re-derivation across a
+            module boundary — it touches zorch internals that no contract
+            promises to keep — so `--split-verify` is the thing that says it
+            still commits what the prover commits.
+            """
+            from zorch.pcs.fold import to_base_field
+            from zorch.pcs.ligerito.basis import select_commit_basis
+            from zorch.pcs.ligerito.prover import CommittedMatrix
+
+            z = wit_z.reshape(-1, 2)
+            log_n = z.shape[0].bit_length() - 1
+            lp, config, _ = zorch_ligerito._flock_ligerito_prover(
+                cfg, log_n, profile.tree
+            )
+            f = zorch_ligerito._bitrev(ghash.to_ghash(z))
+            k0 = config.fold_ks[0]
+            kappa = 1 << k0
+            code0 = lp._code(0, f.shape[0] // kappa)
+            basis = select_commit_basis(config.monomial_commit)
+            matrix = f.reshape(kappa, -1)
+
+            # Each step is jitted on its own: called eagerly, `tree.commit`
+            # collapses into a per-op dispatch chain and reads ~25x its real
+            # cost (the same reason `ligerito._open_jitted` exists). The jits
+            # are cached across proves — rebuilding them per call recompiles
+            # every time and bills the compile to the phase, which is worse
+            # still.
+            if not _commit_jits:
+                _commit_jits["encode"] = frx.jit(lambda m: code0.encode(basis.pre(m)))
+                _commit_jits["leaves"] = frx.jit(lambda c: to_base_field(c.T))
+                _commit_jits["merkle"] = frx.jit(lambda lv: lp.tree.commit(lv))
+
+            codeword = phase("commit.encode", lambda: _commit_jits["encode"](matrix))
+            leaves = phase("commit.leaves", lambda: _commit_jits["leaves"](codeword))
+            root, layers = phase(
+                "commit.merkle", lambda: _commit_jits["merkle"](leaves)
+            )
+
+            pdata = zorch_ligerito.LigeritoProverData(
+                f=f, initial=CommittedMatrix(root, leaves, layers)
+            )
+            ch = profile.challenger_cls(circ.domain)
+            prover.bind_statement(ch, stmt, root)
+            return pdata, ch
+
         def _lincheck(zc):
             x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, ir)
             lc = lincheck.prove(
@@ -341,14 +434,58 @@ def make_prove(circ: Circuit, g, unpacked: bool, seed: int | None = None, profil
             )
             return x_ab, lc
 
-        def _open(zc, x_ab, lc):
+        def _open_points(zc, x_ab, lc):
             ab = fnp.concatenate([lc.claim.r_inner_rest, x_ab.x_outer], axis=0)
             cc = fnp.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
+            return [ab, cc]
+
+        def _open(zc, x_ab, lc):
             return prover.open_batch_ligerito(
-                cfg, wit_z, pdata, [ab, cc], ch, profile.tree
+                cfg, wit_z, pdata, _open_points(zc, x_ab, lc), ch, profile.tree
             )
 
-        pdata, ch = phase("commit", _commit)
+        def _open_split(zc, x_ab, lc):
+            """`_open` with a barrier between its three steps.
+
+            Inlines `prover.open_batch_mixed_ligerito`'s no-packed-direct body —
+            the case `open_batch_ligerito` delegates to — because the steps are
+            internal to one call and cannot be timed from outside it. That makes
+            this a re-derivation, which is the failure mode that has silently
+            stopped a split from measuring the prover before, so it is checked:
+            the phase totals must still account for the wall (the NOTE below),
+            and `--split-verify` byte-compares the proof against the unsplit
+            path on the same transcript.
+            """
+            x_outers = _open_points(zc, x_ab, lc)
+            ch.observe_label(b"flock-pcs-open-batch-v0")
+            s_hat_vs, rs_eq_inds, sumcheck_claims, gammas = phase(
+                "open.ring_switch",
+                lambda: ring_switch.prove_batched(wit_z, x_outers, ch),
+            )
+            b_combined, target = phase(
+                "open.combine",
+                lambda: prover._combine_claims(rs_eq_inds, gammas, sumcheck_claims),
+            )
+            lig, lig_obj = phase(
+                "open.ligerito",
+                lambda: zorch_ligerito.prove_flock_ligerito(
+                    cfg,
+                    pdata,
+                    b_combined,
+                    target,
+                    ch,
+                    return_proof=True,
+                    tree=profile.tree,
+                ),
+            )
+            return prover.BatchOpenProof(
+                ring_switches=s_hat_vs, ligerito=lig, ligerito_obj=lig_obj
+            )
+
+        if split == "commit":
+            pdata, ch = _commit_split()
+        else:
+            pdata, ch = phase("commit", _commit)
         # The claim, not the wire proof: `ZerocheckProof` holds wire fields
         # only, and the point the lincheck and open reduce (`z`,
         # `mlv_challenges`, `r_rest`) lives on `ZerocheckClaim`.
@@ -357,7 +494,10 @@ def make_prove(circ: Circuit, g, unpacked: bool, seed: int | None = None, profil
             lambda: zerocheck.prove_packed(wit_a, wit_b, wit_c, m, ch=ch),
         )
         x_ab, lc = phase("lincheck", lambda: _lincheck(zc))
-        opening = phase("open", lambda: _open(zc, x_ab, lc))
+        if split == "open":
+            opening = _open_split(zc, x_ab, lc)
+        else:
+            opening = phase("open", lambda: _open(zc, x_ab, lc))
         return ProveFastResult(
             zerocheck=zc_proof,
             lincheck=(lc.rounds, lc.z_partial),
@@ -372,14 +512,121 @@ def make_prove(circ: Circuit, g, unpacked: bool, seed: int | None = None, profil
 # ---------------------------------------------------------------------- main
 
 
+def _proof_leaves(result):
+    """Every array in a `ProveFastResult`, flattened, as host bytes.
+
+    The split path re-derives a phase body, so equality here is what says it
+    still computes the prover's proof rather than something adjacent to it.
+    Comparing leaves rather than `proof_io.bundle_bytes` keeps the check
+    independent of serialization: a divergence shows up even in a field the
+    wire format happens to drop.
+    """
+    import dataclasses
+
+    import numpy as np
+
+    def walk(node, path):
+        # The proof is plain dataclasses / tuples / dicts, none of them
+        # registered as pytrees, so `tree_leaves` would return the top object
+        # as a single leaf and compare nothing. Recurse by hand.
+        if dataclasses.is_dataclass(node) and not isinstance(node, type):
+            for f in dataclasses.fields(node):
+                yield from walk(getattr(node, f.name), f"{path}.{f.name}")
+        elif isinstance(node, dict):
+            for k in sorted(node, key=str):
+                yield from walk(node[k], f"{path}[{k}]")
+        elif isinstance(node, (list, tuple)):
+            for i, v in enumerate(node):
+                yield from walk(v, f"{path}[{i}]")
+        elif node is not None and hasattr(node, "shape"):
+            yield path, np.asarray(node)
+
+    return list(walk(result, "proof"))
+
+
+def _verify_split(circ: Circuit, g, args) -> None:
+    """Prove once split and once unsplit, and byte-compare. Aborts on mismatch.
+
+    Both arms build their own challenger from the same domain and consume the
+    same golden, so they run on identical Fiat-Shamir input; any difference is
+    the split's doing.
+    """
+    arms, walls = {}, {}
+    for split in (None, args.split):
+        prove = make_prove(
+            circ, g, args.unpacked, seed=args.seed, profile=_profile(args), split=split
+        )
+        prove()  # warm the compile out of the timed call
+        t0 = time.perf_counter()
+        result = await_all(prove())
+        walls[split] = time.perf_counter() - t0
+        arms[split] = _proof_leaves(result)
+
+    # Byte identity says the split computes the same proof; it does NOT say it
+    # measures the same program. Splitting a phase can change how it compiles —
+    # calling a step eagerly collapses it into a per-op dispatch chain, and
+    # rebuilding a jit per prove bills a recompile to the phase. Both keep the
+    # proof identical, and both stay inside the sum-vs-wall check because the
+    # inflated work IS inside a phase. Only the wall catches them.
+    # One-sided on purpose. A broken split inflates: both failures above ran
+    # 1.9x and 29x. The unsplit arm goes first here, so it eats the process's
+    # cold compile cache and a cold device and the split arm routinely reads
+    # ~0.6x — that is the harness's own ordering, not a finding, and bounding
+    # it from below would only ever fire on that.
+    ratio = walls[args.split] / walls[None]
+    if ratio > 1.5:
+        raise SystemExit(
+            f"--split-verify: the split prove ran {ratio:.2f}x the unsplit one "
+            f"({walls[args.split] * 1e3:.0f}ms vs {walls[None] * 1e3:.0f}ms). The "
+            "split changed the program, so its per-step numbers describe that "
+            "program and not the prover's."
+        )
+
+    unsplit, split_ = arms[None], arms[args.split]
+    if [p for p, _ in unsplit] != [p for p, _ in split_]:
+        raise SystemExit(
+            f"--split-verify: split proof has {len(split_)} arrays, unsplit has "
+            f"{len(unsplit)} — the split is not computing the same proof"
+        )
+    if not unsplit:
+        raise SystemExit(
+            "--split-verify: found no arrays to compare — the walk missed the "
+            "proof structure, so this check would pass vacuously"
+        )
+    bad = [
+        p
+        for (p, a), (_, b) in zip(unsplit, split_)
+        if a.shape != b.shape or a.dtype != b.dtype or a.tobytes() != b.tobytes()
+    ]
+    if bad:
+        raise SystemExit(
+            f"--split-verify: {len(bad)} of {len(unsplit)} arrays differ "
+            f"(first: {bad[0]}) — the split does not reproduce the wire"
+        )
+    print(
+        f"  split-verify: {len(unsplit)} arrays byte-identical to the unsplit "
+        f"prove, wall {ratio:.2f}x it"
+    )
+
+
 def bench(circ: Circuit, args) -> None:
     """Measure one circuit and print its row. Scoped to a function so the golden
     (~90 MB) and the circuit's device buffers are released before the next one."""
     g = circ.ingest(args.golden)
     meta = g["meta"]
     n_hash = circ.hashes_per_proof(meta)
-    prove = make_prove(circ, g, args.unpacked, seed=args.seed, profile=_profile(args))
+    prove = make_prove(
+        circ,
+        g,
+        args.unpacked,
+        seed=args.seed,
+        profile=_profile(args),
+        split=args.split,
+    )
     phases = _phases(args)
+
+    if args.split_verify:
+        _verify_split(circ, g, args)
 
     if args.throughput:
         wall = best(lambda: prove(), args.runs)
@@ -431,6 +678,23 @@ def main() -> int:
         "dumps (single circuit only)",
     )
     ap.add_argument("--runs", type=int, default=3, help="timed iterations, best-of")
+    ap.add_argument(
+        "--split",
+        choices=tuple(SPLITS),
+        help="expand one phase into its sub-steps. A phase is not a target "
+        "(docs/measurement.md); with open / zerocheck / commit within 7% of "
+        "each other on Metal, the phase column alone cannot pick work. The "
+        "split re-derives the phase body, so it self-checks: sum-vs-wall as "
+        "always, plus --split-verify for byte identity",
+    )
+    ap.add_argument(
+        "--split-verify",
+        action="store_true",
+        help="prove once split and once unsplit on the same transcript and "
+        "byte-compare the two proofs, aborting on mismatch. Run it whenever "
+        "the split or the phase body changed — a re-derived split that stops "
+        "matching the prover measures a different computation",
+    )
     ap.add_argument(
         "--throughput",
         action="store_true",
