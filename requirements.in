@@ -17,10 +17,10 @@ typing-extensions
 # carries the interior-padding lowering lincheck's `_seg_xor_fold`
 # (frx.lax.associative_scan) needs — older wheels raise NotImplementedError on
 # the sha2/blake3 GPU gates. Bump these together with the zorch git_override pin.
-frx==0.10.2.dev20260814073545
-frxlib==0.10.2.dev20260814073545
-frx-cuda12-plugin==0.10.2.dev20260814073545
-frx-cuda12-pjrt==0.10.2.dev20260814073545
+frx==0.10.2.dev20260818233737
+frxlib==0.10.2.dev20260818233737
+frx-cuda12-plugin==0.10.2.dev20260818233737
+frx-cuda12-pjrt==0.10.2.dev20260818233737
 # zk_dtypes ships the native field dtypes frx lowers; arrives transitively via
 # frx but the resolver lags, so pin it so the lock tracks the frx wheel.
 # 0.0.10 adds the flat AES-basis binary_field_gf8_aes dtype (zk_dtypes#157).
@@ -30,4 +30,4 @@ zk-dtypes==0.0.10
 # marker seam. It sits BELOW `zorch`, which imports it rather than owning a
 # copy, so this repo takes it directly — pip resolves here on a separate hub
 # from zorch's, so a shared distribution has to be named in both.
-hash-frx==0.2.0.dev20260814064119
+hash-frx==0.2.0.dev20260819071642
