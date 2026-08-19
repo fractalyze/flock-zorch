@@ -94,3 +94,16 @@ lanes are the SAME 16 LE bytes, so `to_ghash`/`from_ghash` are pure bitcasts and
   never `mask_uint64 * x_g` (that clmuls the mask as a field element, not a select).
 - **FS framing: scalar draw ≠ slice(1)** on the wire. `sample_f128()` (bare) is a
   scalar; a vector draw is `sample_f128(n)` (slice) even when n==1.
+
+## Pallas kernel gotchas
+
+- **frx pallas' default GPU lowering is Mosaic-GPU**, which stages every
+  BlockSpec block into shared memory (whole-array specs overflow: "exceeds
+  available shared memory"). Pass
+  `compiler_params=frx.experimental.pallas.triton.CompilerParams(...)` to get
+  the Triton backend the kernels in this repo are written against.
+- `elementwise_inline_asm` (triton primitives) rejects unsigned tensors —
+  reinterpret u64↔i64 across the asm boundary (`.astype`, same bits).
+- Python-loop unrolling multiplies Triton compile time: a 4·16·8·8 unrolled
+  gather body did not compile in 10 minutes; the same body under
+  `lax.fori_loop` over the outer two loops compiles in ~3 s.
