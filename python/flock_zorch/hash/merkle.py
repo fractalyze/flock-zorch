@@ -34,6 +34,8 @@ from hash_frx.blake3 import blake3
 from hash_frx.sha256 import INITIAL_STATE, block_to_words, sha256_merkle_damgard
 from zorch.commit.merkle import MerkleTree
 
+from flock_zorch.hash import merkle_pallas
+
 
 def _pad_device(msg, length: int):
     """Device SHA-256 pad: uint8 [B, length] -> uint32 [B, nblocks, 16] BE, all-fnp
@@ -127,14 +129,30 @@ class _Sha256MerkleTree(MerkleTree):
     retrace the marker decomposition at the wrong rank — override the two batching
     hooks with the [B, L] contract `hash_frx.sha256` is written for. Row-major
     only (both hooks hash rows); the leaf hasher's `as_bytes` picks the uint8
-    preimage, so one class serves both the uint8 and GHASH codeword trees."""
+    preimage, so one class serves both the uint8 and GHASH codeword trees.
+
+    On GPU, whole-tile batches take the Pallas kernel, which reads the raw
+    bytes and pads in-register — `_pad_device`'s padded-words materialization
+    is the largest commit-window kernel after the NTT at m=32 (~1.16 GB
+    written and re-read). The marker path stays the portable form and byte
+    oracle; small levels and CPU take it unchanged."""
+
+    @staticmethod
+    def _batch_digest(rows):
+        if (
+            frx.default_backend() == "gpu"
+            and rows.shape[0] % merkle_pallas._LEAVES_PER_PROG == 0
+            and rows.shape[1] % 64 == 0
+        ):
+            return merkle_pallas.sha256_leaves_pallas(rows)
+        return _digest(rows, rows.shape[1])
 
     def _hash_leaves(self, matrix):
         rows = self._leaf_hasher.as_bytes(matrix)
-        return _digest(rows, rows.shape[1])
+        return self._batch_digest(rows)
 
     def _compress_groups(self, groups):
-        return _digest(groups.reshape(groups.shape[0], 64), 64)
+        return self._batch_digest(groups.reshape(groups.shape[0], 64))
 
 
 GHASH_SHA256_TREE = _Sha256MerkleTree(_GhashSha256LeafHasher(), _Sha256Compressor())
