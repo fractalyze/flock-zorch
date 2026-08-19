@@ -107,3 +107,16 @@ lanes are the SAME 16 LE bytes, so `to_ghash`/`from_ghash` are pure bitcasts and
 - Python-loop unrolling multiplies Triton compile time: a 4·16·8·8 unrolled
   gather body did not compile in 10 minutes; the same body under
   `lax.fori_loop` over the outer two loops compiles in ~3 s.
+- **The triton lowering has no `reduce_xor`** (only sum/max/min/argmax/argmin),
+  and no `lax.slice_p` either. XOR-reduce an axis with a `lax.split` halving
+  tree (`lo ^ hi` per level, `reshape` off the final unit axis) — split,
+  squeeze, reshape, concatenate and transpose ARE registered.
+- Gathers cost load-issue slots per lane, not per distinct address: a (64,)
+  gather where 8 lanes share each word pays 8x the load instructions of an
+  all-distinct-address (8, 8) gather over the same words. Vectorizing the URM
+  kernel across rows so every gather lane was distinct measured 747 -> 542 us
+  where equal-op restructurings (fused j-pairs, num_stages) measured flat.
+  The opposite trade also lost: replacing 768 B discrete-log table gathers
+  with a pure-ALU schoolbook GF(2^8) multiply measured ~6% slower in that
+  ALU-bound kernel — tiny tables stay L1-resident and their gathers are
+  cheaper than 8 select-XOR rounds.
