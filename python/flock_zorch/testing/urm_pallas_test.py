@@ -7,14 +7,18 @@ Run (GPU required — the kernel is Triton):
 
 from __future__ import annotations
 
-import frx.numpy as fnp
-import numpy as np
-from absl.testing import absltest
+import frx
 
-from flock_zorch import ghash
-from flock_zorch.sumcheck import build_eq
-from flock_zorch.zerocheck import _urm, _urm_pallas
-from flock_zorch.zerocheck import prover as zc_prover
+frx.config.update("jax_enable_x64", True)
+
+import frx.numpy as fnp  # noqa: E402
+import numpy as np  # noqa: E402
+from absl.testing import absltest  # noqa: E402
+
+from flock_zorch import ghash  # noqa: E402
+from flock_zorch.sumcheck import build_eq  # noqa: E402
+from flock_zorch.zerocheck import _urm, _urm_pallas  # noqa: E402
+from flock_zorch.zerocheck import prover as zc_prover  # noqa: E402
 
 
 class UrmPallasTest(absltest.TestCase):
@@ -62,6 +66,37 @@ class UrmPallasTest(absltest.TestCase):
                 f"first mismatch at {i}: got {got_lanes[i]:#x} "
                 f"want {want_lanes[i]:#x} ({mismatch.shape[0]} total)"
             )
+
+    def test_round1_rows_dispatch_matches_composite(self) -> None:
+        """round1_rows takes the kernel path on packed GPU input with the
+        pinned inner challenges, and its (P^AB, P^C) byte-match the
+        composite core's."""
+        m, k_skip = 15, 6
+        rng = np.random.default_rng(11)
+
+        def packed():
+            return fnp.asarray(
+                rng.integers(0, 2**63, size=(1 << (m - 7), 2), dtype=np.uint64)
+            )
+
+        a, b, c = packed(), packed(), packed()
+        r_skip = ghash.to_ghash(
+            fnp.asarray(rng.integers(0, 2**63, size=(k_skip, 2), dtype=np.uint64))
+        )
+        r_outer = ghash.to_ghash(
+            fnp.asarray(
+                rng.integers(0, 2**63, size=(m - k_skip - 7, 2), dtype=np.uint64)
+            )
+        )
+        r = fnp.concatenate([r_skip, zc_prover._SMALL_G, zc_prover._MEDIUM_G, r_outer])
+
+        self.assertTrue(_urm._round1_pallas_ok(a, b, c, m, k_skip, r))
+        got = _urm.round1_rows(a, b, c, m, k_skip, r)
+        want = _urm._round1_core(a, b, c, k_skip, r)
+        for name, g, w in zip(("ab", "c"), got, want):
+            g_lanes = np.asarray(ghash.to_lanes(g))
+            w_lanes = np.asarray(ghash.to_lanes(w))
+            np.testing.assert_array_equal(g_lanes, w_lanes, err_msg=name)
 
 
 if __name__ == "__main__":

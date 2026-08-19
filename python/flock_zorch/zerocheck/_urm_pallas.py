@@ -42,12 +42,12 @@ from frx._src.pallas.triton import primitives as plgpu_prims
 from frx.experimental import pallas as pl
 from frx.experimental.pallas import triton as plgpu
 
-from flock_zorch import ghash
+from flock_zorch import ghash, sumcheck
 from flock_zorch.zerocheck import _urm
 
-# Swept at the 2^22-row geometry (see the board item): 512 rows/program with
-# 2 warps is the minimum; 1 warp costs ~21%, 4 warps ~2.7x, and both smaller
-# and larger programs lose a few percent.
+# Swept at the 2^22-row geometry: 512 rows/program with 2 warps is the
+# minimum; 1 warp costs ~21%, 4 warps ~2.7x, and both smaller and larger
+# programs lose a few percent.
 _ROWS_PER_PARTIAL = 512
 _OUTER_PER_PARTIAL = _ROWS_PER_PARTIAL // 128
 _NUM_WARPS = 2
@@ -121,8 +121,7 @@ def _kernel(
     phi_ref,
     log_ref,
     alog_ref,
-    out_lo_ref,
-    out_hi_ref,
+    out_ref,
 ):
     part = pl.program_id(0)
     lam = fnp.arange(64, dtype=fnp.int32)
@@ -201,10 +200,13 @@ def _kernel(
 
     acc = frx.lax.fori_loop(0, _OUTER_PER_PARTIAL, o_body, tuple(acc))
 
-    out_lo_ref[0, 0, :] = acc[0]
-    out_hi_ref[0, 0, :] = acc[1]
-    out_lo_ref[0, 1, :] = acc[2]
-    out_hi_ref[0, 1, :] = acc[3]
+    # One output with a trailing (lo, hi) lane axis: `to_ghash` on it is a
+    # pure bitcast, where separate lo/hi outputs forced a lane-interleave
+    # copy of the whole partials buffer (~268 MB of traffic at m=32).
+    out_ref[0, 0, :, 0] = acc[0]
+    out_ref[0, 0, :, 1] = acc[1]
+    out_ref[0, 1, :, 0] = acc[2]
+    out_ref[0, 1, :, 1] = acc[3]
 
 
 @functools.cache
@@ -248,7 +250,7 @@ def round1_partials_pallas(a: Array, b: Array, c: Array, eq_out_scaled: Array) -
     rows = a.shape[0]
     n_partials = rows // _ROWS_PER_PARTIAL
     t0word, phi_lo, phi_hi, log, alog = _tables()
-    out_lo, out_hi = pl.pallas_call(
+    out = pl.pallas_call(
         _kernel,
         grid=(n_partials,),
         in_specs=[
@@ -262,14 +264,8 @@ def round1_partials_pallas(a: Array, b: Array, c: Array, eq_out_scaled: Array) -
             pl.BlockSpec((256,), lambda p: (0,)),
             pl.BlockSpec((512,), lambda p: (0,)),
         ],
-        out_specs=[
-            pl.BlockSpec((1, 2, 64), lambda p: (p, 0, 0)),
-            pl.BlockSpec((1, 2, 64), lambda p: (p, 0, 0)),
-        ],
-        out_shape=[
-            frx.ShapeDtypeStruct((n_partials, 2, 64), fnp.uint64),
-            frx.ShapeDtypeStruct((n_partials, 2, 64), fnp.uint64),
-        ],
+        out_specs=pl.BlockSpec((1, 2, 64, 2), lambda p: (p, 0, 0, 0)),
+        out_shape=frx.ShapeDtypeStruct((n_partials, 2, 64, 2), fnp.uint64),
         compiler_params=plgpu.CompilerParams(
             num_warps=_NUM_WARPS, num_stages=_NUM_STAGES
         ),
@@ -284,5 +280,29 @@ def round1_partials_pallas(a: Array, b: Array, c: Array, eq_out_scaled: Array) -
         fnp.asarray(log),
         fnp.asarray(alog),
     )
-    lanes = fnp.stack([out_lo, out_hi], axis=-1)  # [n_partials, 2, 64, 2]
-    return ghash.to_ghash(lanes)
+    return ghash.to_ghash(out)
+
+
+@functools.partial(frx.jit, static_argnums=(3,))
+def round1_core_pallas(a, b, c, k_skip, r):
+    """`_urm._round1_core` on the factored-eq kernel: (P^AB partial, P^C).
+
+    a/b/c are packed F128 witnesses (uint64 `[2^(m-7), 2]`), whose flat u64
+    view is exactly the kernel's row-major 64-bit rows at k_skip=6.
+
+    Precondition (the dispatcher `_urm._round1_pallas_ok` checks it): the
+    inner 7 coordinates of `r[k_skip:]` are the protocol's pinned
+    small/medium challenges — the kernel's shift-reduce and gamma-Horner
+    algebra is specific to those values. The eq factorization itself
+    (`eq[row] = EO[o]·MG[j]·SG[k]`) is generic build_eq tensor structure;
+    only the geometric-ratio identities need the pin."""
+    outer_point = r[k_skip:]
+    sg = sumcheck.build_eq(outer_point[:3])
+    mg = sumcheck.build_eq(outer_point[3:7])
+    eo = sumcheck.build_eq(outer_point[7:])
+    eo_scaled = eo * (sg[0] * mg[0])
+    partials = round1_partials_pallas(
+        a.reshape(-1), b.reshape(-1), c.reshape(-1), ghash.from_ghash(eo_scaled)
+    )
+    out = fnp.sum(partials, axis=0)
+    return out[0], _urm._extend_folded_c(out[1], k_skip)
