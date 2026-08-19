@@ -351,6 +351,18 @@ def witness_to_rows(bits, m: int, k_skip: int):
     return fnp.asarray(np.asarray(bits, np.uint8).reshape(n_chunks, ell))
 
 
+@functools.cache
+def _pinned_inner_lanes() -> np.ndarray:
+    """The protocol's pinned small+medium challenges as uint64 lanes [7, 2].
+
+    Cached: `medium_challenges` runs host field inverses, and the dispatch
+    guard consults this once per prove."""
+    # Deferred: prover imports this module.
+    from flock_zorch.zerocheck import prover
+
+    return np.concatenate([prover.small_challenges(), prover.medium_challenges()])
+
+
 def _round1_pallas_ok(a, b, c, m: int, k_skip: int, r) -> bool:
     """May round-1 run on the Triton factored-eq kernel for this call?
 
@@ -363,15 +375,16 @@ def _round1_pallas_ok(a, b, c, m: int, k_skip: int, r) -> bool:
         return False
     if not all(is_packed_witness(x) for x in (a, b, c)):
         return False
-    # Deferred: _urm_pallas imports this module, prover likewise.
-    from flock_zorch.zerocheck import _urm_pallas, prover
+    # Deferred: _urm_pallas imports this module.
+    from flock_zorch.zerocheck import _urm_pallas
 
     if (1 << (m - k_skip)) < _urm_pallas._ROWS_PER_PARTIAL:
         return False  # the grid is whole programs
-    if r.shape[0] < k_skip + 7:
+    expected = _pinned_inner_lanes()
+    n_inner = expected.shape[0]
+    if r.shape[0] < k_skip + n_inner:
         return False
-    inner = np.asarray(ghash.to_lanes(r[k_skip : k_skip + 7]))
-    expected = np.concatenate([prover.small_challenges(), prover.medium_challenges()])
+    inner = np.asarray(ghash.to_lanes(r[k_skip : k_skip + n_inner]))
     return bool((inner == expected).all())
 
 

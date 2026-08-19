@@ -46,12 +46,11 @@ from flock_zorch import ghash, sumcheck
 from flock_zorch.zerocheck import _urm
 
 # Swept at the 2^22-row geometry: 512 rows/program with 2 warps is the
-# minimum; 1 warp costs ~21%, 4 warps ~2.7x, and both smaller and larger
-# programs lose a few percent.
+# minimum; 1 warp costs ~21%, 4 warps ~2.7x, both smaller and larger
+# programs lose a few percent, and num_stages 1-5 measured flat.
 _ROWS_PER_PARTIAL = 512
 _OUTER_PER_PARTIAL = _ROWS_PER_PARTIAL // 128
 _NUM_WARPS = 2
-_NUM_STAGES = None  # Triton default (3); swept flat
 
 # GF(2^128) GHASH multiply as one inline-PTX block (the twin's byte-validated
 # 12-clmad schedule): $0,$1 = out lo/hi; $2,$3 = x lo/hi; $4,$5 = y lo/hi.
@@ -266,9 +265,7 @@ def round1_partials_pallas(a: Array, b: Array, c: Array, eq_out_scaled: Array) -
         ],
         out_specs=pl.BlockSpec((1, 2, 64, 2), lambda p: (p, 0, 0, 0)),
         out_shape=frx.ShapeDtypeStruct((n_partials, 2, 64, 2), fnp.uint64),
-        compiler_params=plgpu.CompilerParams(
-            num_warps=_NUM_WARPS, num_stages=_NUM_STAGES
-        ),
+        compiler_params=plgpu.CompilerParams(num_warps=_NUM_WARPS),
     )(
         a,
         b,
