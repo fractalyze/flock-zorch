@@ -130,13 +130,16 @@ class LincheckClaim:
 class LincheckProof(NamedTuple):
     """flock's lincheck proof: the product-sumcheck `rounds` and the `z_partial`
     message, plus the post-sumcheck `claim` (a `LincheckClaim`) the PCS open
-    consumes. A NamedTuple (not a dataclass) so the historical
-    `rounds, z_partial, claim = prove(...)` unpacking keeps working alongside
-    attribute access."""
+    consumes. `z_vec` is not proof material — it is the initial partial fold
+    (`partial_fold_packed_z`'s `[2^k_log]` output, flock's `z_vec_pre`) kept
+    device-resident so the prover derives the ab claim's s_hat_v from it
+    instead of re-reading the full packed witness (flock
+    `prove_padded_capture_z_vec`). Access fields by attribute."""
 
     rounds: Any
     z_partial: Any
     claim: "LincheckClaim | None" = None
+    z_vec: Any = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -151,6 +154,11 @@ class BatchOpeningClaim:
     c_point: Array
     ab_value: Any
     c_value: Any
+    # The ab claim's precomputed s_hat_v (`[128]` ghash), derived by the
+    # lincheck stage from its z_vec (`ring_switch.s_hat_v_from_z_vec` — flock
+    # `ProveCore.s_hat_v_ab`): the open consumes it instead of re-reading the
+    # full packed witness. None → the open falls back to the witness read.
+    ab_s_hat_v: Any = None
 
 
 @dataclass(frozen=True)

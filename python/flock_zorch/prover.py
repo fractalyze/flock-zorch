@@ -111,19 +111,39 @@ def _combine_claims(
     return b_combined, target  # native ghash: [2^L], scalar
 
 
+def ab_precomputed_s_hat_vs(z_vec, r_inner_rest):
+    """The `precomputed_s_hat_vs` for the [ab, c] batched open when the lincheck
+    kept its z_vec — flock `prover::prove`'s `s_hat_v_from_z_vec` arm, gated
+    the same way on k_log ≥ LOG_PACKING (⇔ `r_inner_rest` non-empty). The c
+    claim keeps its witness read. None means the open falls back to the ab
+    witness read — same bytes (see `ring_switch.s_hat_v_from_z_vec`)."""
+    if z_vec is None or r_inner_rest.shape[0] == 0:
+        return None
+    return (ring_switch.s_hat_v_from_z_vec(z_vec, r_inner_rest[1:]), None)
+
+
 def open_batch_ligerito(
-    config, z_packed, pdata, x_outers, ch, tree=None
+    config, z_packed, pdata, x_outers, ch, tree=None, precomputed_s_hat_vs=None
 ) -> BatchOpenProof:
     """Batched dual-claim PCS open with the LIGERITO backend — the headline path.
     The no-packed-direct case of `open_batch_mixed_ligerito`: N ring-switched
     claims (x_outers, e.g. ab+c), zero direct ẑ-evaluation claims. `pdata` is the
     ligerito commit from `zorch_ligerito.commit_flock_ligerito`. Returns
     {ring_switches, ligerito: LigeritoProof}."""
-    return open_batch_mixed_ligerito(config, z_packed, pdata, x_outers, (), ch, tree)
+    return open_batch_mixed_ligerito(
+        config, z_packed, pdata, x_outers, (), ch, tree, precomputed_s_hat_vs
+    )
 
 
 def open_batch_mixed_ligerito(
-    config, z_packed, pdata, x_outers, packed_direct, ch, tree=None
+    config,
+    z_packed,
+    pdata,
+    x_outers,
+    packed_direct,
+    ch,
+    tree=None,
+    precomputed_s_hat_vs=None,
 ) -> BatchOpenProof:
     """Mixed batched open (flock `open_batch_mixed_ligerito_with_precomputed_s_hat_v`)
     — the HASH-CHAIN open, and the general Ligerito open. Combines N ring-switched
@@ -138,7 +158,7 @@ def open_batch_mixed_ligerito(
     `pdata` is the ligerito commit reused from the commit phase (no L0 re-encode)."""
     ch.observe_label(b"flock-pcs-open-batch-v0")
     s_hat_vs, rs_eq_inds, sumcheck_claims, gammas = ring_switch.prove_batched(
-        z_packed, x_outers, ch
+        z_packed, x_outers, ch, precomputed_s_hat_vs=precomputed_s_hat_vs
     )
     # Packed-direct: observe each claim's value, THEN sample the γ_pd (flock order).
     for pd in packed_direct:
@@ -199,6 +219,9 @@ class FlockLigeritoPcs:
             [claim.ab_point, claim.c_point],
             transcript,
             self._tree,
+            precomputed_s_hat_vs=(
+                None if claim.ab_s_hat_v is None else (claim.ab_s_hat_v, None)
+            ),
         )
         return ProveResult(TrivialClaim(), proof, transcript)
 

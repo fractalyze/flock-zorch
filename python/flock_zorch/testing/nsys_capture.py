@@ -259,11 +259,20 @@ def _build_open(golden: str, arms: Arms):
     assert lc.claim is not None
     ab = fnp.concatenate([lc.claim.r_inner_rest, x_ab.x_outer], axis=0)
     cc = fnp.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
+    # Thread the lincheck z_vec exactly as `prove_fast` does, so the captured
+    # open runs the production precomputed-s_hat_v path. Derived once outside
+    # the loop — it is loop-invariant, and re-deriving inside the capture
+    # range would bill per-iteration work the production open does not do.
+    pre = prover.ab_precomputed_s_hat_vs(lc.z_vec, lc.claim.r_inner_rest)
     t_snapshot = ch._t  # immutable pytree: assignment replays the transcript
 
     def open_once():
         ch._t = t_snapshot
-        return await_all(prover.open_batch_ligerito(cfg, z, pdata, [ab, cc], ch, arm))
+        return await_all(
+            prover.open_batch_ligerito(
+                cfg, z, pdata, [ab, cc], ch, arm, precomputed_s_hat_vs=pre
+            )
+        )
 
     return open_once, meta
 

@@ -345,7 +345,15 @@ def make_prove(circ: Circuit, g, unpacked: bool, seed: int | None = None, profil
             ab = fnp.concatenate([lc.claim.r_inner_rest, x_ab.x_outer], axis=0)
             cc = fnp.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
             return prover.open_batch_ligerito(
-                cfg, wit_z, pdata, [ab, cc], ch, profile.tree
+                cfg,
+                wit_z,
+                pdata,
+                [ab, cc],
+                ch,
+                profile.tree,
+                precomputed_s_hat_vs=prover.ab_precomputed_s_hat_vs(
+                    lc.z_vec, lc.claim.r_inner_rest
+                ),
             )
 
         pdata, ch = phase("commit", _commit)
