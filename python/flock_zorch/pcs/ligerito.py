@@ -108,6 +108,18 @@ class FlockTranscript:
         inner, witness = fs.grind(self.inner, pow_bits)
         return FlockTranscript(inner), witness
 
+    def observe_and_sample_scalar(
+        self, values: Array
+    ) -> tuple["FlockTranscript", Array]:
+        """Absorb `values` under flock's scalar framing and draw the challenge
+        that follows, in one marked region. flock observes field elements
+        scalar-framed and draws width-1 as a scalar, so this is exactly the
+        bytes `observe` then `sample(1)` put on the stream."""
+        inner, challenge = fs.observe_scalar_and_sample(
+            self.inner, values.reshape(-1)
+        )
+        return FlockTranscript(inner), challenge.reshape(1)
+
     def grind_and_sample(
         self, pow_bits: int
     ) -> tuple["FlockTranscript", Array, Array]:
@@ -213,6 +225,13 @@ class FlockChoreography(LigeritoChoreography[FlockTranscript]):
         del msg, level, fold_idx  # eager: the message is already absorbed
         transcript, r = transcript.sample(1)
         return transcript, r[0]
+
+    def observe_message_and_sample(
+        self, transcript: FlockTranscript, msg: Array
+    ) -> tuple[FlockTranscript, Array]:
+        """The OOD and induce blocks each absorb a round message and then draw a
+        separation challenge, adjacent on the stream — one marked region here."""
+        return transcript.observe_and_sample_scalar(msg)
 
     def grind_and_fold_challenge(
         self,
