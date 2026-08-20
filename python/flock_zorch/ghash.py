@@ -52,7 +52,8 @@ def from_ghash(g):
 def zeros(n: int):
     """`binary_field_ghash [n]` of field zeros — a bitcast of zero bytes, NOT
     `fnp.zeros(n, binary_field_ghash)` (an int->ghash convert is unimplemented; a
-    scalar default even emits an S64->ghash convert at compile — see CLAUDE.md)."""
+    scalar default even emits an S64->ghash convert at compile — see
+    docs/development.md)."""
     return frx.lax.bitcast_convert_type(fnp.zeros((n, 2), U64), _GHASH)
 
 

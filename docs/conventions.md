@@ -116,5 +116,5 @@ does run them. Keep it that way — a byte-match harness added as a runnable wou
 silently stop being executed.
 
 Note the GPU set is not in the CPU suite; the non-negotiables in
-[`../CLAUDE.md`](../CLAUDE.md) still require the GPU proof gates green before a
+[`development.md`](development.md) still require the GPU proof gates green before a
 behavior change ships.
