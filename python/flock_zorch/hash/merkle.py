@@ -31,36 +31,8 @@ import frx
 import frx.numpy as fnp
 import numpy as np
 from hash_frx.blake3 import blake3
-from hash_frx.sha256 import INITIAL_STATE, block_to_words, sha256_merkle_damgard
+from hash_frx.sha256 import digest as sha256_digest
 from zorch.commit.merkle import MerkleTree
-
-
-def _pad_device(msg, length: int):
-    """Device SHA-256 pad: uint8 [B, length] -> uint32 [B, nblocks, 16] BE, all-fnp
-    (no host round-trip) so Merkle nodes stay device-resident across levels. flock-
-    local; `length` is static and the compression itself is hash-frx's
-    `sha256_merkle_damgard`.
-
-    `length` being static makes every byte past the message identical for all rows
-    and known here, so the suffix is a host constant broadcast onto the batch.
-    Writing it instead with `.at[].set()` emits a `dynamic-update-slice` per write
-    whose in-bounds guard XLA does not fold, and fusing that chain into the leaf
-    transpose costs XLA its tiled-transpose emitter — see fractalyze/flock-zorch#205
-    for the measurements."""
-    b = msg.shape[0]
-    # +8 for the length field and +1 block so the 0x80 never lands inside it.
-    nblocks = (length + 8) // 64 + 1
-    tail = np.zeros(nblocks * 64 - length, dtype=np.uint8)
-    tail[0] = 0x80
-    tail[-8:] = np.frombuffer((length * 8).to_bytes(8, "big"), np.uint8)
-    padded = fnp.concatenate([msg, fnp.broadcast_to(tail, (b, tail.size))], axis=1)
-    return block_to_words(padded)
-
-
-def _digest(msgs, length: int):
-    """Marked batched SHA-256: uint8 [B, length] -> uint8 [B, 32]
-    (the `hash_frx.sha256` marker)."""
-    return sha256_merkle_damgard(INITIAL_STATE, _pad_device(msgs, length))
 
 
 class _Sha256LeafHasher:
@@ -77,8 +49,7 @@ class _Sha256LeafHasher:
         return matrix
 
     def hash(self, row):
-        b = self.as_bytes(row[None])
-        return _digest(b, b.shape[1])[0]
+        return sha256_digest(self.as_bytes(row[None]))[0]
 
     # Value equality for static jit-zone keys (zorch #214): param-free -> by type.
     def __eq__(self, other):
@@ -112,7 +83,7 @@ class _Sha256Compressor:
     chunk = 32
 
     def compress(self, group):
-        return _digest(group.reshape(1, 64), 64)[0]
+        return sha256_digest(group.reshape(1, 64))[0]
 
     def __eq__(self, other):
         return type(self) is type(other)
@@ -130,11 +101,10 @@ class _Sha256MerkleTree(MerkleTree):
     preimage, so one class serves both the uint8 and GHASH codeword trees."""
 
     def _hash_leaves(self, matrix):
-        rows = self._leaf_hasher.as_bytes(matrix)
-        return _digest(rows, rows.shape[1])
+        return sha256_digest(self._leaf_hasher.as_bytes(matrix))
 
     def _compress_groups(self, groups):
-        return _digest(groups.reshape(groups.shape[0], 64), 64)
+        return sha256_digest(groups.reshape(groups.shape[0], 64))
 
 
 GHASH_SHA256_TREE = _Sha256MerkleTree(_GhashSha256LeafHasher(), _Sha256Compressor())
