@@ -25,15 +25,15 @@ class UrmPallasTest(absltest.TestCase):
     def test_matches_composite_on_factored_eq(self) -> None:
         rows = 1 << 13  # 16 partials
         rng = np.random.default_rng(7)
-        a = fnp.asarray(rng.integers(0, 2**63, size=rows, dtype=np.uint64))
-        b = fnp.asarray(rng.integers(0, 2**63, size=rows, dtype=np.uint64))
-        c = fnp.asarray(rng.integers(0, 2**63, size=rows, dtype=np.uint64))
+        a = fnp.asarray(rng.integers(0, 2**64, size=rows, dtype=np.uint64))
+        b = fnp.asarray(rng.integers(0, 2**64, size=rows, dtype=np.uint64))
+        c = fnp.asarray(rng.integers(0, 2**64, size=rows, dtype=np.uint64))
 
         sg = build_eq(zc_prover._SMALL_G)
         mg = build_eq(zc_prover._MEDIUM_G)
         n_out = rows >> 7
         eo = ghash.to_ghash(
-            fnp.asarray(rng.integers(0, 2**63, size=(n_out, 2), dtype=np.uint64))
+            fnp.asarray(rng.integers(0, 2**64, size=(n_out, 2), dtype=np.uint64))
         )
         inner = (mg[:, None] * sg[None, :]).reshape(-1)
         eqx = (eo[:, None] * inner[None, :]).reshape(-1)
@@ -76,21 +76,27 @@ class UrmPallasTest(absltest.TestCase):
 
         def packed():
             return fnp.asarray(
-                rng.integers(0, 2**63, size=(1 << (m - 7), 2), dtype=np.uint64)
+                rng.integers(0, 2**64, size=(1 << (m - 7), 2), dtype=np.uint64)
             )
 
         a, b, c = packed(), packed(), packed()
         r_skip = ghash.to_ghash(
-            fnp.asarray(rng.integers(0, 2**63, size=(k_skip, 2), dtype=np.uint64))
+            fnp.asarray(rng.integers(0, 2**64, size=(k_skip, 2), dtype=np.uint64))
         )
         r_outer = ghash.to_ghash(
             fnp.asarray(
-                rng.integers(0, 2**63, size=(m - k_skip - 7, 2), dtype=np.uint64)
+                rng.integers(0, 2**64, size=(m - k_skip - 7, 2), dtype=np.uint64)
             )
         )
         r = fnp.concatenate([r_skip, zc_prover._SMALL_G, zc_prover._MEDIUM_G, r_outer])
 
         self.assertTrue(_urm._round1_pallas_ok(a, b, c, m, k_skip, r))
+        # A single non-pinned inner coordinate must decline to the composite:
+        # the kernel's algebra holds only for the pinned challenge lanes.
+        r_bad = fnp.concatenate(
+            [r_skip, r_outer[:1], zc_prover._SMALL_G[1:], zc_prover._MEDIUM_G, r_outer]
+        )
+        self.assertFalse(_urm._round1_pallas_ok(a, b, c, m, k_skip, r_bad))
         got = _urm.round1_rows(a, b, c, m, k_skip, r)
         want = _urm._round1_core(a, b, c, k_skip, r)
         for name, g, w in zip(("ab", "c"), got, want):
