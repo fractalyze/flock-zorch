@@ -38,7 +38,7 @@ from flock_zorch.hash.merkle import (
     GHASH_SHA256_TREE,
     _blake3_leaf_digest,
     _blake3_parent_digest,
-    _digest,
+    sha256_digest,
 )
 
 _FIX_BLAKE3 = {
@@ -90,9 +90,9 @@ def _blake3_pair(a_len: int, b_len: int):
 
 
 def _sha256_pair(a_len: int, b_len: int):
-    a = np.asarray(_digest(_row(_pattern(a_len)), a_len)[0])
-    b = np.asarray(_digest(_row(_pattern(b_len)), b_len)[0])
-    return _digest(np.concatenate([a, b])[None, :], 64)[0]
+    a = np.asarray(sha256_digest(_row(_pattern(a_len)))[0])
+    b = np.asarray(sha256_digest(_row(_pattern(b_len)))[0])
+    return sha256_digest(np.concatenate([a, b])[None, :])[0]
 
 
 class Blake3MerkleForkGateTest(absltest.TestCase):
@@ -128,7 +128,7 @@ class Sha256MerkleControlTest(absltest.TestCase):
 
     def test_leaf_digests_match_the_fork(self):
         for length in _LEAF_LENGTHS:
-            got = _hex(_digest(_row(_pattern(length)), length)[0])
+            got = _hex(sha256_digest(_row(_pattern(length)))[0])
             self.assertEqual(got, _FIX_SHA256[f"leaf{length}"], f"leaf length {length}")
 
     def test_pair_digest_matches_the_fork(self):
