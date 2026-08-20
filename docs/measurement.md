@@ -94,6 +94,23 @@ The benchmark itself — how to run it and what it has published — is in
 - **A phase is not a target.** `zerocheck` bundles the round-1 URM extend and the
   multilinear ladder, whose relative sizes invert with `m`. Split to the prover
   round before scoping work off a phase number.
+- **Every A/B needs a quantity the change cannot touch, measured in the same
+  window.** Order-alternation, min-of-N and in-process interleaving all reduce
+  drift; none of them tell you whether what is left is signal — only a control
+  does. For a change confined to one phase the control is free, because
+  `prove_phase_bench` prints the others: ablate one sub-step of `open` and
+  `zerocheck` must not move. Reject the run if it moves more than ~5% rather than
+  averaging it in. Twice in one session this was the only thing that caught a
+  fiction: an in-process unroll sweep read 1.558× while its bandwidth-bound
+  control kernel swung 28%, and an `open` ablation read *higher with work
+  removed* while `zerocheck` — untouchable by it — moved 44%.
+- **Size a component's share from a speedup you already have, before optimizing
+  it again.** When both a component's speedup and the whole-system speedup are
+  recorded, Amdahl gives the share for free: prime-ir#432's 25.9× on the GF
+  multiply bought 3.55× on the prove, so the multiply was 74.7% before and
+  ~10% after — i.e. **making it free now buys ~12%**. Three later attempts at
+  the multiply (32-bit limbs, bit-slicing, nibble tables) were capped at that
+  before they started.
 - **Latency vs arithmetic: busy from nsys, wall from a clean run.** nsys inflates
   *host* dispatch ~2×, so inter-kernel gaps on its timeline are contaminated;
   on-device kernel durations are not. Pass `--cuda-graph-trace=node` or
