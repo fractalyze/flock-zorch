@@ -30,6 +30,7 @@ from zorch.stage import ProveResult, ProverStage
 
 from flock_zorch import ghash
 from flock_zorch.lincheck._csc_fold import _csc_segments, _flatten_nz, _seg_xor_fold
+from flock_zorch.pcs import ring_switch
 from flock_zorch.sha256_challenger import Sha256Challenger
 from flock_zorch.sumcheck import build_eq
 from flock_zorch.sumcheck.inf_product import prove_inf_product
@@ -200,6 +201,7 @@ class _LincheckCarry:
     rounds: Any = None  # ← _SumcheckRound
     r_rounds: Any = None  # ← _SumcheckRound (read by _ClaimRound)
     z_partial: Any = None  # ← _SumcheckRound (native ghash; observe + w + wire)
+    z_vec: Any = None  # ← _SumcheckRound (initial partial fold, for the open)
     claim: Any = None  # ← _ClaimRound
 
 
@@ -255,7 +257,9 @@ class _SumcheckRound:
             z_partial = stacked[1]
         else:
             z_partial = z_vec
-        carry = replace(carry, rounds=rounds, r_rounds=r_rounds, z_partial=z_partial)
+        carry = replace(
+            carry, rounds=rounds, r_rounds=r_rounds, z_partial=z_partial, z_vec=z_vec
+        )
         return carry, transcript, (rounds, z_partial)
 
 
@@ -325,7 +329,10 @@ def prove(
         ch,
     )
     return LincheckProof(
-        rounds=carry.rounds, z_partial=carry.z_partial, claim=carry.claim
+        rounds=carry.rounds,
+        z_partial=carry.z_partial,
+        claim=carry.claim,
+        z_vec=carry.z_vec,
     )
 
 
@@ -363,6 +370,15 @@ class LincheckProver(ProverStage[ZerocheckClaim, R1csWitness, BatchOpeningClaim,
             raise ValueError("lincheck produced no claim to open against")
         # c_full is split-then-rejoined (not just r_rest) to mirror Rust's
         # QuirkyPoint / quirky_x_outer_full.
+        # Derive the ab claim's s_hat_v here, where r_inner_rest and the
+        # k_log ≥ LOG_PACKING gate (⇔ inner_rest ≥ 1) are in scope — flock
+        # `prover::prove`'s s_hat_v_from_z_vec arm; the claim carries the [128]
+        # value, not the [2^k_log] z_vec.
+        ab_s_hat_v = (
+            ring_switch.s_hat_v_from_z_vec(lp.z_vec, lp.claim.r_inner_rest[1:])
+            if inner_rest >= 1
+            else None
+        )
         return ProveResult(
             BatchOpeningClaim(
                 ab_point=fnp.concatenate([lp.claim.r_inner_rest, x_outer], axis=0),
@@ -371,6 +387,7 @@ class LincheckProver(ProverStage[ZerocheckClaim, R1csWitness, BatchOpeningClaim,
                 ),
                 ab_value=lp.claim.w,
                 c_value=claim.c_eval,
+                ab_s_hat_v=ab_s_hat_v,
             ),
             (lp.rounds, lp.z_partial),
             transcript,

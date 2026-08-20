@@ -32,21 +32,47 @@ def _inner_product(a, b):
 
 
 @frx.jit
-def _slice_evals(packed, suffixes):
-    """The transcript-independent half of the batched open, one read per claim.
+def s_hat_v_from_z_vec(z_vec, tail):
+    """The ab claim's `s_hat_v` from the lincheck's initial z_vec — flock
+    `ring_switch::s_hat_v_from_z_vec`: `s_hat_v[b] = Σ_k eq(tail)[k]·z_vec[k·128+b]`.
 
-    Builds each opening point's suffix eq tensor and bit-slices the witness per
-    claim. Per-claim beats the shared batched read on both of its costs: the
-    single-claim elements kernel takes the two-row tile the batched kernel
-    cannot (its batch axis already owns the registers), and the batched form
-    additionally materializes the `(2^L, N)` suffix stack — glue that costs
-    more at phase level than the shared witness read saves. `suffixes` is a
-    tuple of N `[L]` ghash coord vectors (static N); the build stays under this
-    jit so `build_eq` fuses. Returns (s_hat_vs: N x `[128]` ghash,
-    suffix_tensors: N contiguous `[2^L]` ghash — `rs_eq_ind` reads each
-    contiguously)."""
+    This is the authority for why the two derivations agree: `z_vec`
+    (`[2^k_log]` ghash, `partial_fold_packed_z`'s output) already folded the
+    witness over `x_outer`, and `eq(x_full[1:])` factorizes as
+    `eq(tail) ⊗ eq(x_outer)`, so folding the KiB-scale z_vec by `eq(tail)`
+    reassociates the exact GF(2¹²⁸) sum `bit_slice_evals` computes from the
+    full packed witness — bit-identical values, no wire change. `tail` is
+    `r_inner_rest[1:]`: the LOG_PACKING boundary ate coordinate 0
+    (k_skip + 1 = LOG_PACKING), and an empty tail (k_log == LOG_PACKING)
+    degenerates to `eq([]) = [1]`, i.e. z_vec IS s_hat_v. Staged here rather
+    than in `zorch.pcs.ring_switch` to avoid a zorch+frx lockstep bump;
+    promote alongside the next pin bump."""
+    eq_tail = sumcheck.build_eq(tail)  # (2^tail,) ghash; [1] when tail is empty
+    return fnp.sum(eq_tail[:, None] * z_vec.reshape(-1, 1 << LOG_PACKING), axis=0)
+
+
+@frx.jit
+def _slice_evals(packed, suffixes, precomputed):
+    """The transcript-independent half of the batched open, one read per claim
+    that lacks a precomputed `s_hat_v`.
+
+    Builds each opening point's suffix eq tensor (always — `rs_eq_ind` consumes
+    it) and bit-slices the witness only for claims whose `precomputed` entry is
+    None; a `[128]` ghash entry (see `s_hat_v_from_z_vec`) short-circuits that
+    claim's witness read. Per-claim beats the
+    shared batched read on both of its costs: the single-claim elements kernel
+    takes the two-row tile the batched kernel cannot (its batch axis already
+    owns the registers), and the batched form additionally materializes the
+    `(2^L, N)` suffix stack — glue that costs more at phase level than the
+    shared witness read saves. `suffixes` is a tuple of N `[L]` ghash coord
+    vectors (static N); the build stays under this jit so `build_eq` fuses.
+    Returns (s_hat_vs: N x `[128]` ghash, suffix_tensors: N contiguous `[2^L]`
+    ghash — `rs_eq_ind` reads each contiguously)."""
     suffix_tensors = [sumcheck.build_eq(s) for s in suffixes]  # N x (2^L,) ghash
-    s_hat_vs = [bit_slice_evals(packed, t) for t in suffix_tensors]
+    s_hat_vs = [
+        p if p is not None else bit_slice_evals(packed, t)
+        for p, t in zip(precomputed, suffix_tensors)
+    ]
     return s_hat_vs, suffix_tensors
 
 
@@ -66,13 +92,17 @@ def _observe_and_reduce(t, s_hat_v):
     return t, eq_r_dprime, claim  # claim native ghash
 
 
-def prove_batched(packed_witness, x_outers, ch: Sha256Challenger):
+def prove_batched(
+    packed_witness, x_outers, ch: Sha256Challenger, precomputed_s_hat_vs=None
+):
     """Batched ring-switch over N opening points — byte-identical to flock
     `ring_switch::prove_batched_padded_with_precomputed`.
 
     The transcript-free witness reduction (`_slice_evals`) is lifted out of the
     serial per-claim Fiat-Shamir (`_observe_and_reduce`), which runs in the same
-    order as before, so the wire is unchanged.
+    order as before, so the wire is unchanged. `precomputed_s_hat_vs` (optional,
+    length N, entries None or `[128]` ghash) supplies claims whose s_hat_v was
+    already derived (see `s_hat_v_from_z_vec` — same values, same wire).
 
     Transcript: per claim (in order) observe `flock-ring-switch-v0` + s_hat_v +
     sample r_dprime[7]; THEN sample N gamma's (sound only after all observations);
@@ -81,7 +111,16 @@ def prove_batched(packed_witness, x_outers, ch: Sha256Challenger):
     (s_hat_vs, rs_eq_inds[gamma-baked], sumcheck_claims, gammas)."""
     packed = ghash.to_ghash(packed_witness)
     suffixes = tuple(x_outer[1:] for x_outer in x_outers)  # ghash coords, length L
-    s_hat_vs, suffix_tensors = _slice_evals(packed, suffixes)
+    precomputed = precomputed_s_hat_vs or (None,) * len(x_outers)
+    if len(precomputed) != len(x_outers):
+        raise ValueError(
+            f"precomputed_s_hat_vs: expected {len(x_outers)} entries, "
+            f"got {len(precomputed)}"
+        )
+    for p in precomputed:
+        if p is not None and p.shape != (1 << LOG_PACKING,):
+            raise ValueError(f"precomputed s_hat_v must be [128] ghash, got {p.shape}")
+    s_hat_vs, suffix_tensors = _slice_evals(packed, suffixes, precomputed)
 
     eq_r_dprimes, claims = [], []
     for i in range(len(x_outers)):

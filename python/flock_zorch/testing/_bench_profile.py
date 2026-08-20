@@ -70,22 +70,30 @@ class BenchProver:
         prover.bind_statement(ch, g["stmt"], root)
         zc_proof, zc = zerocheck.prove_packed(a, b, z, m, ch=ch)
         x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, ir)
-        lc_rounds, lc_zp, lc_claim = lincheck.prove(
+        lc = lincheck.prove(
             zlc, None, None, x_ab, m, k_log, k_skip, ch=ch, circuit=self._csc
         )
-        assert lc_claim is not None, "full lincheck prove always yields a claim"
-        ab_full = fnp.concatenate([lc_claim.r_inner_rest, x_ab.x_outer], axis=0)
+        assert lc.claim is not None, "full lincheck prove always yields a claim"
+        ab_full = fnp.concatenate([lc.claim.r_inner_rest, x_ab.x_outer], axis=0)
         c_full = fnp.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
         out = prover.open_batch_ligerito(
-            g["cfg"], z, pdata, [ab_full, c_full], ch, profile.tree
+            g["cfg"],
+            z,
+            pdata,
+            [ab_full, c_full],
+            ch,
+            profile.tree,
+            precomputed_s_hat_vs=prover.ab_precomputed_s_hat_vs(
+                lc.z_vec, lc.claim.r_inner_rest
+            ),
         )
 
         return proof_io.bundle_bytes(
             root,
             self._params,
             zc_proof,
-            lc_rounds,
-            lc_zp,
+            lc.rounds,
+            lc.z_partial,
             out.ring_switches,
             out.ligerito,
         )

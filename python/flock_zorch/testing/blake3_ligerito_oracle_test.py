@@ -112,17 +112,31 @@ def run(golden: str = "blake3_ligerito_golden.bin", device_witness: bool = False
         g["a0_rows"], g["b0_rows"], 1 << k_log, const_pin=meta["const_pin"]
     )
     x_ab = lincheck.AbClaimPoint.from_zerocheck(zc, ir)
-    _lr, lc_zp, lc_claim = lincheck.prove(
+    lc = lincheck.prove(
         g["zlc"], None, None, x_ab, m, k_log, k_skip, ch=ch, circuit=csc
     )
-    assert lc_claim is not None, "full lincheck prove always yields a claim"
+    assert lc.claim is not None, "full lincheck prove always yields a claim"
     results.append(
-        ("lincheck z_partial", np.array_equal(ghash.to_lanes(lc_zp), g["lc"]["zp"]))
+        (
+            "lincheck z_partial",
+            np.array_equal(ghash.to_lanes(lc.z_partial), g["lc"]["zp"]),
+        )
     )
 
-    ab_full = fnp.concatenate([lc_claim.r_inner_rest, x_ab.x_outer], axis=0)
+    ab_full = fnp.concatenate([lc.claim.r_inner_rest, x_ab.x_outer], axis=0)
     c_full = fnp.concatenate([zc.r_rest[:ir], zc.r_rest[ir:]], axis=0)
-    out = prover.open_batch_ligerito(cfg, g["z"], pdata, [ab_full, c_full], ch)
+    # Thread the lincheck z_vec exactly as `prove_fast` does, so this gate
+    # byte-checks the precomputed-s_hat_v open against the flock golden.
+    out = prover.open_batch_ligerito(
+        cfg,
+        g["z"],
+        pdata,
+        [ab_full, c_full],
+        ch,
+        precomputed_s_hat_vs=prover.ab_precomputed_s_hat_vs(
+            lc.z_vec, lc.claim.r_inner_rest
+        ),
+    )
 
     for i in range(len(g["rs"])):
         results.append(

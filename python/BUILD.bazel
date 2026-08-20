@@ -197,6 +197,18 @@ py_test(
     ],
 )
 
+# Python-native unit test (no golden): the ab claim's s_hat_v derived from the
+# lincheck z_vec equals the bit_slice_evals witness read, bit for bit.
+py_test(
+    name = "ring_switch_z_vec_test",
+    size = "small",
+    srcs = ["flock_zorch/pcs/testing/ring_switch_z_vec_test.py"],
+    deps = [
+        ":flock_zorch",
+        ":test_support",
+    ],
+)
+
 # Pure-host unit test (no golden): `await_all` blocks on the arrays inside a
 # non-pytree dataclass, so a phase's device work cannot be billed to the next.
 py_test(
