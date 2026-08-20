@@ -38,11 +38,10 @@ import frx
 import frx.numpy as fnp
 import numpy as np
 from frx import Array
-from frx._src.pallas.triton import primitives as plgpu_prims
 from frx.experimental import pallas as pl
 from frx.experimental.pallas import triton as plgpu
 
-from flock_zorch import ghash, sumcheck
+from flock_zorch import ghash, ghash_pallas, sumcheck
 from flock_zorch.zerocheck import _urm
 
 # Swept at the 2^22-row geometry: 512 rows/program with 2 warps is the
@@ -51,43 +50,6 @@ from flock_zorch.zerocheck import _urm
 _ROWS_PER_PARTIAL = 512
 _OUTER_PER_PARTIAL = _ROWS_PER_PARTIAL // 128
 _NUM_WARPS = 2
-
-# GF(2^128) GHASH multiply as one inline-PTX block (the twin's byte-validated
-# 12-clmad schedule): $0,$1 = out lo/hi; $2,$3 = x lo/hi; $4,$5 = y lo/hi.
-_GMUL_ASM = """{
-.reg .b64 z, p0, p1, p2, p3;
-mov.u64 z, 0;
-clmad.lo.u64 p0, $2, $4, z;
-clmad.hi.u64 p1, $2, $4, z;
-clmad.lo.u64 p1, $3, $4, p1;
-clmad.lo.u64 p1, $2, $5, p1;
-clmad.lo.u64 p2, $3, $5, z;
-clmad.hi.u64 p2, $3, $4, p2;
-clmad.hi.u64 p2, $2, $5, p2;
-clmad.hi.u64 p3, $3, $5, z;
-clmad.lo.u64 p1, p3, 0x87, p1;
-clmad.hi.u64 p2, p3, 0x87, p2;
-clmad.lo.u64 p0, p2, 0x87, p0;
-clmad.hi.u64 p1, p2, 0x87, p1;
-mov.u64 $0, p0;
-mov.u64 $1, p1;
-}"""
-
-
-def _gmul(x_lo: Array, x_hi: Array, y_lo: Array, y_hi: Array):
-    # tt.elementwise_inline_asm has no unsigned tensor type — reinterpret the
-    # u64 lanes as i64 across the asm boundary (same bits either way).
-    r_lo, r_hi = plgpu_prims.elementwise_inline_asm(
-        _GMUL_ASM,
-        args=[v.astype(fnp.int64) for v in (x_lo, x_hi, y_lo, y_hi)],
-        constraints="=l,=l,l,l,l,l",
-        pack=1,
-        result_shape_dtypes=[
-            frx.ShapeDtypeStruct(x_lo.shape, fnp.int64),
-            frx.ShapeDtypeStruct(x_lo.shape, fnp.int64),
-        ],
-    )
-    return r_lo.astype(fnp.uint64), r_hi.astype(fnp.uint64)
 
 
 def _gf8_reduce(p: Array) -> Array:
@@ -193,8 +155,8 @@ def _kernel(
         eo_hi = eo_ref[o_local * 2 + 1]
         eo_lo_v = fnp.full((64,), eo_lo, fnp.uint64)
         eo_hi_v = fnp.full((64,), eo_hi, fnp.uint64)
-        ab_lo, ab_hi = _gmul(eo_lo_v, eo_hi_v, chunk[0], chunk[1])
-        c_lo, c_hi = _gmul(eo_lo_v, eo_hi_v, chunk[2], chunk[3])
+        ab_lo, ab_hi = ghash_pallas.gmul(eo_lo_v, eo_hi_v, chunk[0], chunk[1])
+        c_lo, c_hi = ghash_pallas.gmul(eo_lo_v, eo_hi_v, chunk[2], chunk[3])
         return (acc[0] ^ ab_lo, acc[1] ^ ab_hi, acc[2] ^ c_lo, acc[3] ^ c_hi)
 
     acc = frx.lax.fori_loop(0, _OUTER_PER_PARTIAL, o_body, tuple(acc))
