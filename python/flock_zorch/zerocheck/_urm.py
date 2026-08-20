@@ -351,6 +351,43 @@ def witness_to_rows(bits, m: int, k_skip: int):
     return fnp.asarray(np.asarray(bits, np.uint8).reshape(n_chunks, ell))
 
 
+@functools.cache
+def _pinned_inner_lanes() -> np.ndarray:
+    """The protocol's pinned small+medium challenges as uint64 lanes [7, 2].
+
+    Cached: `medium_challenges` runs host field inverses, and the dispatch
+    guard consults this once per prove."""
+    # Deferred: prover imports this module.
+    from flock_zorch.zerocheck import prover
+
+    return np.concatenate([prover.small_challenges(), prover.medium_challenges()])
+
+
+def _round1_pallas_ok(a, b, c, m: int, k_skip: int, r) -> bool:
+    """May round-1 run on the Triton factored-eq kernel for this call?
+
+    The kernel's algebra (u16 shift-reduce, gamma-Horner) holds only for the
+    protocol's pinned small/medium inner challenges, so the guard compares the
+    inner 7 coordinates of `r` byte-wise against them — a 7-scalar host pull,
+    once per prove. Everything that fails here takes the composite, which is
+    correct for any challenges."""
+    if frx.default_backend() != "gpu" or k_skip != 6:
+        return False
+    if not all(is_packed_witness(x) for x in (a, b, c)):
+        return False
+    # Deferred: _urm_pallas imports this module.
+    from flock_zorch.zerocheck import _urm_pallas
+
+    if (1 << (m - k_skip)) < _urm_pallas._ROWS_PER_PARTIAL:
+        return False  # the grid is whole programs
+    expected = _pinned_inner_lanes()
+    n_inner = expected.shape[0]
+    if r.shape[0] < k_skip + n_inner:
+        return False
+    inner = np.asarray(ghash.to_lanes(r[k_skip : k_skip + n_inner]))
+    return bool((inner == expected).all())
+
+
 def round1_rows(a, b, c, m: int, k_skip: int, r):
     """Round-1 univariate-skip message (P^AB, P^C), each F128 [2^k_skip] on Λ,
     from device witness rows (uint8 [2^(m-k_skip), 2^k_skip]) — split from
@@ -360,5 +397,15 @@ def round1_rows(a, b, c, m: int, k_skip: int, r):
     Byte-identical to flock's `round1_naive` (== the wire `round1_ab`/`round1_c`).
     Returns (P^AB, P^C) as device-resident `binary_field_ghash [2^k_skip]` — no
     host lift; consumers observe/interpolate natively and byte-gate readers
-    normalize via `ghash.to_lanes`."""
+    normalize via `ghash.to_lanes`.
+
+    On GPU with the packed F128 witness and the pinned inner challenges this
+    dispatches to the Triton factored-eq kernel (1.7x the composite kernel at
+    the 2^22-row block geometry, and it reads eq_out — 16 B per 128 rows —
+    instead of a materialized row-eq); the composite stays the portable path
+    and the byte oracle, the same split `witness_blake3` uses."""
+    if _round1_pallas_ok(a, b, c, m, k_skip, r):
+        from flock_zorch.zerocheck import _urm_pallas  # deferred: import cycle
+
+        return _urm_pallas.round1_core_pallas(a, b, c, k_skip, r)
     return _round1_core(a, b, c, k_skip, r)  # eqx build + extend+phi+accum, fused

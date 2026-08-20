@@ -33,6 +33,9 @@ rather than functions, and what the tooling does not cover — is
 [`docs/conventions.md`](docs/conventions.md).
 How performance is measured — which numbers to trust, and the traps that have
 each cost a session — is [`docs/measurement.md`](docs/measurement.md).
+The rules every change must respect — the proof-level byte gates and the
+porting/dtype/kernel gotchas — are
+[`docs/development.md`](docs/development.md).
 
 ## Installation
 

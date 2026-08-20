@@ -30,7 +30,8 @@ words; every offset is a compile-time constant):
     [31401, 32768)  zero padding
 
 Two facts about this layout are worth stating because the module's own `//!`
-header in flock disagrees with its constants (see CLAUDE.md). `Z_CONST` sits at
+header in flock disagrees with its constants (see docs/development.md).
+`Z_CONST` sits at
 the END, at bit 31,400, not at bit 512 — which is what keeps the first 1,024
 bits four clean 256-bit slots the Merkle-path protocol can address with
 single-bit selectors. And because the constant wire is not mid-block, nothing
