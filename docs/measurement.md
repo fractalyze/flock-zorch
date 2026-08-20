@@ -164,3 +164,28 @@ The benchmark itself — how to run it and what it has published — is in
   `nsys_capture.py`'s `cuProfilerStart/Stop`, so warm-up and autotune are
   excluded by construction; and `ncu --csv` emits a **units row after the
   header**, so parsing the header alone reads every metric as zero.
+- **A microbenchmark may motivate a hypothesis; it must never size one.** The
+  same marked transcript region prices at ~44–150 µs in a tight chain and
+  ~1.0–2.1 ms in situ, 30–40× apart, because the chain pipelines with the state
+  hot while the prover's sits between large kernels. Three explanations for that
+  gap were each built on a clean, well-controlled bench and each refuted by the
+  real prove — the last one, "the per-hop `frx.jit` boundary costs ~1 ms",
+  matched the prover's figure to a digit and was still wrong (unwrapping all
+  eleven wrappers is *slower*). Size a lever by ablating the real prover — the
+  ablation harness's gates cost one run each — and treat any bench number that
+  arrives already matching your expectation as the one most in need of a check.
+  A control that is the identity element of the operation under test is not a
+  control: `acc * one` is folded away, and it inflated a "serialization cost"
+  by 10×.
+- **Comparing two backends means comparing shares, not absolutes.** Metal
+  `open` at m28 against CUDA `open` is an M4 Pro laptop GPU against an RTX 5090
+  — the 3.5× between them is hardware and supports nothing. The same change
+  expressed as a share of its own phase (17.5% on Metal, 1.8% on CUDA) cancels
+  the hardware and is the comparison that carries information.
+- **Pair the two arms inside ONE process.** A cross-process A/B recompiles the
+  whole prove per arm (~5 min here), which stretches the pair's window until the
+  host drifts inside it — 0 of 6 pairs survived; the in-process version of the
+  same comparison got 12 of 19. And the control should be **one large phase the
+  change cannot reach**, not a max over several small ones: `zerocheck` alone
+  keeps ~9 of 12 pairs where a max over `commit`/`zerocheck`/`lincheck` rejected
+  9 of 10 on the small phases' own noise.
