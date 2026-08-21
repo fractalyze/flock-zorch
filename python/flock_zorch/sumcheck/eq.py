@@ -27,12 +27,9 @@ from __future__ import annotations
 
 import frx.numpy as fnp
 from zorch.poly.eq import expand_eq_family, expand_eq_to_hypercube
-from zorch.sumcheck.domain import compressed_domain, split_pairs, summand_evals
-from zorch.sumcheck.prover import ProductSummand
+from zorch.sumcheck.domain import split_pairs
 
 from flock_zorch import ghash
-
-_PRODUCT2 = ProductSummand(2)._combine
 
 U64 = fnp.uint64
 ONE = fnp.asarray([1, 0], dtype=U64)  # F128::ONE = {lo: 1, hi: 0}
@@ -90,16 +87,19 @@ def round_pair_eq(ag, bg, eq, r0g):
     """The per-round message core, taking an eq table the caller precomputed
     (one `build_eq_suffix_tables` chain serves every round).
 
-    The message `[G(1), G(∞)]` is zorch's compressed product round on the low bind:
-    `summand_evals` over `compressed_domain(1)` with the eq suffix as the per-point
-    weight and `msb=False` (`s(∞)`'s char-2 `(a1−a0)` is flock's `(a0+a1)`)."""
-    g_one, g_inf = summand_evals(
-        fnp.stack([ag, bg]),
-        _PRODUCT2,
-        compressed_domain(1, ag.dtype),
-        weight=eq,
-        msb=False,
-    )
+    The message on the low bind is `[G(1), G(∞)]`; `s(∞)`'s char-2 `(a1−a0)`
+    is flock's `(a0+a1)`. Hand-written in zorch's own spelling of this round
+    (`CompressedProductRound._round_poly`) rather than routed through
+    `summand_evals`: its vmapped `EvalDomain.sample` concatenates along the
+    domain axis, and XLA re-slices that per reduce output — one output
+    recomputed inside the two-output reduce fusion, the other materialized as
+    a `[1, n/2]` HBM round-trip (512 MiB at m32 round 1; the ladder window's
+    `loop_slice_fusion` family). zorch#656 tracks the weighted LSB variant
+    that would let this assemble the block again."""
+    a0, a1 = split_pairs(ag)
+    b0, b1 = split_pairs(bg)
+    g_one = fnp.sum(eq * (a1 * b1))
+    g_inf = fnp.sum(eq * ((a0 + a1) * (b0 + b1)))
     return r0g * g_one, g_inf
 
 
@@ -152,7 +152,8 @@ def round_pair_eq_deferred(ag, bg, eq_next):
     scales G(1) by its r₀ as usual.
 
     The six reductions are hand-written rather than routed through
-    `summand_evals` (cf. `round_pair_eq`): the operands stay strided views of
+    `summand_evals` (as `round_pair_eq` is — its docstring carries the
+    measured fusion rationale, zorch#656): the operands stay strided views of
     the one array read and the Karatsuba structure stays legible — the same
     trade `round_pair_eq_sq` makes."""
     a4 = ag.reshape(-1, 4)
