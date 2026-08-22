@@ -253,6 +253,36 @@ The benchmark itself — how to run it and what it has published — is in
   kernel's clothes. Indentation is nesting — report the top-level count next to
   the total, since a static census over-counts untaken branches and under-counts
   loop bodies.
+- **`rm -rf` the dump directory, then assert exactly one module matched.** XLA
+  numbers modules **per process**, so dumping repeated runs into one fixed
+  directory leaves `module_0142.jit__open_jitted.*` from a smaller earlier run
+  sitting next to today's `module_0197.*`. A `*jit__open_jitted*` glob then
+  resolves to a stale module — **silently**, because it still matches exactly one
+  file and the filename carries no `m`, no arm and no plugin. This is not
+  hypothetical: it is the best explanation for a recorded `open` census that
+  reported 4,013 dispatches where a clean re-run reports 6,823, and whose
+  composite tally had `absorb` and `squeeze` transposed. Both errors are
+  invisible in the output; only the directory hygiene prevents them.
+
+  ```bash
+  rm -rf "$DUMP"; mkdir -p "$DUMP"
+  XLA_FLAGS="--xla_dump_to=$DUMP --xla_dump_hlo_as_text" <run>
+  ls "$DUMP" | grep -oE 'module_[0-9]+\.jit__open_jitted' | sort -u  # must be ONE
+  ```
+
+  Related timing trap: a module's `*.thunk_sequence.txt` is written when its
+  **executable** is built, not when its HLO dumps appear. A listing taken
+  mid-run shows the HLO and no thunk sequence for exactly the module you care
+  about, while smaller finished modules do have theirs — which reads as "Metal
+  does not dump this for big modules". Wait for the process to exit.
+
+- **A dispatch total is only worth quoting as a delta.** Two counts from
+  different sessions are two different programs until proven otherwise, and the
+  proof is expensive. Toggle ONE switch with the plugin and every checkout held
+  fixed, and report the difference — cheap here, since the census is compile-only.
+  Cross-check the rig by confirming that a change you know to be structurally
+  inert (a marker no emitter claims, say) moves the count by exactly zero.
+
 - **Instruments must attach AFTER warm-up.** `xctrace record --launch` over a
   prove's compile produced a **33 GB trace and SIGKILLed the target** before it
   printed a line; the compile emits far more Metal events than the run. Warm up,
