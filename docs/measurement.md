@@ -189,3 +189,40 @@ The benchmark itself — how to run it and what it has published — is in
   change cannot reach**, not a max over several small ones: `zerocheck` alone
   keeps ~9 of 12 pairs where a max over `commit`/`zerocheck`/`lincheck` rejected
   9 of 10 on the small phases' own noise.
+- **A worktree at the right sha is not the right stack — prove the emitter
+  claimed the marker.** Source pins and wheel pins drift independently: the
+  ablation harness reads the source, the GPU reads the plugin. A stage-2 lever
+  here was sized at +13.00 ms (m=28) → +46.10 ms (m=31) and approved for an
+  emitter on that rise; the measuring venv was eight days stale and its
+  recognizer did not know the round's `variant`, so the round ran **de-fused in
+  both arms**. Re-measured where it fuses, the same arm gives +6.66 → +7.86 ms
+  — a 1.18× rise, not 3.55×, and the decision inverts. Rejecting it as "applied
+  to both arms, so it cancels" is only valid for an arm asymmetry; when the
+  disabled optimization *overlaps* the one being priced, it inflates the delta.
+  Two checks, both seconds: `strings` the plugin for the recognizer's accepted
+  variants, then count claimed regions in the optimized HLO
+  (`grep -o '"name":"<fusion>"' *after_optimizations.txt`) against the marker
+  count in `before_optimizations.txt`. Note the marker *name* is absent from the
+  optimized text whether it was claimed or inlined, so grepping for it there
+  distinguishes nothing — the `__custom_fusion` backend config does. And the
+  absence of an `INVALID_ARGUMENT: unknown variant` error proves only that the
+  variant is *recognised*, never that it was *claimed*.
+- **An ablation stand-in without `optimization_barrier` prices the whole
+  downstream chain.** Replacing a transcript hop with same-shaped zeros makes
+  the state a literal constant, so XLA folds every consumer that reads it and
+  the arm is credited with work it did not remove — 138 regions removed against
+  the 69 the fenced arm removes. Fence every stand-in whose output feeds a
+  dependency chain, and sanity-check the arm with a static census before
+  trusting its wall: the count of the thing you meant to keep (here, the fused
+  rounds: 15 → 15) is the control that proves the arm prices the hop and not the
+  pass.
+- **On a shared box, gate on GPU residency, not on load average.** These pairings
+  survive a busy *host*: one run measured cleanly at load 13.8 with 14 users. They
+  do not survive a busy *card* — with 16 sibling `*_test_nvgpu_any` binaries
+  resident, 13 of 15 pairs failed the control and baseline `open` swung
+  30.42–98.88 ms on identical code. Poll
+  `nvidia-smi --query-compute-apps=pid --format=csv,noheader` until it is empty
+  for several consecutive samples (a bazel suite empties and refills between
+  targets, so one clear sample is a false start). And report a run that keeps 2
+  of 15 pairs as **unmeasured**, never as a null — a straddling IQR from two
+  pairs is not a smaller version of the same result.
