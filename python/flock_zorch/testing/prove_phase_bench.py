@@ -53,6 +53,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import os
+import re
 import subprocess
 import sys
 import time
@@ -140,6 +141,109 @@ def _smi(query: str, gpu: str | None = None) -> str:
     return subprocess.run(
         cmd, capture_output=True, text=True, timeout=15, check=True
     ).stdout.strip()
+
+
+def host_contention(cpu_threshold: float = 40.0) -> tuple[str, list[str]]:
+    """`(load line for the record, other processes burning CPU)`.
+
+    The nvidia-smi probe below cannot see a Metal device, so on Apple Silicon
+    the compute-process guard passes no matter what else is running. That is not
+    a harmless gap: the GPU shares the SoC and its memory bandwidth with the
+    cores, so a neighbour pinning a core does move device timings. Measured on
+    this box with one stray benchmark process at ~100% CPU, `commit` --- the
+    same bytes every run --- swung 23.87 to 47.55 ms, a 2x spread that buries
+    any effect worth looking for.
+
+    Self and this process's own children are excluded: a `--runs N` sweep is
+    the measurement, not a neighbour.
+    """
+    try:
+        out = subprocess.run(
+            ["ps", "-eo", "pid,ppid,pcpu,comm"],
+            capture_output=True, text=True, timeout=15, check=True,
+        ).stdout.splitlines()[1:]
+    except Exception as e:  # noqa: BLE001 - diagnostic only, never blocks
+        return f"host state unknown ({type(e).__name__})", []
+
+    own = os.getpid()
+    hot: list[str] = []
+    for line in out:
+        parts = line.split(None, 3)
+        if len(parts) < 4:
+            continue
+        pid, ppid, pcpu, comm = parts
+        try:
+            if int(pid) in (own,) or int(ppid) == own or float(pcpu) < cpu_threshold:
+                continue
+        except ValueError:
+            continue
+        hot.append(f"{comm.strip()} ({pcpu}%)")
+    load1 = os.getloadavg()[0]
+    return f"load {load1:.2f}", hot
+
+
+def parse_gpu_clients(
+    registry: str, own: int, alive: Callable[[int], bool]
+) -> list[str]:
+    """`"name (pid)"` for every LIVE process holding an Apple GPU device client.
+
+    Split from the `ioreg` call so the parsing is testable: the registry keeps a
+    client entry after its process is gone, and a provenance line that names a
+    dead process is worse than one that names none.
+    """
+    seen: dict[int, str] = {}
+    for m in re.finditer(r'IOUserClientCreator" = "pid (\d+), ([^"]*)"', registry):
+        pid, name = int(m.group(1)), m.group(2).strip()
+        if pid == own or not alive(pid):
+            continue
+        seen[pid] = name
+    return sorted(f"{name} ({pid})" for pid, name in seen.items())
+
+
+def metal_gpu_clients() -> list[str]:
+    """Processes holding an Apple GPU device client.
+
+    This is the closest thing Metal has to `nvidia-smi --query-compute-apps`,
+    and it is a RECORD, never a gate: on a desktop the list is dominated by
+    apps that opened the GPU to draw and are computing nothing, so a threshold
+    on it would fire every run.
+
+    There is no activity gate to offer alongside it. Three counters were
+    calibrated against a deliberately saturating compute job (512 MB uint32, 64
+    rounds, ~290 ms/iter back to back) on an otherwise idle desktop, and none
+    separates it from idle:
+
+    - `ioreg -c IOAccelerator` `Device Utilization %` reads **0** under that
+      load, exactly as when nothing runs — it tracks the render pipeline
+      (`Renderer` follows it exactly, `Tiler` moves with it). With a browser
+      open it sits near 58 whether or not anyone computes;
+    - IOReport `Energy Model / GPU Energy` spans 12M-362M per second on an idle
+      machine and read HIGHER after the load stopped than during it;
+    - IOReport `GPU Stats / GPU Performance States / GPUPH` non-OFF residency
+      separates in the median (2.4% idle vs 14% loaded) but its ranges overlap
+      at 0.5 s sampling, and at 3 s it converges to ~14% in both.
+
+    So the guard stays host-CPU-only, and this line exists so that a number
+    taken next to a busy neighbour can at least be recognised afterwards.
+    """
+    try:
+        out = subprocess.run(
+            ["ioreg", "-r", "-w", "0", "-c", "AGXDeviceUserClient"],
+            capture_output=True, text=True, timeout=15, check=True,
+        ).stdout
+    except Exception:  # noqa: BLE001 - diagnostic only, never blocks
+        return []
+
+    def alive(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    return parse_gpu_clients(out, os.getpid(), alive)
 
 
 def gpu_provenance() -> tuple[str, int]:
@@ -515,6 +619,28 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
+    if others < 0:
+        # The card probe failed, so it proved nothing — fall back to the host.
+        # Without this the guard is inert on Metal, which is how a whole session
+        # of measurements ran against a stray process at 100% CPU.
+        # Refuse only on a process pinning most of a core. A desktop always has
+        # a WindowServer / terminal in the 30-50% band; blocking on those would
+        # make the guard fire every run, and a guard that always fires gets
+        # passed --allow-contended reflexively, which is worse than no guard.
+        # What actually breaks a comparison is a *variable* neighbour, and the
+        # one that poisoned this session sat at ~100%.
+        load, hot = host_contention(cpu_threshold=80.0)
+        if hot and not args.allow_contended:
+            print(
+                f"REFUSING to measure: the card probe returned nothing ({card}), "
+                f"and the host is busy — {load}, {'; '.join(hot[:4])}.\n"
+                "On a shared-memory SoC that moves device timings: one stray "
+                "process at ~100% CPU made `commit`, identical work every run, "
+                "swing 2x on this box. Stop it, or pass --allow-contended for "
+                "ratio-only work.",
+                file=sys.stderr,
+            )
+            return 2
 
     device = frx.devices()[0]
     if device.platform == "gpu":
@@ -533,7 +659,17 @@ def main() -> int:
             )
             return 2
 
-    print(f"device {device} | gpu: {card}")
+    # Record the host state next to the card state. A number is only comparable
+    # against another number taken on an equally quiet machine, and that is not
+    # recoverable after the fact unless it is printed here.
+    _load, _hot = host_contention()
+    # On Metal the card probe says nothing, so name who else has the GPU open.
+    # Recorded, not gated — see `metal_gpu_clients` for why there is no gate.
+    _clients = metal_gpu_clients() if others < 0 else []
+    print(f"device {device} | gpu: {card} | host: {_load}"
+          + (f", busy: {'; '.join(_hot[:3])}" if _hot else ", quiet")
+          + (f" | gpu clients: {len(_clients)} — {'; '.join(_clients[:3])}"
+             + (", …" if len(_clients) > 3 else "") if _clients else ""))
     print(
         f"witness form: {'uint8 bits' if args.unpacked else 'packed F128'} "
         f"| best-of-{args.runs} within this process\n"
