@@ -52,18 +52,20 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import json
 import os
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, NamedTuple
 
 import frx
 
 frx.config.update("jax_enable_x64", True)
 
 import frx.numpy as fnp  # noqa: E402
+from zorch.grind import GRIND_WINDOW  # noqa: E402
 
 from flock_zorch import lincheck, prover, zerocheck  # noqa: E402
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
@@ -99,6 +101,71 @@ def _profile(args):
     its scope.
     """
     return getattr(prover, HASH_ARMS[args.hash])
+
+
+class FoldGrindCost(NamedTuple):
+    """What a config's fold PoW schedule costs, by two different measures.
+
+    `expected_attempts` is what the difficulty implies — the protocol's own
+    quantity. `windowed_hashes` is what zorch actually evaluates, which is the
+    one that costs time, and the two differ by ~2x here. Reporting only the
+    first invites the wrong conclusion about where the cost sits.
+    """
+
+    grinds: int
+    expected_attempts: int
+    windowed_hashes: int
+
+
+def fold_grind_census(cfg, window: int = GRIND_WINDOW) -> FoldGrindCost:
+    """Price the config's fold PoW schedule, mirroring
+    `FlockChoreography.fold_grind_bits`: level `l`'s fold round `j` grinds
+    `fold_grinding_bits[l] - j` bits, and only when that is > 0.
+
+    Exists to price an asymmetry, not to describe the protocol. flock's
+    `cuda-ghash/bench_ligerito` runs "grinding OFF" — it calls `grind_pow(0)`,
+    the unconditional 0-bit query grind, and performs NO fold grinds. Our m32
+    golden carries `grinding_bits [0]*6` (identical to theirs) but
+    `fold_grinding_bits [19, 14, 11, 8, 6, 4]`, which is 21 real searches.
+    Comparing the two provers' walls without pricing that compares different
+    work.
+
+    **The two totals differ, and the difference is the point.** `grind_search`
+    tests a whole `GRIND_WINDOW`-wide counter batch per `while_loop` step, so a
+    grind never costs less than one window however easy it is. At m32 that turns
+    1.07M expected attempts into 2^21 = 2.10M hashes actually evaluated, and it
+    moves where the work is: level 0 is 97% of the expected attempts but only
+    53% of the windowed hashes, because 18 of the 21 sit at <= 16 bits and each
+    still pays a full window — only the top three exceed it. A 0-bit grind is
+    free (the transcripts special-case it to the canonical zero witness), which
+    is why dropping only the fold schedule leaves the query grinds costing
+    nothing.
+    """
+    ks = (cfg["initial_k"], *cfg["recursive_ks"])
+    n = attempts = hashes = 0
+    for level, k in enumerate(ks):
+        for j in range(k):
+            bits = cfg["fold_grinding_bits"][level] - j
+            if bits > 0:
+                n += 1
+                attempts += 1 << bits
+                hashes += max(window, 1 << bits)
+    return FoldGrindCost(n, attempts, hashes)
+
+
+def drop_fold_grinds(cfg) -> FoldGrindCost:
+    """Zero `fold_grinding_bits` in `cfg`, returning what `fold_grind_census`
+    reported before the edit.
+
+    The query grinds are left alone: at 0 bits they still put a trivial nonce on
+    the wire, which is exactly what flock's bench does, so zeroing only the fold
+    schedule lands both provers on the same work. **The resulting proof is not
+    gate-valid** — every challenge after a dropped grind moves — so this is for
+    timing arms only.
+    """
+    before = fold_grind_census(cfg)
+    cfg["fold_grinding_bits"] = [0] * len(cfg["fold_grinding_bits"])
+    return before
 
 
 def _phases(args):
@@ -379,6 +446,38 @@ def make_prove(circ: Circuit, g, unpacked: bool, seed: int | None = None, profil
 
 # ---------------------------------------------------------------------- main
 
+# Prefix marking the machine-readable line under `--json`. The banner, the
+# toolchain warnings and the fold-PoW notice all reach stdout too, so a consumer
+# that assumed "the output is JSON" would have to parse around them; a marker
+# keeps the human output intact and the machine output unambiguous.
+JSON_MARK = "##bench-json## "
+
+
+def _emit_json(circ, args, g, n_hash, wall, parts, dropped) -> None:
+    """One `JSON_MARK`-prefixed line describing this measurement.
+
+    Carries the config identity (`m`, `log_n`, the query ladder) alongside the
+    timings because a wall compared against another prover's is only meaningful
+    once both are shown to be the same instance, and a consumer that has to
+    infer that from a filename will eventually infer it wrong.
+    """
+    meta, cfg = g["meta"], g["cfg"]
+    payload = {
+        "circuit": circ.name,
+        "m": meta["m"],
+        "log_n": meta["log_n"],
+        "initial_k": cfg["initial_k"],
+        "recursive_ks": list(cfg["recursive_ks"]),
+        "queries": list(cfg["queries"]),
+        "hashes": n_hash,
+        "hash_arm": args.hash,
+        "wall_ms": wall,
+        "mode": "throughput" if args.throughput else "barriered",
+        "phases": dict(parts) if parts else None,
+        "fold_pow_dropped": (None if dropped is None else dropped._asdict()),
+    }
+    print(JSON_MARK + json.dumps(payload))
+
 
 def bench(circ: Circuit, args) -> None:
     """Measure one circuit and print its row. Scoped to a function so the golden
@@ -386,11 +485,25 @@ def bench(circ: Circuit, args) -> None:
     g = circ.ingest(args.golden)
     meta = g["meta"]
     n_hash = circ.hashes_per_proof(meta)
+    dropped = drop_fold_grinds(g["cfg"]) if args.no_fold_grind else None
     prove = make_prove(circ, g, args.unpacked, seed=args.seed, profile=_profile(args))
     phases = _phases(args)
 
+    if dropped is not None:
+        print(
+            f"  fold PoW DROPPED: {dropped.grinds} grinds, "
+            f"{dropped.expected_attempts:,} expected attempts = "
+            f"{dropped.windowed_hashes:,} hashes actually evaluated "
+            f"(GRIND_WINDOW={GRIND_WINDOW:,} floors every search). Matches "
+            "flock's bench (query grinds at 0 bits remain, and cost nothing). "
+            "This proof is NOT gate-valid — timing only."
+        )
+
     if args.throughput:
         wall = best(lambda: prove(), args.runs)
+        if args.json:
+            _emit_json(circ, args, g, n_hash, wall, None, dropped)
+            return
         print(
             f"{circ.name:>8} {meta['m']:>3} {n_hash:>8} "
             f"{wall:>9.2f}ms {n_hash * 1e3 / wall:>10.0f}"
@@ -408,6 +521,10 @@ def bench(circ: Circuit, args) -> None:
 
     wall, parts = best_of(timed_prove, args.runs)
     total = sum(parts.values())
+
+    if args.json:
+        _emit_json(circ, args, g, n_hash, wall, parts, dropped)
+        return
 
     print(
         f"{circ.name:>8} {meta['m']:>3} {n_hash:>8} "
@@ -477,6 +594,22 @@ def main() -> int:
         "window either way.",
     )
     ap.add_argument(
+        "--no-fold-grind",
+        action="store_true",
+        help="zero the config's fold PoW schedule, leaving the 0-bit query "
+        "grinds. This is what flock's cuda-ghash bench runs ('grinding OFF'), "
+        "so it is the arm to use when comparing against it; at m32 it drops 21 "
+        "searches worth ~1.07M expected hash attempts. The proof is NOT "
+        "gate-valid under this flag — every challenge after a dropped grind "
+        "moves. Timing arms only.",
+    )
+    ap.add_argument(
+        "--json",
+        action="store_true",
+        help=f"emit one machine-readable '{JSON_MARK.strip()}'-prefixed line "
+        "per circuit instead of the table, for `rival_compare.py`",
+    )
+    ap.add_argument(
         "--allow-contended",
         action="store_true",
         help="measure even with another compute process on the card",
@@ -539,16 +672,17 @@ def main() -> int:
         f"| best-of-{args.runs} within this process\n"
     )
 
-    if args.throughput:
-        hdr = f"{'circuit':>8} {'m':>3} {'hashes':>8} {'wall':>11} {'hash/s':>10}"
-    else:
-        hdr = (
-            f"{'circuit':>8} {'m':>3} {'hashes':>8} "
-            + " ".join(f"{p:>10}" for p in _phases(args))
-            + f" {'sum':>9} {'wall':>9} {'hash/s':>10}"
-        )
-    print(hdr)
-    print("-" * len(hdr))
+    if not args.json:
+        if args.throughput:
+            hdr = f"{'circuit':>8} {'m':>3} {'hashes':>8} {'wall':>11} {'hash/s':>10}"
+        else:
+            hdr = (
+                f"{'circuit':>8} {'m':>3} {'hashes':>8} "
+                + " ".join(f"{p:>10}" for p in _phases(args))
+                + f" {'sum':>9} {'wall':>9} {'hash/s':>10}"
+            )
+        print(hdr)
+        print("-" * len(hdr))
 
     for name in args.circuits:
         bench(Circuit(name), args)

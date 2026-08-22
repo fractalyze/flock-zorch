@@ -218,6 +218,28 @@ another process is using the GPU — a neighbour saturating the SMs inflates a w
 prove ~28× here, which is enough to invent a result. Swap `sha2` for `blake3` or
 `keccak3`; `--golden` points it at an m-variant dump.
 
+### Against flock's CUDA prover
+
+`succinctlabs/flock` ships a hand-written CUDA prover (`cuda-ghash/`) that runs
+the same protocol on the same field, so it can be measured on one box against
+this one. `rival_compare.py` runs both, interleaved and each in its own process,
+and prints a like-for-like table:
+
+```bash
+$VENV python/flock_zorch/testing/rival_compare.py \
+    --rival-bin /path/to/flock/cuda-ghash/bench_ligerito
+```
+
+It refuses to quote a ratio until it has verified structurally — `log_n`,
+`initial_k`, the recursion depth, the query ladder — that both sides are running
+the same instance, since `m32` and `fast32` are only labels. It then subtracts
+the asymmetries their harness reports (witness generation, bench-only input
+fill) and **measures** the one it can control: their bench performs no fold PoW
+and ours performs 21 grinds worth ~1.07M expected hash attempts, so the same
+prove is run with and without that schedule and the difference is priced rather
+than assumed. See [`docs/measurement.md`](docs/measurement.md) for why each
+correction is there.
+
 ### The snark.fast harness window
 
 The [flock-challenge](https://github.com/Layr-Labs/flock-challenge) benchmark
