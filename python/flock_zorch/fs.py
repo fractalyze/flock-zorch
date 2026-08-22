@@ -52,6 +52,20 @@ def grind(t, bits):
     return t.grind(bits)
 
 
+@frx.jit
+def observe_scalar_and_sample(t, values):
+    """Scalar-framed observe and the draw that follows it, as ONE marked region."""
+    return t.observe_scalar_and_sample(values)
+
+
+@functools.partial(frx.jit, static_argnums=(1,))
+def grind_and_sample(t, bits):
+    """The grind and the scalar draw that follows it, as ONE marked region —
+    the witness rides the draw's framing. Byte-identical to `grind` then
+    `sample_scalar`; see the transcript's own docstring for why."""
+    return t.grind_and_sample(bits)
+
+
 @functools.partial(frx.jit, static_argnums=(2,))
 def check_witness(t, witness, bits):
     return t.check_witness(witness, pow_bits=bits)

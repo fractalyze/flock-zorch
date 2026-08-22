@@ -102,6 +102,13 @@ class FlockTranscript:
     def observe_and_sample(
         self, values: Array, n: int = 1
     ) -> tuple["FlockTranscript", Array]:
+        """One marked region when the pair allows it: a width-1 draw of field
+        elements is a scalar draw on this wire, so the observe's bytes ride the
+        draw's framing. Byte-identical to `observe` then `sample` — absorb is a
+        stream. Other widths and dtypes take the two-region path."""
+        if n == 1 and values.dtype == fnp.binary_field_ghash:
+            inner, g = fs.observe_scalar_and_sample(self.inner, values.reshape(-1))
+            return FlockTranscript(inner), g.reshape(1)
         return self.observe(values).sample(n)
 
     def grind(self, pow_bits: int) -> tuple["FlockTranscript", Array]:
@@ -204,6 +211,23 @@ class FlockChoreography(LigeritoChoreography[FlockTranscript]):
         del msg, level, fold_idx  # eager: the message is already absorbed
         transcript, r = transcript.sample(1)
         return transcript, r[0]
+
+    def grind_and_fold_challenge(
+        self,
+        transcript: FlockTranscript,
+        msg: Array | None,
+        level: int,
+        fold_idx: int,
+        bits: int,
+    ) -> tuple[FlockTranscript, Array, Array]:
+        """flock's fold round grinds and then draws, and on this wire the two
+        are one marked region: the witness rides the draw's framing. The bytes
+        are exactly what `grind` then `fold_challenge` put on the stream, so the
+        proof is unchanged — what drops is one single-threaded kernel per
+        grinding fold round, which is 14 of 15 rounds at m=26."""
+        del msg, level, fold_idx  # eager: the message is already absorbed
+        inner, witness, r = fs.grind_and_sample(transcript.inner, bits)
+        return FlockTranscript(inner), fnp.asarray(witness, fnp.uint64), r
 
     def fold_grind_bits(self, level: int, fold_idx: int) -> int | None:
         bits = self.fold_grinding_bits[level] - fold_idx
