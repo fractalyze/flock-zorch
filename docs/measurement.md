@@ -147,3 +147,21 @@ The benchmark itself — how to run it and what it has published — is in
   `nsys_capture.py`'s `cuProfilerStart/Stop`, so warm-up and autotune are
   excluded by construction; and `ncu --csv` emits a **units row after the
   header**, so parsing the header alone reads every metric as zero.
+- **On GB202 the DRAM counters are `dram__bytes_op_read` / `dram__bytes_op_write`
+  — the `_op_` infix is required, and a wrong metric name does not fail.** ncu
+  emits `n/a` for a metric this chip does not define, so a capture comes back
+  structurally perfect (right launch count, right kernel names, timing intact)
+  with every byte column empty, which a summariser turns into `0.00 GiB / 0% of
+  peak`. Assert the `n/a` count is zero before reading anything derived from a
+  capture. List what the chip actually has with
+  `sudo ncu --query-metrics | grep dram__`.
+- **"Memory Throughput" is a max over the whole memory subsystem, not DRAM.**
+  `gpu__compute_memory_throughput` covers L1/L2/shared/DRAM, so a kernel
+  reworking data on-chip while barely touching DRAM books as ~96%
+  "memory-bound" yet is nowhere near the DRAM roof — reading that as "at a roof,
+  nothing to win" inverts the finding. Pair it with `sm__throughput` and with
+  counted bytes: high memory% → at a roof; low memory% + high SM% →
+  compute-bound, only fewer operations pay; both low → latency-bound, and
+  restructuring is what pays. One axis cannot separate "wasting time" from
+  "doing the work". The whole-prove statement that survives all of this is
+  simply `counted bytes / un-profiled wall` against the card's peak.
