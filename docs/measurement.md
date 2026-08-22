@@ -226,3 +226,59 @@ The benchmark itself — how to run it and what it has published — is in
   targets, so one clear sample is a false start). And report a run that keeps 2
   of 15 pairs as **unmeasured**, never as a null — a straddling IQR from two
   pairs is not a smaller version of the same result.
+- **A backend verdict is only as portable as the pass behind it.** "Anything
+  that only reduces launch count is spent" was established on CUDA, where `open`
+  is 100% command-buffer captured. `gpu_executable.cc` skips
+  `CommandBufferConversionPass` when `gpu_compute_capability().IsApple()`, so
+  Metal has no graph capture and host-encodes every dispatch on every run — the
+  verdict does not transfer, and neither do the conclusions built on it. Before
+  carrying a structural claim across backends, grep the pipeline for the guard
+  (`IsApple()` here) on the pass the claim rests on. Same shape as the fusion
+  divergence: two backends can compile one HLO very differently.
+- **Count dispatches from the thunk sequence, never from the optimized HLO.** A
+  claimed custom fusion keeps its decomposition as the called computation
+  (`calls=%sumcheck_body.10.clone`), so `*_gpu_after_optimizations.txt` still
+  contains every instruction of a region that was replaced and never runs. Group
+  by scope there and the regions an emitter *already fixed* look the largest.
+  `*.thunk_sequence.txt` lists what is really dispatched; join the two by kernel
+  name (`input_concatenate_fusion_1044` ↔ `%input_concatenate_fusion.1044`).
+- **On Metal the dump is the profiler.** `--xla_dump_to` writes one
+  `*.thunk_sequence.txt` per module with the launch geometry on every line
+  (`grid: [1,1,1] threads: [8,1,1]`), plus the generated `.msl` for every kernel
+  — so a launch-width census is compile-only: noise-free, no idle card, no
+  rebuild. It is **not** CUDA's `thunk_sequence_after_thunk_passes.txt`, which is
+  dumped only `if (changed)` and on Apple usually will not exist. Bucket on total
+  threads (`grid × threads`), not threadgroup count: 32 is one SIMD group on an
+  M4 Pro, and a `[1,1,1]×[1,1,1]` dispatch is a serialization point wearing a
+  kernel's clothes. Indentation is nesting — report the top-level count next to
+  the total, since a static census over-counts untaken branches and under-counts
+  loop bodies.
+- **Instruments must attach AFTER warm-up.** `xctrace record --launch` over a
+  prove's compile produced a **33 GB trace and SIGKILLed the target** before it
+  printed a line; the compile emits far more Metal events than the run. Warm up,
+  print the pid, then `--attach <pid> --time-limit 25s` — same workload, 288 MB.
+  There is no NVTX equivalent, so put an idle second between replays and split
+  the timeline on the gap. Two numbers the capture cannot give: **wall** (the
+  tools interpose the process — 110–144 ms against an un-profiled 86.6 ms) and
+  anything per-dispatch (4,013 dispatches appeared as ~516 intervals). And Xcode
+  is not missing just because `xcode-select` points at CommandLineTools: use
+  `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun xctrace`,
+  because switching globally makes bazel rebuild against a different SDK.
+- **There is no GPU residency gate on Apple — do not invent one.** The rule above
+  ports to Metal in intent and not in mechanism. Four probes, each calibrated
+  against a deliberately saturating compute job: `ioreg -c IOAccelerator`
+  `Device Utilization %` reads **0 under that load**, exactly as when nothing
+  runs (it tracks the render pipeline — `Renderer` follows it, `Tiler` moves with
+  it, and with a browser open it sits near 58 regardless); IOReport
+  `Energy Model / GPU Energy` is non-monotone, reading higher after the load
+  stopped than during it; `GPU Stats / GPU Performance States / GPUPH` non-OFF
+  residency overlaps idle at 0.5 s sampling and converges to ~14% under both at
+  3 s. What is available is a **record, not a gate**:
+  `ioreg -r -c AGXDeviceUserClient` names every process holding a GPU client,
+  which is structural (~40 on a desktop) rather than a threshold. Close the
+  browser — a Metal System Trace put one at 4.4–4.7 s of GPU busy per ~25 s
+  window against a prover's ~150–190 ms — and read ratios, not absolutes.
+  ⚠️ The first calibration here used a load that *looked* heavy but was
+  Python-loop bound (658 ms of GPU busy over 16 s, ~5% duty) and reached the
+  right conclusion for the wrong reason. Confirm the calibration load saturates,
+  with an independent instrument, before believing what a counter did.
