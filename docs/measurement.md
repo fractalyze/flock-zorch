@@ -94,6 +94,23 @@ The benchmark itself — how to run it and what it has published — is in
 - **A phase is not a target.** `zerocheck` bundles the round-1 URM extend and the
   multilinear ladder, whose relative sizes invert with `m`. Split to the prover
   round before scoping work off a phase number.
+- **Every A/B needs a quantity the change cannot touch, measured in the same
+  window.** Order-alternation, min-of-N and in-process interleaving all reduce
+  drift; none of them tell you whether what is left is signal — only a control
+  does. For a change confined to one phase the control is free, because
+  `prove_phase_bench` prints the others: ablate one sub-step of `open` and
+  `zerocheck` must not move. Reject the run if it moves more than ~5% rather than
+  averaging it in. Twice in one session this was the only thing that caught a
+  fiction: an in-process unroll sweep read 1.558× while its bandwidth-bound
+  control kernel swung 28%, and an `open` ablation read *higher with work
+  removed* while `zerocheck` — untouchable by it — moved 44%.
+- **Size a component's share from a speedup you already have, before optimizing
+  it again.** When both a component's speedup and the whole-system speedup are
+  recorded, Amdahl gives the share for free: prime-ir#432's 25.9× on the GF
+  multiply bought 3.55× on the prove, so the multiply was 74.7% before and
+  ~10% after — i.e. **making it free now buys ~12%**. Three later attempts at
+  the multiply (32-bit limbs, bit-slicing, nibble tables) were capped at that
+  before they started.
 - **Latency vs arithmetic: busy from nsys, wall from a clean run.** nsys inflates
   *host* dispatch ~2×, so inter-kernel gaps on its timeline are contaminated;
   on-device kernel durations are not. Pass `--cuda-graph-trace=node` or
@@ -147,3 +164,151 @@ The benchmark itself — how to run it and what it has published — is in
   `nsys_capture.py`'s `cuProfilerStart/Stop`, so warm-up and autotune are
   excluded by construction; and `ncu --csv` emits a **units row after the
   header**, so parsing the header alone reads every metric as zero.
+- **A microbenchmark may motivate a hypothesis; it must never size one.** The
+  same marked transcript region prices at ~44–150 µs in a tight chain and
+  ~1.0–2.1 ms in situ, 30–40× apart, because the chain pipelines with the state
+  hot while the prover's sits between large kernels. Three explanations for that
+  gap were each built on a clean, well-controlled bench and each refuted by the
+  real prove — the last one, "the per-hop `frx.jit` boundary costs ~1 ms",
+  matched the prover's figure to a digit and was still wrong (unwrapping all
+  eleven wrappers is *slower*). Size a lever by ablating the real prover — the
+  ablation harness's gates cost one run each — and treat any bench number that
+  arrives already matching your expectation as the one most in need of a check.
+  A control that is the identity element of the operation under test is not a
+  control: `acc * one` is folded away, and it inflated a "serialization cost"
+  by 10×.
+- **Comparing two backends means comparing shares, not absolutes.** Metal
+  `open` at m28 against CUDA `open` is an M4 Pro laptop GPU against an RTX 5090
+  — the 3.5× between them is hardware and supports nothing. The same change
+  expressed as a share of its own phase (17.5% on Metal, 1.8% on CUDA) cancels
+  the hardware and is the comparison that carries information.
+- **Pair the two arms inside ONE process.** A cross-process A/B recompiles the
+  whole prove per arm (~5 min here), which stretches the pair's window until the
+  host drifts inside it — 0 of 6 pairs survived; the in-process version of the
+  same comparison got 12 of 19. And the control should be **one large phase the
+  change cannot reach**, not a max over several small ones: `zerocheck` alone
+  keeps ~9 of 12 pairs where a max over `commit`/`zerocheck`/`lincheck` rejected
+  9 of 10 on the small phases' own noise.
+- **A worktree at the right sha is not the right stack — prove the emitter
+  claimed the marker.** Source pins and wheel pins drift independently: the
+  ablation harness reads the source, the GPU reads the plugin. A stage-2 lever
+  here was sized at +13.00 ms (m=28) → +46.10 ms (m=31) and approved for an
+  emitter on that rise; the measuring venv was eight days stale and its
+  recognizer did not know the round's `variant`, so the round ran **de-fused in
+  both arms**. Re-measured where it fuses, the same arm gives +6.66 → +7.86 ms
+  — a 1.18× rise, not 3.55×, and the decision inverts. Rejecting it as "applied
+  to both arms, so it cancels" is only valid for an arm asymmetry; when the
+  disabled optimization *overlaps* the one being priced, it inflates the delta.
+  Two checks, both seconds: `strings` the plugin for the recognizer's accepted
+  variants, then count claimed regions in the optimized HLO
+  (`grep -o '"name":"<fusion>"' *after_optimizations.txt`) against the marker
+  count in `before_optimizations.txt`. Note the marker *name* is absent from the
+  optimized text whether it was claimed or inlined, so grepping for it there
+  distinguishes nothing — the `__custom_fusion` backend config does. And the
+  absence of an `INVALID_ARGUMENT: unknown variant` error proves only that the
+  variant is *recognised*, never that it was *claimed*.
+- **An ablation stand-in without `optimization_barrier` prices the whole
+  downstream chain.** Replacing a transcript hop with same-shaped zeros makes
+  the state a literal constant, so XLA folds every consumer that reads it and
+  the arm is credited with work it did not remove — 138 regions removed against
+  the 69 the fenced arm removes. Fence every stand-in whose output feeds a
+  dependency chain, and sanity-check the arm with a static census before
+  trusting its wall: the count of the thing you meant to keep (here, the fused
+  rounds: 15 → 15) is the control that proves the arm prices the hop and not the
+  pass.
+- **On a shared box, gate on GPU residency, not on load average.** These pairings
+  survive a busy *host*: one run measured cleanly at load 13.8 with 14 users. They
+  do not survive a busy *card* — with 16 sibling `*_test_nvgpu_any` binaries
+  resident, 13 of 15 pairs failed the control and baseline `open` swung
+  30.42–98.88 ms on identical code. Poll
+  `nvidia-smi --query-compute-apps=pid --format=csv,noheader` until it is empty
+  for several consecutive samples (a bazel suite empties and refills between
+  targets, so one clear sample is a false start). And report a run that keeps 2
+  of 15 pairs as **unmeasured**, never as a null — a straddling IQR from two
+  pairs is not a smaller version of the same result.
+- **A backend verdict is only as portable as the pass behind it.** "Anything
+  that only reduces launch count is spent" was established on CUDA, where `open`
+  is 100% command-buffer captured. `gpu_executable.cc` skips
+  `CommandBufferConversionPass` when `gpu_compute_capability().IsApple()`, so
+  Metal has no graph capture and host-encodes every dispatch on every run — the
+  verdict does not transfer, and neither do the conclusions built on it. Before
+  carrying a structural claim across backends, grep the pipeline for the guard
+  (`IsApple()` here) on the pass the claim rests on. Same shape as the fusion
+  divergence: two backends can compile one HLO very differently.
+- **Count dispatches from the thunk sequence, never from the optimized HLO.** A
+  claimed custom fusion keeps its decomposition as the called computation
+  (`calls=%sumcheck_body.10.clone`), so `*_gpu_after_optimizations.txt` still
+  contains every instruction of a region that was replaced and never runs. Group
+  by scope there and the regions an emitter *already fixed* look the largest.
+  `*.thunk_sequence.txt` lists what is really dispatched; join the two by kernel
+  name (`input_concatenate_fusion_1044` ↔ `%input_concatenate_fusion.1044`).
+- **On Metal the dump is the profiler.** `--xla_dump_to` writes one
+  `*.thunk_sequence.txt` per module with the launch geometry on every line
+  (`grid: [1,1,1] threads: [8,1,1]`), plus the generated `.msl` for every kernel
+  — so a launch-width census is compile-only: noise-free, no idle card, no
+  rebuild. It is **not** CUDA's `thunk_sequence_after_thunk_passes.txt`, which is
+  dumped only `if (changed)` and on Apple usually will not exist. Bucket on total
+  threads (`grid × threads`), not threadgroup count: 32 is one SIMD group on an
+  M4 Pro, and a `[1,1,1]×[1,1,1]` dispatch is a serialization point wearing a
+  kernel's clothes. Indentation is nesting — report the top-level count next to
+  the total, since a static census over-counts untaken branches and under-counts
+  loop bodies.
+- **`rm -rf` the dump directory, then assert exactly one module matched.** XLA
+  numbers modules **per process**, so dumping repeated runs into one fixed
+  directory leaves `module_0142.jit__open_jitted.*` from a smaller earlier run
+  sitting next to today's `module_0197.*`. A `*jit__open_jitted*` glob then
+  resolves to a stale module — **silently**, because it still matches exactly one
+  file and the filename carries no `m`, no arm and no plugin. This is not
+  hypothetical: it is the best explanation for a recorded `open` census that
+  reported 4,013 dispatches where a clean re-run reports 6,823, and whose
+  composite tally had `absorb` and `squeeze` transposed. Both errors are
+  invisible in the output; only the directory hygiene prevents them.
+
+  ```bash
+  rm -rf "$DUMP"; mkdir -p "$DUMP"
+  XLA_FLAGS="--xla_dump_to=$DUMP --xla_dump_hlo_as_text" <run>
+  ls "$DUMP" | grep -oE 'module_[0-9]+\.jit__open_jitted' | sort -u  # must be ONE
+  ```
+
+  Related timing trap: a module's `*.thunk_sequence.txt` is written when its
+  **executable** is built, not when its HLO dumps appear. A listing taken
+  mid-run shows the HLO and no thunk sequence for exactly the module you care
+  about, while smaller finished modules do have theirs — which reads as "Metal
+  does not dump this for big modules". Wait for the process to exit.
+
+- **A dispatch total is only worth quoting as a delta.** Two counts from
+  different sessions are two different programs until proven otherwise, and the
+  proof is expensive. Toggle ONE switch with the plugin and every checkout held
+  fixed, and report the difference — cheap here, since the census is compile-only.
+  Cross-check the rig by confirming that a change you know to be structurally
+  inert (a marker no emitter claims, say) moves the count by exactly zero.
+
+- **Instruments must attach AFTER warm-up.** `xctrace record --launch` over a
+  prove's compile produced a **33 GB trace and SIGKILLed the target** before it
+  printed a line; the compile emits far more Metal events than the run. Warm up,
+  print the pid, then `--attach <pid> --time-limit 25s` — same workload, 288 MB.
+  There is no NVTX equivalent, so put an idle second between replays and split
+  the timeline on the gap. Two numbers the capture cannot give: **wall** (the
+  tools interpose the process — 110–144 ms against an un-profiled 86.6 ms) and
+  anything per-dispatch (4,013 dispatches appeared as ~516 intervals). And Xcode
+  is not missing just because `xcode-select` points at CommandLineTools: use
+  `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun xctrace`,
+  because switching globally makes bazel rebuild against a different SDK.
+- **There is no GPU residency gate on Apple — do not invent one.** The rule above
+  ports to Metal in intent and not in mechanism. Four probes, each calibrated
+  against a deliberately saturating compute job: `ioreg -c IOAccelerator`
+  `Device Utilization %` reads **0 under that load**, exactly as when nothing
+  runs (it tracks the render pipeline — `Renderer` follows it, `Tiler` moves with
+  it, and with a browser open it sits near 58 regardless); IOReport
+  `Energy Model / GPU Energy` is non-monotone, reading higher after the load
+  stopped than during it; `GPU Stats / GPU Performance States / GPUPH` non-OFF
+  residency overlaps idle at 0.5 s sampling and converges to ~14% under both at
+  3 s. What is available is a **record, not a gate**:
+  `ioreg -r -c AGXDeviceUserClient` names every process holding a GPU client,
+  which is structural (~40 on a desktop) rather than a threshold. Close the
+  browser — a Metal System Trace put one at 4.4–4.7 s of GPU busy per ~25 s
+  window against a prover's ~150–190 ms — and read ratios, not absolutes.
+  ⚠️ The first calibration here used a load that *looked* heavy but was
+  Python-loop bound (658 ms of GPU busy over 16 s, ~5% duty) and reached the
+  right conclusion for the wrong reason. Confirm the calibration load saturates,
+  with an independent instrument, before believing what a counter did.

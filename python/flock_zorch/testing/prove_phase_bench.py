@@ -142,6 +142,45 @@ def _smi(query: str, gpu: str | None = None) -> str:
     ).stdout.strip()
 
 
+def host_contention(cpu_threshold: float = 40.0) -> tuple[str, list[str]]:
+    """`(load line for the record, other processes burning CPU)`.
+
+    The nvidia-smi probe below cannot see a Metal device, so on Apple Silicon
+    the compute-process guard passes no matter what else is running. That is not
+    a harmless gap: the GPU shares the SoC and its memory bandwidth with the
+    cores, so a neighbour pinning a core does move device timings. Measured on
+    this box with one stray benchmark process at ~100% CPU, `commit` --- the
+    same bytes every run --- swung 23.87 to 47.55 ms, a 2x spread that buries
+    any effect worth looking for.
+
+    Self and this process's own children are excluded: a `--runs N` sweep is
+    the measurement, not a neighbour.
+    """
+    try:
+        out = subprocess.run(
+            ["ps", "-eo", "pid,ppid,pcpu,comm"],
+            capture_output=True, text=True, timeout=15, check=True,
+        ).stdout.splitlines()[1:]
+    except Exception as e:  # noqa: BLE001 - diagnostic only, never blocks
+        return f"host state unknown ({type(e).__name__})", []
+
+    own = os.getpid()
+    hot: list[str] = []
+    for line in out:
+        parts = line.split(None, 3)
+        if len(parts) < 4:
+            continue
+        pid, ppid, pcpu, comm = parts
+        try:
+            if int(pid) in (own,) or int(ppid) == own or float(pcpu) < cpu_threshold:
+                continue
+        except ValueError:
+            continue
+        hot.append(f"{comm.strip()} ({pcpu}%)")
+    load1 = os.getloadavg()[0]
+    return f"load {load1:.2f}", hot
+
+
 def gpu_provenance() -> tuple[str, int]:
     """`(card state for the record, count of other compute processes)`.
 
@@ -515,6 +554,28 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
+    if others < 0:
+        # The card probe failed, so it proved nothing — fall back to the host.
+        # Without this the guard is inert on Metal, which is how a whole session
+        # of measurements ran against a stray process at 100% CPU.
+        # Refuse only on a process pinning most of a core. A desktop always has
+        # a WindowServer / terminal in the 30-50% band; blocking on those would
+        # make the guard fire every run, and a guard that always fires gets
+        # passed --allow-contended reflexively, which is worse than no guard.
+        # What actually breaks a comparison is a *variable* neighbour, and the
+        # one that poisoned this session sat at ~100%.
+        load, hot = host_contention(cpu_threshold=80.0)
+        if hot and not args.allow_contended:
+            print(
+                f"REFUSING to measure: the card probe returned nothing ({card}), "
+                f"and the host is busy — {load}, {'; '.join(hot[:4])}.\n"
+                "On a shared-memory SoC that moves device timings: one stray "
+                "process at ~100% CPU made `commit`, identical work every run, "
+                "swing 2x on this box. Stop it, or pass --allow-contended for "
+                "ratio-only work.",
+                file=sys.stderr,
+            )
+            return 2
 
     device = frx.devices()[0]
     if device.platform == "gpu":
@@ -533,7 +594,12 @@ def main() -> int:
             )
             return 2
 
-    print(f"device {device} | gpu: {card}")
+    # Record the host state next to the card state. A number is only comparable
+    # against another number taken on an equally quiet machine, and that is not
+    # recoverable after the fact unless it is printed here.
+    _load, _hot = host_contention()
+    print(f"device {device} | gpu: {card} | host: {_load}"
+          + (f", busy: {'; '.join(_hot[:3])}" if _hot else ", quiet"))
     print(
         f"witness form: {'uint8 bits' if args.unpacked else 'packed F128'} "
         f"| best-of-{args.runs} within this process\n"
