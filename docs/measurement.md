@@ -106,6 +106,36 @@ The benchmark itself — how to run it and what it has published — is in
   tunable" — then zorch#590 combined both with a per-program parity fold for
   −18%. Each measurement was right and the conclusion was wrong. One knob at a
   time can only refute one knob.
+- **Against flock's `cuda-ghash/bench_ligerito`, drop our fold PoW first or the
+  two provers are not doing the same work.** Their bench runs "grinding OFF",
+  which means it calls `grind_pow(0)` — the unconditional 0-bit *query* grind —
+  and performs **no fold grinds at all**. Our m32 golden carries
+  `grinding_bits [0]*6`, identical to theirs, but
+  `fold_grinding_bits [19, 14, 11, 8, 6, 4]`. Under
+  `FlockChoreography.fold_grind_bits` (level `l`, fold round `j`, grinds
+  `bits[l] - j` when > 0) that is **21 real searches**, every one of them inside
+  `open` — the phase the cross-prover gap is largest on. It is easy to mistake
+  for loop overhead: the count "21 grind whiles" is right, but they are not
+  empty.
+
+  **Count the hashes zorch evaluates, not the attempts the difficulty implies.**
+  `grind_search` tests a whole `GRIND_WINDOW = 2^16` counter batch per
+  `while_loop` step, so no grind costs less than one window however easy it is.
+  That turns 1.07M expected attempts into **2^21 = 2.10M hashes actually
+  evaluated**, and it relocates the work: level 0 is 97% of the attempts but
+  only **53%** of the hashes, because 18 of the 21 grinds sit at ≤ 16 bits and
+  each still pays a full window. Scoping a fix off the attempt count would aim
+  at the wrong 18 searches. (0-bit grinds are exempt — the transcripts
+  special-case them to the canonical zero witness, so the query grinds are free
+  on both sides.)
+  `prove_phase_bench --no-fold-grind` zeroes the fold schedule and leaves the
+  query grinds, which lands both provers on the same work; **the proof is not
+  gate-valid under that flag** (every challenge after a dropped grind moves), so
+  it is a timing arm only. `rival_compare.py` runs both arms and prices the
+  difference rather than assuming it: measured **+2.68 ms at m32**, of which
+  +2.33 ms lands in `open`. Charging that to the prover gap is what turned a
+  measured 4.9x `open` ratio into a reported 6.2x.
+
 - **Never derive DRAM traffic from HLO shapes. `ERR_NVGPUCTRPERM` does not mean
   ncu is blocked — it means ncu needs one `sudo` (see the ncu bullet below), so
   ask for it.**
