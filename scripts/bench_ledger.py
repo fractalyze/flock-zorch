@@ -1,27 +1,17 @@
 #!/usr/bin/env python3
 # Copyright 2026 The Flock-Zorch Authors. SPDX-License-Identifier: Apache-2.0
-"""Run one benchmark and record it where the trajectory can be reconstructed.
+"""Measure this prover once and record it where the trajectory survives.
 
 A number in a session log is a number nobody can compare later: the box, the
 toolchain and the pins that produced it are gone by the time anyone asks. This
-runs `prove_phase_bench.py` and writes the result together with the full
-environment fingerprint (`_fingerprint.py`) as a GitHub **check run** on the
-measured commit, so `GET /commits/{sha}/check-runs` replays the whole history
-with no store of our own to keep in sync.
+runs `prove_phase_bench.py`, attaches the full environment fingerprint, and
+hands the result to `_ledger.publish`, which writes it as a check run on the
+measured commit.
 
-Check runs can only be created by a GitHub App, so `--check-run` works from
-Actions (whose `GITHUB_TOKEN` is one) and not from a personal access token,
-which gets a 403. Without the flag the record goes to stdout and `--out`,
-which is the useful mode on a workstation.
-
-Conclusions are chosen so that "we could not measure" never reads as "the code
-regressed":
-
-  success  a number was produced
-  neutral  the bench refused to measure — a contended card or a toolchain that
-           cannot assemble clmad. On a shared box this is the common case and
-           it is not a failure; GPU contention must not turn a branch red.
-  failure  the bench itself broke
+This file is only the flock-specific half — how to run the bench and what one
+measurement of it looks like. Everything about publishing (the check run, the
+comparability verdict, the conclusion semantics, the wire contract) lives in
+`flock_zorch.testing._ledger`, which knows nothing about this prover.
 
 Usage (from the repo root, with the toolchain preamble README describes):
 
@@ -37,28 +27,22 @@ import os
 import re
 import subprocess
 import sys
-import urllib.error
-import urllib.request
 from typing import Any
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 
-from flock_zorch.testing._fingerprint import (  # noqa: E402
-    blocking,
-    collect,
-    drift,
-    publish_refusal,
+from flock_zorch.testing._fingerprint import collect, publish_refusal  # noqa: E402
+from flock_zorch.testing._ledger import (  # noqa: E402
+    REFUSED,
+    Outcome,
+    comparability,
+    load_baseline,
+    publish,
 )
 
 # `prove_phase_bench.py` prints its machine-readable line under this prefix,
 # alongside the human table and the toolchain notices.
 JSON_MARK = "##bench-json## "
-# Opens the structured block inside `output.summary`. A consumer looks for
-# this and reads the fenced JSON that follows; everything else in the summary
-# is for a human reading the Checks tab.
-LEDGER_MARK = "<!-- bench-ledger:v1 -->"
-# `prove_phase_bench` exits 2 for both of its pre-flight refusals.
-REFUSED = 2
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -146,105 +130,33 @@ def to_record(
     }
 
 
-def _si(hash_per_s: float) -> str:
-    return f"{hash_per_s / 1e6:.2f}M hash/s"
-
-
-def _short(sha: str | None) -> str:
-    return sha[:8] if sha else "unknown"
-
-
-def summarise(record: dict[str, Any], comparability: list[str]) -> tuple[str, str]:
-    """`(title, summary)` for the check run — a human headline, then the block.
-
-    The table answers "may I compare this against the last one?", which is the
-    question a reader actually has and the one that costs a session when it is
-    answered from memory.
-    """
-    bench = record["benchmarks"][0]
-    env = bench["env"]
-    tool, dev, pins = env["toolchain"], env["device"], env["pins"]
-    overrides = env["overrides"]
-    metrics, window = bench["metrics"], record["window"]
-
-    title = (
-        f"{_si(metrics['throughput'])} — {metrics['latency']:.2f} ms "
-        f"at m{bench['instance']['m']}"
-    )
-    rows = [
-        ("ptxas / nvlink", f"{tool['ptxas']} / {tool['nvlink']}"),
-        ("card", f"{dev['name']} · driver {dev['driver']}"),
-        ("zorch pin", _short(pins["zorch_commit"])),
-        ("frx", pins["installed"].get("frx") or "unknown"),
-        (
-            "overrides",
-            ", ".join(
-                f"{m} @ {_short(o['head'])}"
-                f"{'' if o['matches_pin'] else ' (NOT the declared pin)'}"
-                for m, o in overrides.items()
-            )
-            or "none",
-        ),
-        ("allocator", env["runtime"]["XLA_PYTHON_CLIENT_ALLOCATOR"] or "default"),
-        ("window", f"{window['mode']}, best-of-{window['runs']}"),
-        ("lockstep", "yes" if pins["lockstep"] else "NO — venv differs from the lock"),
-    ]
-    verdict = (
-        "comparable against the previous record"
-        if not comparability
-        else "**NOT comparable** against the previous record: "
-        + "; ".join(comparability)
-    )
-    table = "\n".join(f"| {k} | {v} |" for k, v in rows)
-    return title, (
-        f"**{title}** · {bench['name']} · {window['mode']}, "
-        f"best-of-{window['runs']}\n\n"
-        f"{verdict}\n\n"
-        f"| | |\n|---|---|\n{table}\n\n"
-        f"{LEDGER_MARK}\n```json\n{json.dumps(record, indent=2)}\n```\n"
-    )
-
-
-def post_check_run(
-    repo: str,
-    token: str,
-    name: str,
-    sha: str,
-    conclusion: str,
-    title: str,
-    summary: str,
-) -> str:
-    """Create the check run and return its html_url."""
-    body = json.dumps(
-        {
-            "name": name,
-            "head_sha": sha,
-            "status": "completed",
-            "conclusion": conclusion,
-            "output": {"title": title, "summary": summary},
-        }
-    ).encode()
-    req = urllib.request.Request(
-        f"https://api.github.com/repos/{repo}/check-runs",
-        data=body,
-        method="POST",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-            "Content-Type": "application/json",
-        },
-    )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        return str(json.load(resp)["html_url"])
-
-
 def _refusal_reason(stderr: str) -> str:
     """The bench's own refusal line, which already names what to do about it."""
     for line in stderr.splitlines():
         if line.startswith("REFUSING to measure:"):
             return line[len("REFUSING to measure:") :].strip()
     return "the bench refused to measure and gave no reason"
+
+
+def measure(
+    args: argparse.Namespace, fingerprint: dict[str, Any]
+) -> tuple[Outcome, str]:
+    """`(outcome, stderr)` for one attempt at this prover's benchmark."""
+    # Routed through the same refusal path as the bench's own guards, so a
+    # toolchain that cannot be trusted reads as "not measured" rather than as
+    # a slow commit — and costs no GPU time finding that out.
+    gate = publish_refusal(fingerprint) if args.require_toolchain else None
+    if gate:
+        return Outcome(refusal=gate), ""
+
+    code, stdout, stderr = run_bench(args.python, args.circuit, args.golden, args.runs)
+    payload = parse_bench_json(stdout)
+    if code == REFUSED:
+        return Outcome(refusal=_refusal_reason(stderr)), stderr
+    if payload is None:
+        detail = stderr or "the bench exited 0 but printed no measurement"
+        return Outcome(error=detail.strip()[-500:]), stderr
+    return Outcome(record=to_record(payload, fingerprint, args.runs)), stderr
 
 
 def main() -> int:
@@ -286,96 +198,38 @@ def main() -> int:
     args = ap.parse_args()
 
     fingerprint = collect(REPO_ROOT, args.python)
-    baseline = None
-    comparability: list[str] = []
-    if args.baseline and os.path.exists(args.baseline):
-        with open(args.baseline, encoding="utf-8") as f:
-            previous = json.load(f)
-        baseline = {
-            **previous["benchmarks"][0]["env"],
-            "window": previous.get("window"),
-        }
-
-    size = (
+    baseline = load_baseline(args.baseline)
+    subject = (
         re.sub(r"^blake3_ligerito_golden_?|\.bin$", "", args.golden or "") or "default"
     )
-    name = args.name or f"bench ({args.circuit} {size})"
+    name = args.name or f"bench ({args.circuit} {subject})"
     sha = args.head_sha or fingerprint["source"]["sha"]
 
-    # Routed through the same refusal path as the bench's own guards, so a
-    # toolchain that cannot be trusted reads as "not measured" rather than as
-    # a slow commit — and costs no GPU time finding that out.
-    gate = publish_refusal(fingerprint) if args.require_toolchain else None
-    if gate:
-        code, stdout, stderr = REFUSED, "", f"REFUSING to measure: {gate}\n"
-    else:
-        code, stdout, stderr = run_bench(
-            args.python, args.circuit, args.golden, args.runs
-        )
-    payload = parse_bench_json(stdout)
-
-    if code == REFUSED or (code != 0 and payload is None):
-        refused = code == REFUSED
-        reason = _refusal_reason(stderr) if refused else stderr.strip()[-2000:]
-        conclusion = "neutral" if refused else "failure"
-        title = "not measured" if refused else "the bench failed"
-        summary = (
-            f"**{title}** — {reason}\n\n"
-            + (
-                "A contended card or a capped toolchain means this commit was "
-                "not measured, not that it got slower. No point is added to "
-                "the trajectory.\n"
-                if refused
-                else ""
-            )
-            + f"\n```\n{stderr.strip()[-2000:]}\n```\n"
-        )
-        print(summary, file=sys.stderr)
-    else:
-        if payload is None:
-            print("bench exited 0 but printed no measurement", file=sys.stderr)
-            return 1
-        record = to_record(payload, fingerprint, args.runs)
-        if baseline is not None:
-            current = {**fingerprint, "window": record["window"]}
-            comparability = [d.describe() for d in blocking(drift(baseline, current))]
-            if comparability and args.refuse_on_drift:
-                print(
-                    "REFUSING to measure: the environment has drifted from the "
-                    "baseline, so the comparison would say nothing:\n  "
-                    + "\n  ".join(comparability),
-                    file=sys.stderr,
-                )
-                return REFUSED
-        conclusion = "success"
-        title, summary = summarise(record, comparability)
-        out = json.dumps(record, indent=2)
-        if args.out:
-            with open(args.out, "w", encoding="utf-8") as f:
-                f.write(out + "\n")
-        print(out)
-
-    if args.check_run:
-        token = os.environ.get("GITHUB_TOKEN")
-        repo = os.environ.get("GITHUB_REPOSITORY")
-        if not token or not repo:
+    if args.refuse_on_drift:
+        # Priced before the GPU time rather than after: the point of asking
+        # interactively is not to spend minutes producing a number that cannot
+        # be compared to anything. Only the environment is known this early —
+        # window drift still shows up in the check run afterwards.
+        if drifted := comparability(baseline, fingerprint):
             print(
-                "--check-run needs GITHUB_TOKEN and GITHUB_REPOSITORY (it is "
-                "meant to run inside Actions)",
+                "REFUSING to measure: the environment has drifted from the "
+                "baseline, so the comparison would say nothing:\n  "
+                + "\n  ".join(drifted),
                 file=sys.stderr,
             )
-            return 1
-        try:
-            url = post_check_run(repo, token, name, sha, conclusion, title, summary)
-        except urllib.error.HTTPError as e:
-            detail = e.read().decode(errors="replace")[:500]
-            print(f"check-run POST failed: {e.code} {detail}", file=sys.stderr)
-            return 1
-        print(f"check run: {url}", file=sys.stderr)
+            return REFUSED
 
-    # A refusal is not a failing build: the whole point of `neutral` is that a
-    # busy GPU does not turn a branch red.
-    return 0 if conclusion in ("success", "neutral") else 1
+    outcome, stderr = measure(args, fingerprint)
+    return publish(
+        outcome,
+        name=name,
+        head_sha=sha,
+        subject=subject,
+        baseline=baseline,
+        detail=stderr,
+        out=args.out,
+        check_run=args.check_run,
+    )
 
 
 if __name__ == "__main__":

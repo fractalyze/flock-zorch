@@ -248,6 +248,20 @@ py_test(
     ],
 )
 
+# No golden, no GPU: `output.summary` is the only thing a consumer of the
+# trajectory sees, and nothing in CI exercises that consumer, so the round trip
+# through the marker is pinned here along with the conclusion semantics that
+# keep a busy GPU from reading as a regression.
+py_test(
+    name = "ledger_test",
+    size = "small",
+    srcs = ["flock_zorch/testing/ledger_test.py"],
+    deps = [
+        ":test_support",
+        requirement("absl-py"),
+    ],
+)
+
 # No golden: the R1CS relation z == a AND b, a scalar big-int layout
 # reference, and hash-frx's independent compression as the math anchor.
 py_test(
