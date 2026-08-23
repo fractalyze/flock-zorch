@@ -235,6 +235,19 @@ py_test(
     ],
 )
 
+# No golden, no GPU: the parsers and the drift verdict decide whether two
+# recorded numbers may be compared at all, and every case is a state this repo
+# has actually been measured in (docs/measurement.md narrates them).
+py_test(
+    name = "fingerprint_test",
+    size = "small",
+    srcs = ["flock_zorch/testing/fingerprint_test.py"],
+    deps = [
+        ":test_support",
+        requirement("absl-py"),
+    ],
+)
+
 # No golden: the R1CS relation z == a AND b, a scalar big-int layout
 # reference, and hash-frx's independent compression as the math anchor.
 py_test(
