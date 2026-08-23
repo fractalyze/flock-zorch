@@ -1,0 +1,155 @@
+name: Bench
+
+# Records one throughput measurement per run as a check run on the measured
+# commit, so `GET /commits/{sha}/check-runs` replays the whole trajectory with
+# no store of ours to keep in sync. `scripts/bench_ledger.py` has the format.
+#
+# Check runs can only be created by a GitHub App, which `GITHUB_TOKEN` is and a
+# PAT is not — so this is the only place the trajectory can be written from.
+#
+# Not on `push`: the bench box is shared with interactive work, and a prove per
+# merge would spend most of its runs refusing a contended card. Nightly gives
+# the time series the goal is read from, and `workflow_dispatch` covers "did
+# this branch move the number?".
+on:
+  workflow_dispatch:
+    inputs:
+      n_comp:
+        description: "compressions (m = log2(n_comp) + 14): 4096 = m26, 262144 = m32"
+        default: "262144"
+      runs:
+        description: "best-of-N within one process"
+        default: "10"
+  schedule:
+    # 02:00 KST — after the working day on the shared box, so the card is idle.
+    - cron: "0 17 * * *"
+
+permissions:
+  contents: read
+  checks: write
+
+# One global group, never cancelled: two proves on one card measure each other
+# rather than the code, and a cancelled run leaves the trajectory with a hole
+# that looks like a silent regression.
+concurrency:
+  group: bench
+  cancel-in-progress: false
+
+jobs:
+  throughput:
+    name: Throughput (GPU)
+    # Absent rather than queued forever when no bench box is registered, the
+    # same way zorch's CI gates its GPU leg on a repo variable.
+    if: vars.HAS_BENCH_RUNNER == 'true'
+    runs-on: [self-hosted, bench]
+    # The first run on a fresh box pays for the venv and for dumping the
+    # golden (2.2 GB at m32); both land in the persistent cache below and
+    # later runs skip them.
+    timeout-minutes: 180
+    env:
+      N_COMP: ${{ inputs.n_comp || '262144' }}
+      RUNS: ${{ inputs.runs || '10' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Point at the persistent cache
+        # Everything reusable across runs lives outside the workspace, which
+        # the runner wipes — re-dumping a 2.2 GB golden per night would cost
+        # more than the measurement. Same directory `scripts/bench_worker.sh`
+        # uses, so the harness and this workflow share one XLA compile cache
+        # rather than each paying the multi-minute m32 compile.
+        run: echo "CACHE=$HOME/.cache/flock-zorch" >> "$GITHUB_ENV"
+
+      - name: Locate the CUDA 13.3 toolchain
+        # PATH is what selects clmad — not CUDA_ROOT, which frx overwrites at
+        # import (docs/measurement.md). The box names its 13.3 tree in the
+        # CUDA13_ROOT repo variable; if it is wrong the run does not silently
+        # measure the shift/XOR fallback, because --require-toolchain below
+        # refuses to publish a number it cannot attribute to clmad.
+        run: |
+          set -euo pipefail
+          cuda13="${{ vars.CUDA13_ROOT || '/usr/local/cuda' }}"
+          echo "$cuda13/bin" >> "$GITHUB_PATH"
+          "$cuda13/bin/ptxas" --version || echo "no ptxas at $cuda13/bin"
+
+      - name: Sync the venv
+        # Rebuilt from requirements.in every run rather than trusted: a venv
+        # that has drifted from the lock is one of the states that has served
+        # a wrong number, and the fingerprint reports it as `lockstep: false`
+        # if this step ever fails to correct it.
+        run: |
+          set -euo pipefail
+          venv="$CACHE/venv"
+          [ -x "$venv/bin/python" ] || python3.11 -m venv "$venv"
+          "$venv/bin/pip" install -q -r requirements.in \
+            --extra-index-url https://fractalyze.github.io/pypi/simple/
+
+      - name: Dump the golden if the cache lacks it
+        # `cargo run` rather than a path into target/, so a stale binary can
+        # never be what produced the fixture the measurement is read from.
+        run: |
+          set -euo pipefail
+          m=$(python3 -c "import math,os;print(int(math.log2(int(os.environ['N_COMP'])))+14)")
+          echo "M=$m" >> "$GITHUB_ENV"
+          golden="$CACHE/artifacts/blake3_ligerito_golden_m$m.bin"
+          mkdir -p "$CACHE/artifacts"
+          if [ -s "$golden" ]; then
+            echo "golden present: $golden"
+          else
+            echo "dumping m$m golden (first run on this box)"
+            cargo run --release --example dump_blake3_ligerito -- "$N_COMP" "$golden"
+          fi
+
+      - name: Measure and record
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FRX_PLATFORMS: cuda,cpu
+          FRX_ENABLE_X64: "1"
+          # The bench box has two cards and also serves the `gpu` test pool.
+          # Pinning does two things: the contention gate scopes to this card
+          # instead of aggregating both (otherwise a GPU test on the other
+          # card refuses every measurement), and the fingerprint records the
+          # card the prove actually ran on.
+          CUDA_VISIBLE_DEVICES: ${{ vars.BENCH_GPU || '0' }}
+          # Enough at m32, and the async allocator inflates the prove ~14%
+          # there — reach for it only against an actual allocator OOM.
+          XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+        run: |
+          set -euo pipefail
+          venv="$CACHE/venv"
+          export FLOCK_ZORCH_ARTIFACTS="$CACHE/artifacts"
+          export PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"
+
+          # Keyed by the frx wheel: a cache shared across toolchains has served
+          # executables built on the software-GHASH path before, and the key
+          # deliberately excludes xla_gpu_cuda_data_dir so fixing the toolchain
+          # does not invalidate a poisoned entry. Nothing poisons it here —
+          # --require-toolchain refuses before a capped run can compile.
+          frx_ver="$("$venv/bin/python" -c 'import frx; print(frx.__version__)')"
+          export JAX_COMPILATION_CACHE_DIR="$CACHE/jax-$frx_ver"
+          mkdir -p "$JAX_COMPILATION_CACHE_DIR" "$CACHE/ledger"
+
+          baseline="$CACHE/ledger/blake3_m$M.json"
+          # A record from an earlier run must not survive into this one and be
+          # promoted below as if this run had produced it.
+          rm -f "$CACHE/ledger/current.json"
+          "$venv/bin/python" scripts/bench_ledger.py blake3 \
+            --golden "blake3_ligerito_golden_m$M.bin" \
+            --runs "$RUNS" \
+            --python "$venv/bin/python" \
+            --name "bench (blake3 m$M)" \
+            --head-sha "$GITHUB_SHA" \
+            --require-toolchain \
+            --baseline "$baseline" \
+            --out "$CACHE/ledger/current.json" \
+            --check-run
+
+          # Only a run that produced a number becomes the next baseline; a
+          # refusal must not reset what the following run is compared against.
+          if [ -s "$CACHE/ledger/current.json" ]; then
+            mv "$CACHE/ledger/current.json" "$baseline"
+          fi

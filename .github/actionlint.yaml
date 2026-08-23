@@ -7,3 +7,6 @@ self-hosted-runner:
   labels:
     - cpu
     - gpu
+    # The box reserved for benchmarking. Separate from `gpu` on purpose: a
+    # measurement sharing a card with a test run measures the test run too.
+    - bench
