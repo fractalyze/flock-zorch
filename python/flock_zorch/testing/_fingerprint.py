@@ -51,6 +51,10 @@ _BLOCKING_PATHS = (
     "toolchain.nvlink",
     "device.name",
     "device.compute_capability",
+    # A driver upgrade moves kernel scheduling, and two boxes carrying the
+    # same card model are otherwise indistinguishable here — without this,
+    # a number from one host would read as comparable against another's.
+    "device.driver",
     "overrides",
     "pins.installed",
     "pins.declared",
@@ -236,8 +240,12 @@ def _read(path: str) -> str:
         return ""
 
 
-def _smi(query: str) -> list[str]:
-    out = _run(["nvidia-smi", f"--query-{query}", "--format=csv,noheader,nounits"])
+def _smi(query: str, gpu: str | None = None) -> list[str]:
+    cmd = ["nvidia-smi"]
+    if gpu is not None:
+        cmd += ["-i", gpu]
+    cmd += [f"--query-{query}", "--format=csv,noheader,nounits"]
+    out = _run(cmd)
     return [ln.strip() for ln in out.splitlines() if ln.strip()] if out else []
 
 
@@ -246,9 +254,19 @@ def _device() -> dict[str, Any]:
 
     Deliberately not `prove_phase_bench.gpu_provenance`: that module imports
     frx at module scope, and a pre-flight probe that takes a context would
-    make itself one of the processes a contention gate is looking for.
+    make itself one of the processes a contention gate is looking for. The
+    `CUDA_VISIBLE_DEVICES` rule is the same one that scopes that gate — on a
+    multi-card box the record must name the card the prove actually ran on,
+    not whichever one nvidia-smi lists first.
     """
-    rows = [r.split(", ") for r in _smi("gpu=name,compute_cap,driver_version")]
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+    rows = [
+        r.split(", ")
+        for r in _smi(
+            "gpu=name,compute_cap,driver_version",
+            visible if visible.isdigit() else None,
+        )
+    ]
     if not rows:
         return {"name": None, "compute_capability": None, "driver": None}
     return {
@@ -256,6 +274,7 @@ def _device() -> dict[str, Any]:
         "compute_capability": rows[0][1],
         "driver": rows[0][2],
         "count": len(rows),
+        "pinned_to": visible if visible.isdigit() else None,
     }
 
 

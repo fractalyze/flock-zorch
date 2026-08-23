@@ -152,13 +152,22 @@ class DriftTest(absltest.TestCase):
         after = {"source": {"sha": "b" * 40, "dirty": True}}
         self.assertEqual(blocking(drift(before, after)), [])
 
-    def test_card_state_is_informational(self) -> None:
-        # Recorded to explain a run. The contention gate acts on the card
-        # before measuring, so a difference here is history, not a verdict.
+    def test_driver_change_blocks(self) -> None:
+        # Two hosts can carry the same card model and differ only here — the
+        # bench box runs 580.126.09, the dev box 595.84 — so without this a
+        # number from one would read as comparable against the other's.
         before = {"device": {"name": "RTX 5090", "driver": "595.84"}}
-        after = {"device": {"name": "RTX 5090", "driver": "596.10"}}
-        found = drift(before, after)
-        self.assertEqual([d.severity for d in found], [INFORMATIONAL])
+        after = {"device": {"name": "RTX 5090", "driver": "580.126.09"}}
+        found = blocking(drift(before, after))
+        self.assertEqual([d.path for d in found], ["device.driver"])
+
+    def test_card_count_is_informational(self) -> None:
+        # The bench pins CUDA_VISIBLE_DEVICES, so what matters is which card
+        # was used (recorded in device.name/pinned_to), not how many the host
+        # happens to have.
+        before = {"device": {"count": 1}}
+        after = {"device": {"count": 2}}
+        self.assertEqual([d.severity for d in drift(before, after)], [INFORMATIONAL])
 
     def test_unknown_field_fails_open(self) -> None:
         # A field added to the record later must not silently start refusing

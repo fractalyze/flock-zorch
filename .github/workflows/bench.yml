@@ -109,6 +109,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FRX_PLATFORMS: cuda,cpu
           FRX_ENABLE_X64: "1"
+          # The bench box has two cards and also serves the `gpu` test pool.
+          # Pinning does two things: the contention gate scopes to this card
+          # instead of aggregating both (otherwise a GPU test on the other
+          # card refuses every measurement), and the fingerprint records the
+          # card the prove actually ran on.
+          CUDA_VISIBLE_DEVICES: ${{ vars.BENCH_GPU || '0' }}
           # Enough at m32, and the async allocator inflates the prove ~14%
           # there — reach for it only against an actual allocator OOM.
           XLA_PYTHON_CLIENT_PREALLOCATE: "false"
