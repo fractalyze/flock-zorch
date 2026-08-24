@@ -94,8 +94,8 @@ The benchmark itself — how to run it and what it has published — is in
 - **A phase is not a target.** `zerocheck` bundles the round-1 URM extend and the
   multilinear ladder, whose relative sizes invert with `m`. Split to the prover
   round before scoping work off a phase number.
-- **The two in-tree harnesses measure different things, but on a healthy box
-  they agree — so a factor between them is a symptom, not an explanation.**
+- **The two in-tree harnesses measure different things, but on the same arm
+  they agree — so a factor between them means you compared two arms.**
   `nsys_capture.py --walls` builds the callable once, discards two untimed
   warm-up calls, hoists every invariant out of the loop and then times
   **replays**; `prove_phase_bench.py` runs a full prove per iteration, its
@@ -109,26 +109,31 @@ The benchmark itself — how to run it and what it has published — is in
   Quote a wall or hash/s headline from `prove_phase_bench` anyway — it owns the
   denominator a throughput goal is stated in. But if the two disagree by a
   *factor*, do not reach for "different harnesses": that pairing was recorded
-  once as ~70 ms vs ~660 ms, and re-running both on the identical stack
-  (flock-zorch `11396c6`, zorch `a11a229`, Metal plugin `a60c6439`) put them
-  10% apart, with the pipeline arm 7.4× faster than its recorded value. The
-  harness was never the difference — something about that session was, and the
-  next rule is how to notice.
-- **A control inside the run cannot see a uniformly degraded box — carry an
-  absolute anchor.** The control rule below catches a neighbour that moves one
-  phase. It is blind to whatever slows *everything* by the same factor, because
-  every ratio and every control stays green while the whole run sits 7× off.
-  This box has been recorded collapsing mid-session before (an ablation round
-  where `open` went 233 → 1277 ms and `zerocheck` 338 → 526 ms alongside AGX
-  footprint warnings), and a plugin built without the `prime_ir` override runs
-  14.6× slow while looking identical — both are uniform, so both are invisible
-  to a control. flock-zorch#308's criterion-4 A/B was taken at 3.3k hash/s where
-  the same stack reads 25.7k today; re-run with the anchor honoured it did not
-  merely shrink, it **changed sign** — −5.2% became −16.1% on `open`, a win. So
-  before believing an A/B, check one absolute against a known baseline for the
-  same golden and arm: at m=26 blake3 tree+FS this box gives `open` ~71 ms and
-  ~25.7k hash/s. If the anchor is off by a factor, stop and fix the box; the
-  pairing is worthless until it reads right.
+  once as ~70 ms vs ~660 ms, and it was `nsys_capture --tree blake3 --fs blake3`
+  against `prove_phase_bench` on its **default `--hash sha256`**. Two arms, one
+  harness difference of ≤ 10%. `--hash` defaults to sha256 and `--tree` / `--fs`
+  default to sha256 too, so an arm is easy to change by not typing it — say the
+  arm in every quoted number.
+- **A control inside the run cannot see anything that scales the WHOLE run —
+  carry an absolute anchor.** The control rule below catches a neighbour that
+  moves one phase. It is blind to anything uniform: the wrong arm, a plugin
+  built without the `prime_ir` override (14.6× slow and visually identical),
+  this box collapsing mid-session (an ablation round where `open` went
+  233 → 1277 ms and `zerocheck` 338 → 526 ms with AGX footprint warnings). Every
+  ratio and every control stays green while the whole run sits a factor off. So
+  before believing an A/B, check ONE absolute against a known baseline for the
+  same golden **and arm**. On this M4 Pro at m=26 on `blake3_ligerito_golden_m26.bin`:
+
+  | arm | `open` | wall | hash/s |
+  |---|---:|---:|---:|
+  | blake3 tree+FS | ~70 ms | ~147-159 ms | **~26-28k** |
+  | sha256 tree+FS | ~679 ms | ~1118 ms | **~3.7k** |
+
+  flock-zorch#308's criterion-4 A/B reported 3.3k hash/s and was read as a
+  blake3 measurement; it is a sha256 row. Re-run on the arm it meant, its −5.2%
+  became **−16.1%** on `open` — the sign, not just the size. If the anchor is a
+  factor out, stop: you are not measuring what you think, and the pairing is
+  worthless until it reads right.
 - **An A/B is not two arms until you prove the two arms are two programs.** A
   jit caches its traced jaxpr and a Python global is not part of that key, so
   ONE un-keyed `frx.jit` anywhere between the outer program and the switch
@@ -148,9 +153,11 @@ The benchmark itself — how to run it and what it has published — is in
   The sibling of the emitter rule ("an unrecognized marker name inlines
   silently, so a byte-match between a marked and an unmarked arm proves
   nothing"), moved up a level: from *the emitter did not fire* to *the arms are
-  not two arms*. #308's published −5.2% was measured with an OFF arm selected by
-  `ZORCH_BLAKE3_FINALIZE_MARKER=0`, an environment variable that does not exist
-  anywhere in zorch — so both arms were the same arm, and the number was drift.
+  not two arms*. #308's published −5.2% had both failures at once: it ran the
+  sha256 arm, where the BLAKE3 marker cannot appear at all, and selected its OFF
+  arm with `ZORCH_BLAKE3_FINALIZE_MARKER=0` — an environment variable that does
+  not exist anywhere in zorch. Both arms were the same program; the number was
+  drift.
   When arms refuse to split, counters at each seam localize the missed jit in
   one run: `open_trace +1` with `fs_grind +0` names the gap between those two.
 - **Every A/B needs a quantity the change cannot touch, measured in the same
