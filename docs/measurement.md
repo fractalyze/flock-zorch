@@ -94,6 +94,17 @@ The benchmark itself — how to run it and what it has published — is in
 - **A phase is not a target.** `zerocheck` bundles the round-1 URM extend and the
   multilinear ladder, whose relative sizes invert with `m`. Split to the prover
   round before scoping work off a phase number.
+- **The two in-tree harnesses do not measure the same thing, and only one of
+  them is a prove number.** `nsys_capture.py --walls` builds the callable once,
+  discards two untimed warm-up calls, hoists every invariant out of the loop and
+  then times **replays**; `prove_phase_bench.py` runs a full prove per iteration.
+  The same `open` phase reads ~70 ms under the first and ~660 ms under the
+  second, so a replay delta can point the opposite way from the pipeline. A
+  change that removes host-side dispatch encoding is exactly the shape that wins
+  in replay and can lose in a prove. Quote a wall or hash/s headline only from
+  `prove_phase_bench`; use `--walls` for shaping a kernel, never for a claim.
+  This cost a published 1.18× that a pipeline A/B turned into −5.2%
+  (flock-zorch#308).
 - **Every A/B needs a quantity the change cannot touch, measured in the same
   window.** Order-alternation, min-of-N and in-process interleaving all reduce
   drift; none of them tell you whether what is left is signal — only a control
