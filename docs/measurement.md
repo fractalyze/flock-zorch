@@ -94,17 +94,65 @@ The benchmark itself — how to run it and what it has published — is in
 - **A phase is not a target.** `zerocheck` bundles the round-1 URM extend and the
   multilinear ladder, whose relative sizes invert with `m`. Split to the prover
   round before scoping work off a phase number.
-- **The two in-tree harnesses do not measure the same thing, and only one of
-  them is a prove number.** `nsys_capture.py --walls` builds the callable once,
-  discards two untimed warm-up calls, hoists every invariant out of the loop and
-  then times **replays**; `prove_phase_bench.py` runs a full prove per iteration.
-  The same `open` phase reads ~70 ms under the first and ~660 ms under the
-  second, so a replay delta can point the opposite way from the pipeline. A
-  change that removes host-side dispatch encoding is exactly the shape that wins
-  in replay and can lose in a prove. Quote a wall or hash/s headline only from
-  `prove_phase_bench`; use `--walls` for shaping a kernel, never for a claim.
-  This cost a published 1.18× that a pipeline A/B turned into −5.2%
-  (flock-zorch#308).
+- **The two in-tree harnesses measure different things, but on a healthy box
+  they agree — so a factor between them is a symptom, not an explanation.**
+  `nsys_capture.py --walls` builds the callable once, discards two untimed
+  warm-up calls, hoists every invariant out of the loop and then times
+  **replays**; `prove_phase_bench.py` runs a full prove per iteration, its
+  `best_of` discarding one. Both therefore exclude first execution, and that
+  exclusion is the large effect: paired in ONE process at m=26 on the blake3 FS
+  arm, the first prove reads `open` at 283 s (it is compiling) and every prove
+  after it reads 71–82 ms — against the replay loop's 68–76 ms in the same
+  process, and 70.78 ms from a separate `prove_phase_bench` run. What `--walls`
+  additionally hoists (the claim-point concatenations, the transcript snapshot,
+  input residency) is worth ≤ 10% here, inside this box's own run-to-run spread.
+  Quote a wall or hash/s headline from `prove_phase_bench` anyway — it owns the
+  denominator a throughput goal is stated in. But if the two disagree by a
+  *factor*, do not reach for "different harnesses": that pairing was recorded
+  once as ~70 ms vs ~660 ms, and re-running both on the identical stack
+  (flock-zorch `11396c6`, zorch `a11a229`, Metal plugin `a60c6439`) put them
+  10% apart, with the pipeline arm 7.4× faster than its recorded value. The
+  harness was never the difference — something about that session was, and the
+  next rule is how to notice.
+- **A control inside the run cannot see a uniformly degraded box — carry an
+  absolute anchor.** The control rule below catches a neighbour that moves one
+  phase. It is blind to whatever slows *everything* by the same factor, because
+  every ratio and every control stays green while the whole run sits 7× off.
+  This box has been recorded collapsing mid-session before (an ablation round
+  where `open` went 233 → 1277 ms and `zerocheck` 338 → 526 ms alongside AGX
+  footprint warnings), and a plugin built without the `prime_ir` override runs
+  14.6× slow while looking identical — both are uniform, so both are invisible
+  to a control. flock-zorch#308's criterion-4 A/B was taken at 3.3k hash/s where
+  the same stack reads 25.7k today; re-run with the anchor honoured it did not
+  merely shrink, it **changed sign** — −5.2% became −16.1% on `open`, a win. So
+  before believing an A/B, check one absolute against a known baseline for the
+  same golden and arm: at m=26 blake3 tree+FS this box gives `open` ~71 ms and
+  ~25.7k hash/s. If the anchor is off by a factor, stop and fix the box; the
+  pairing is worthless until it reads right.
+- **An A/B is not two arms until you prove the two arms are two programs.** A
+  jit caches its traced jaxpr and a Python global is not part of that key, so
+  ONE un-keyed `frx.jit` anywhere between the outer program and the switch
+  serves the first arm's body to the second — and the run then compares a
+  program against itself: both arms time fine, and the control phase is
+  perfectly stable because it IS the same program. Key every jit on the path
+  (for the grind marker that was three, across two repos:
+  `flock_zorch.pcs.ligerito._open_jitted` -> `zorch.pcs.ligerito.prover._open_jit`
+  -> `flock_zorch.fs.grind`), and then assert it structurally before timing
+  anything:
+
+  ```python
+  counts[on] = fn.lower(*args, on).compile().as_text().count(MARKER_NAME)
+  assert counts[True] > 0 and counts[False] == 0
+  ```
+
+  The sibling of the emitter rule ("an unrecognized marker name inlines
+  silently, so a byte-match between a marked and an unmarked arm proves
+  nothing"), moved up a level: from *the emitter did not fire* to *the arms are
+  not two arms*. #308's published −5.2% was measured with an OFF arm selected by
+  `ZORCH_BLAKE3_FINALIZE_MARKER=0`, an environment variable that does not exist
+  anywhere in zorch — so both arms were the same arm, and the number was drift.
+  When arms refuse to split, counters at each seam localize the missed jit in
+  one run: `open_trace +1` with `fs_grind +0` names the gap between those two.
 - **Every A/B needs a quantity the change cannot touch, measured in the same
   window.** Order-alternation, min-of-N and in-process interleaving all reduce
   drift; none of them tell you whether what is left is signal — only a control
