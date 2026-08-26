@@ -158,6 +158,31 @@ def _partial_fold(zp, x_outer, n_outer):
     materialized [2^14] prefix, which is what made the fold superlinear
     (124 ms instead of 3.4 ms at m=32, blake3 shape)."""
     eq_outer = frx.lax.optimization_barrier(build_eq(x_outer))
+    if frx.default_backend() == "gpu":
+        return _partial_fold_kernel(zp, eq_outer)
+    return _partial_fold_expr(zp, eq_outer, n_outer)
+
+
+def _partial_fold_kernel(zp, eq_outer):
+    """The fold as one custom call, with each stripe's 256-entry XOR table built
+    in shared memory (fractalyze/xla `frx_stripe_xor_fold`).
+
+    `zp` is already stripe-major — stripe `s` holds outer bits `8s..8s+7` of
+    every inner column — which is the orientation the kernel reads, so nothing
+    is transposed. The gain is reduce DEPTH, not bytes: `_partial_fold_expr`
+    takes one select-XOR step per outer bit (2^18 at m=32), while a byte indexes
+    the table once, so the reduce is 8x shallower over the same traffic. XOR
+    commutes, so the two agree bit-for-bit."""
+    limbs = frx.lax.bitcast_convert_type(eq_outer, fnp.uint32)  # [n_outer, 4]
+    out = frx.ffi.ffi_call(
+        "frx_stripe_xor_fold",
+        frx.ShapeDtypeStruct((zp.shape[1], 4), fnp.uint32),
+    )(zp, limbs)
+    return frx.lax.bitcast_convert_type(out, _GHASH)  # [k]
+
+
+def _partial_fold_expr(zp, eq_outer, n_outer):
+    """Portable path and the oracle the kernel is gated against."""
     bits = (
         zp[:, None, :] >> fnp.arange(8, dtype=fnp.uint8)[None, :, None]
     ) & 1  # [nb,8,k]
