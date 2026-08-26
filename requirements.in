@@ -17,16 +17,20 @@ typing-extensions
 # carries the interior-padding lowering lincheck's `_seg_xor_fold`
 # (frx.lax.associative_scan) needs — older wheels raise NotImplementedError on
 # the sha2/blake3 GPU gates. Bump these together with the zorch git_override pin.
-frx==0.10.2.dev20260823131354
-frxlib==0.10.2.dev20260823131354
-frx-cuda12-plugin==0.10.2.dev20260823131354
-frx-cuda12-pjrt==0.10.2.dev20260823131354
+frx==0.10.2.dev20260826110348
+frxlib==0.10.2.dev20260826110348
+frx-cuda12-plugin==0.10.2.dev20260826110348
+frx-cuda12-pjrt==0.10.2.dev20260826110348
 # zk_dtypes ships the native field dtypes frx lowers; arrives transitively via
 # frx but the resolver lags, so pin it so the lock tracks the frx wheel.
 # 0.0.10 adds the flat AES-basis binary_field_gf8_aes dtype (zk_dtypes#157);
 # 0.0.15 is the floor of the frx wheel above (it registers the
-# classical-curve field dtypes), 0.0.16 is zorch's lockstep pin.
-zk-dtypes==0.0.16
+# classical-curve field dtypes). 0.0.17 is the floor of the wheel pinned here —
+# it registers the ed25519 twisted-Edwards G1 point dtypes, so it resolves
+# `zk_dtypes.ed25519_g1_affine`, absent before 0.0.17. An older pin still
+# resolves and then fails at import, so this moves with the frx quad, and it is
+# zorch's lockstep pin.
+zk-dtypes==0.0.17
 
 # The symmetric layer (SHA-256, permutations, sponges) and the `fused_region`
 # marker seam. It sits BELOW `zorch`, which imports it rather than owning a
