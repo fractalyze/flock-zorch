@@ -45,7 +45,9 @@ from zorch.pcs.ligerito.verifier import LigeritoVerifier
 from zorch.sha256_field_transcript import Sha256FieldTranscript
 
 from flock_zorch import fs, ghash
+from flock_zorch import prover as flock_prover
 from flock_zorch.hash import merkle
+from flock_zorch.types import PackedDirectClaim
 
 # `open_with_basis` only traces as one jitted program if every node on its in/out
 # path is a pytree. zorch registers the rest of that path itself (CommittedMatrix,
@@ -53,6 +55,9 @@ from flock_zorch.hash import merkle
 # one here; both its fields are arrays. Belongs upstream beside its siblings, and
 # raises loudly on the pin bump that lands it there.
 register_dataclass(LigeritoProverData, data_fields=["f", "initial"], meta_fields=[])
+# Lets the packed-direct claims cross a jit boundary whole: `_open_jitted`
+# combines them inside its trace, so they must survive pytree flattening.
+register_dataclass(PackedDirectClaim, data_fields=["point", "value"], meta_fields=[])
 
 FLOCK_LIGERITO_LABEL = b"flock-ligerito-basis-v0"
 
@@ -358,6 +363,20 @@ def _bitrev(x: Array) -> Array:
     return lax.bit_reverse(x, dimensions=(0,))
 
 
+@frx.jit
+def _commit_prep(z: Array) -> Array:
+    """`u64[N, 2]` flock-order F128 -> bit-reversed `binary_field_ghash[N]`.
+
+    The two steps are traced together rather than called separately because a
+    bitcast dispatched on its own is not free: its module's root becomes
+    `copy(bitcast(param))`, and the copy exists only to give the module a
+    distinct output buffer — 512 MiB of memcpy for a metadata-only op. Traced
+    with the permutation that follows it, the bitcast disappears into the
+    permutation's operand read.
+    """
+    return _bitrev(ghash.to_ghash(z))
+
+
 def _make_ghash_code(message_len: int, log_inv_rate: int) -> ReedSolomon:
     return ReedSolomon(
         message_len=message_len, blowup=1 << log_inv_rate, dtype=fnp.binary_field_ghash
@@ -454,22 +473,48 @@ def commit_flock_ligerito(
     z = z_packed.reshape(-1, 2)
     log_n = z.shape[0].bit_length() - 1
     prover, _config, _chor = _flock_ligerito_prover(cfg, log_n, tree)
-    root, pdata = prover.commit([_bitrev(ghash.to_ghash(z))])
+    root, pdata = prover.commit([_commit_prep(z)])
     return root, pdata
 
 
 @functools.partial(frx.jit, static_argnums=(0,))
-def _open_jitted(prover, pdata, b, value, transcript):
-    """`prover.open_with_basis` fused as one jitted device program. The open is
-    pure device work over a static fold/query schedule, so tracing it collapses
-    the eager per-op dispatch chain into one launch.
+def _open_jitted(
+    prover,
+    pdata,
+    rs_eq_inds,
+    gammas,
+    sumcheck_claims,
+    packed_direct,
+    gammas_pd,
+    transcript,
+):
+    """`prover.open_with_basis` fused as one jitted device program, with the
+    claim combine inside it. The open is pure device work over a static
+    fold/query schedule, so tracing it collapses the eager per-op dispatch chain
+    into one launch.
+
+    The combine rides inside for the same reason the basis bit-reversal does:
+    called outside, its XOR-sum over the 2^25 basis was a module of its own and
+    materialised 1.465 GiB that nothing could fuse against.
+
+    `packed_direct` (the chain-open claims, empty for a plain ring-switch open)
+    crosses the boundary whole — `PackedDirectClaim` is registered as a pytree
+    at the top of this module for exactly that.
 
     `prover` is static: `LigeritoProver` is a frozen dataclass hashing by value
     (its tree components define value equality for exactly this — see
     `hash/merkle.py`), so the per-prove rebuild is still a stable cache key, and
     the WHOLE prover selects the program — `choreography` carries the grinding
     schedule, which `config` alone does not. The basis bit-reversal rides inside
-    so it fuses into its consumer instead of dispatching its own permute."""
+    so it fuses into its consumer instead of dispatching its own permute.
+    """
+    b, value = flock_prover._combine_claims(
+        rs_eq_inds,
+        gammas,
+        sumcheck_claims,
+        packed_direct=packed_direct,
+        gammas_pd=gammas_pd,
+    )
     return prover.open_with_basis(pdata, _bitrev(b), value, transcript)
 
 
@@ -494,8 +539,11 @@ def verify_flock_ligerito(
 def prove_flock_ligerito(
     cfg: dict,
     pdata: LigeritoProverData,
-    b_combined,
-    target,
+    rs_eq_inds,
+    gammas,
+    sumcheck_claims,
+    packed_direct,
+    gammas_pd,
     ch,
     return_proof: bool = False,
     tree=None,
@@ -506,15 +554,26 @@ def prove_flock_ligerito(
 
     `pdata` is the `LigeritoProverData` from `commit_flock_ligerito` (the L0
     commit made once, in the commit phase); the open reuses it rather than
-    re-encoding L0. The Fiat-Shamir rides flock's live `ch` (bridged into a
-    `FlockTranscript` at its current state, written back after the open) so the
-    open continues the transcript the commit / zerocheck / lincheck phases
-    built."""
+    re-encoding L0. `rs_eq_inds`/`gammas`/`sumcheck_claims` are the ring-switch
+    claim parts and `packed_direct`/`gammas_pd` the packed-direct ones (empty for a
+    plain ring-switch open) — `_open_jitted` combines them into
+    `(b_combined, target)` inside its trace rather than taking that pair
+    pre-combined. The Fiat-Shamir rides
+    flock's live `ch` (bridged into a `FlockTranscript` at its current state,
+    written back after the open) so the open continues the transcript the
+    commit / zerocheck / lincheck phases built."""
     log_n = pdata.f.shape[0].bit_length() - 1
     prover, config, chor = _flock_ligerito_prover(cfg, log_n, tree)
 
     proof, t_open = _open_jitted(
-        prover, pdata, b_combined, target, FlockTranscript(ch._t)
+        prover,
+        pdata,
+        rs_eq_inds,
+        gammas,
+        sumcheck_claims,
+        packed_direct,
+        gammas_pd,
+        FlockTranscript(ch._t),
     )
     ch._t = t_open.inner
     wire = _flock_proof_dict(proof, pdata.initial.root, config, chor)
