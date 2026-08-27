@@ -52,9 +52,16 @@ def s_hat_v_from_z_vec(z_vec, tail):
 
 
 @frx.jit
-def _slice_evals(packed, suffixes, precomputed):
+def _slice_evals(packed_witness, suffixes, precomputed):
     """The transcript-independent half of the batched open, one read per claim
     that lacks a precomputed `s_hat_v`.
+
+    Takes the witness in its bit form and reinterprets it here rather than
+    receiving it packed: `ghash.to_ghash` is metadata-only, but dispatched on
+    its own it is a one-instruction module, and XLA gives such a module a
+    distinct output buffer by rooting it at `copy(bitcast(param))` — a full
+    memcpy of the witness for no semantic work. Traced with the consumer, the
+    bitcast is read directly by `bit_slice_evals` and no buffer is produced.
 
     Builds each opening point's suffix eq tensor (always — `rs_eq_ind` consumes
     it) and bit-slices the witness only for claims whose `precomputed` entry is
@@ -68,6 +75,7 @@ def _slice_evals(packed, suffixes, precomputed):
     vectors (static N); the build stays under this jit so `build_eq` fuses.
     Returns (s_hat_vs: N x `[128]` ghash, suffix_tensors: N contiguous `[2^L]`
     ghash — `rs_eq_ind` reads each contiguously)."""
+    packed = ghash.to_ghash(packed_witness)
     suffix_tensors = [sumcheck.build_eq(s) for s in suffixes]  # N x (2^L,) ghash
     s_hat_vs = [
         p if p is not None else bit_slice_evals(packed, t)
@@ -109,7 +117,6 @@ def prove_batched(
     THEN bake gamma_i into each `rs_eq_ind_i` (the caller-owned linear combination
     — see the zorch module's contract). Returns
     (s_hat_vs, rs_eq_inds[gamma-baked], sumcheck_claims, gammas)."""
-    packed = ghash.to_ghash(packed_witness)
     suffixes = tuple(x_outer[1:] for x_outer in x_outers)  # ghash coords, length L
     precomputed = precomputed_s_hat_vs or (None,) * len(x_outers)
     if len(precomputed) != len(x_outers):
@@ -120,7 +127,7 @@ def prove_batched(
     for p in precomputed:
         if p is not None and p.shape != (1 << LOG_PACKING,):
             raise ValueError(f"precomputed s_hat_v must be [128] ghash, got {p.shape}")
-    s_hat_vs, suffix_tensors = _slice_evals(packed, suffixes, precomputed)
+    s_hat_vs, suffix_tensors = _slice_evals(packed_witness, suffixes, precomputed)
 
     eq_r_dprimes, claims = [], []
     for i in range(len(x_outers)):
