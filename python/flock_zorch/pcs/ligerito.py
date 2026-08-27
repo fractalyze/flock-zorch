@@ -55,6 +55,9 @@ from flock_zorch.types import PackedDirectClaim
 # one here; both its fields are arrays. Belongs upstream beside its siblings, and
 # raises loudly on the pin bump that lands it there.
 register_dataclass(LigeritoProverData, data_fields=["f", "initial"], meta_fields=[])
+# Lets the packed-direct claims cross a jit boundary whole: `_open_jitted`
+# combines them inside its trace, so they must survive pytree flattening.
+register_dataclass(PackedDirectClaim, data_fields=["point", "value"], meta_fields=[])
 
 FLOCK_LIGERITO_LABEL = b"flock-ligerito-basis-v0"
 
@@ -481,8 +484,7 @@ def _open_jitted(
     rs_eq_inds,
     gammas,
     sumcheck_claims,
-    pd_points,
-    pd_values,
+    packed_direct,
     gammas_pd,
     transcript,
 ):
@@ -495,12 +497,9 @@ def _open_jitted(
     called outside, its XOR-sum over the 2^25 basis was a module of its own and
     materialised 1.465 GiB that nothing could fuse against.
 
-    `packed_direct` (the chain-open claims) cannot cross the jit boundary as
-    `PackedDirectClaim` objects — the dataclass is plain, not a registered
-    pytree — so the boundary carries its fields as two arrays (`pd_points`,
-    `pd_values`; both empty for the plain ring-switch-only open) and the
-    dataclass is rebuilt from them inside the trace, where `_combine_claims`
-    consumes it exactly as it always has.
+    `packed_direct` (the chain-open claims, empty for a plain ring-switch open)
+    crosses the boundary whole — `PackedDirectClaim` is registered as a pytree
+    at the top of this module for exactly that.
 
     `prover` is static: `LigeritoProver` is a frozen dataclass hashing by value
     (its tree components define value equality for exactly this — see
@@ -509,9 +508,6 @@ def _open_jitted(
     schedule, which `config` alone does not. The basis bit-reversal rides inside
     so it fuses into its consumer instead of dispatching its own permute.
     """
-    packed_direct = tuple(
-        PackedDirectClaim(point=p, value=v) for p, v in zip(pd_points, pd_values)
-    )
     b, value = flock_prover._combine_claims(
         rs_eq_inds,
         gammas,
@@ -546,8 +542,7 @@ def prove_flock_ligerito(
     rs_eq_inds,
     gammas,
     sumcheck_claims,
-    pd_points,
-    pd_values,
+    packed_direct,
     gammas_pd,
     ch,
     return_proof: bool = False,
@@ -560,10 +555,10 @@ def prove_flock_ligerito(
     `pdata` is the `LigeritoProverData` from `commit_flock_ligerito` (the L0
     commit made once, in the commit phase); the open reuses it rather than
     re-encoding L0. `rs_eq_inds`/`gammas`/`sumcheck_claims` are the ring-switch
-    claim parts and `pd_points`/`pd_values`/`gammas_pd` the packed-direct claim
-    parts (decomposed `PackedDirectClaim`s, both empty for a plain ring-switch
-    open) — `_open_jitted` combines them into `(b_combined, target)` inside its
-    trace rather than taking that pair pre-combined. The Fiat-Shamir rides
+    claim parts and `packed_direct`/`gammas_pd` the packed-direct ones (empty for a
+    plain ring-switch open) — `_open_jitted` combines them into
+    `(b_combined, target)` inside its trace rather than taking that pair
+    pre-combined. The Fiat-Shamir rides
     flock's live `ch` (bridged into a `FlockTranscript` at its current state,
     written back after the open) so the open continues the transcript the
     commit / zerocheck / lincheck phases built."""
@@ -576,8 +571,7 @@ def prove_flock_ligerito(
         rs_eq_inds,
         gammas,
         sumcheck_claims,
-        pd_points,
-        pd_values,
+        packed_direct,
         gammas_pd,
         FlockTranscript(ch._t),
     )

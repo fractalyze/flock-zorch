@@ -22,7 +22,7 @@ import frx
 
 frx.config.update("jax_enable_x64", True)
 
-from flock_zorch import ghash  # noqa: E402
+from flock_zorch import ghash, sumcheck  # noqa: E402
 from flock_zorch.pcs import ligerito as zorch_ligerito  # noqa: E402
 from flock_zorch.sha256_challenger import Sha256Challenger  # noqa: E402
 from flock_zorch.testing._golden import (  # noqa: E402
@@ -67,27 +67,20 @@ def run():
     # The flock-zorch prove path → byte-gate every LigeritoProof field.
     ch = Sha256Challenger(b"flock-ligerito-test")
     _root, pdata = zorch_ligerito.commit_flock_ligerito(cfg, g["f"])
-    # `prove_flock_ligerito` takes the un-combined claim parts (the combine now
-    # runs inside `_open_jitted`'s trace, flock-zorch#32 eager-materialisation
-    # cleanup) rather than a pre-combined (b, target). This golden's `b`/`target`
-    # are already the combined pair the reference recursive prover ran against,
-    # so recover them through the same `_combine_claims` identity every other
-    # caller uses: a single rs_eq_ind of `b` with gamma=1 (the ghash
-    # multiplicative identity) reproduces `b_combined = b`, `target = target`
-    # exactly, with no packed-direct claims. `[1, 0]` is that identity by
-    # `ghash.py`'s own layout docstring: `lo` holds the coefficients of
-    # x^0..x^63, so lo=1/hi=0 is the constant-1 polynomial regardless of
-    # bit-reflection — the multiplicative identity of any polynomial ring.
-    one = ghash.to_ghash([1, 0])
+    # `prove_flock_ligerito` takes the un-combined claim parts rather than a
+    # pre-combined (b, target). This golden carries the combined pair the
+    # reference prover ran against, so feed it back through the same combine:
+    # one rs_eq_ind of `b` weighted by ONE reproduces `b_combined = b` and
+    # `target = target` exactly, with no packed-direct claims.
+    one = ghash.to_ghash(sumcheck.ONE)
     p = zorch_ligerito.prove_flock_ligerito(
         cfg,
         pdata,
         (ghash.to_ghash(g["b"]),),
         (one,),
         (ghash.to_ghash(g["target"]),),
-        (),
-        (),
-        (),
+        (),  # packed_direct
+        (),  # gammas_pd
         ch,
     )
 

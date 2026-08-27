@@ -169,19 +169,17 @@ def open_batch_mixed_ligerito(
     # The Ligerito recursion runs in zorch (`zorch.pcs.ligerito`) via the flock
     # FS seam, reusing the commit-phase `pdata` directly. The ghash algebra rides
     # the dtype, so `mul` is not threaded. The claim combine (`_combine_claims`)
-    # now runs inside `_open_jitted`'s trace rather than here — passing the
-    # un-combined ring-switch parts plus the packed-direct claims decomposed
-    # into arrays (a `PackedDirectClaim` cannot cross the jit boundary as an
-    # object; `_open_jitted` rebuilds it inside the trace) lets the combine's
-    # XOR-sum fuse into the open instead of materialising on its own.
+    # runs inside `_open_jitted`'s trace rather than here: combined out here it
+    # was a module of its own, so its XOR-sum over the 2^25 basis round-tripped
+    # DRAM with nothing to fuse against. The claim parts therefore cross
+    # un-combined.
     lig, lig_obj = zorch_ligerito.prove_flock_ligerito(
         config,
         pdata,
         rs_eq_inds,
         gammas,
         sumcheck_claims,
-        [pd.point for pd in packed_direct],
-        [pd.value for pd in packed_direct],
+        packed_direct,
         gammas_pd,
         ch,
         return_proof=True,

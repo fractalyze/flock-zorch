@@ -38,15 +38,15 @@ own, shape-keyed assertion for that:
 `python/flock_zorch/testing/commit_prep_no_standalone_bitcast_test.py`.
 """
 
-import glob
-import os
-import shutil
-import subprocess
 import sys
-import tempfile
 
+from flock_zorch.testing import _hlo as hlo
 from flock_zorch.testing._util import report
 
+# The full-size witness is 2^25 ghash lanes, which only the m32 golden
+# produces — FULL_SIZE below is derived from it, so this gate cannot be
+# downsized without also changing what "full-size" means.
+GOLDEN = "blake3_ligerito_golden_m32.bin"
 # 2^25 ghash elements: the full-size witness/basis at m32. A module whose entry
 # layout mentions this shape is operating on the whole polynomial.
 FULL_SIZE = "binary_field_ghash[33554432]"
@@ -80,43 +80,19 @@ KNOWN_OFFENDERS = frozenset(
 )
 
 
-def _dump_open_hlo(dump_dir):
-    env = dict(os.environ, XLA_FLAGS=f"--xla_dump_to={dump_dir}")
-    return subprocess.run(
-        [
-            sys.executable,
-            "python/flock_zorch/testing/nsys_capture.py",
-            "--window",
-            "open",
-            "--golden",
-            "blake3_ligerito_golden_m32.bin",
-            "--walls",
-            "1",
-        ],
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-
-
 def _offending_modules(dump_dir):
     bad = []
-    for path in glob.glob(os.path.join(dump_dir, "*after_optimizations.txt")):
-        name = os.path.basename(path).split(".")[1]
-        if name.startswith(ALLOWED_PREFIXES):
+    for name, lines in hlo.modules(dump_dir):
+        if name.startswith(ALLOWED_PREFIXES) or not lines:
             continue
-        with open(path, encoding="utf-8", errors="replace") as f:
-            head = f.readline()
-        if FULL_SIZE in head and "entry_computation_layout" in head:
+        if FULL_SIZE in lines[0] and "entry_computation_layout" in lines[0]:
             bad.append(name)
     return sorted(bad)
 
 
 def run():
-    dump_dir = tempfile.mkdtemp(prefix="hlo_open_gate_")
-    try:
-        proc = _dump_open_hlo(dump_dir)
-        if proc.returncode != 0:
+    with hlo.dump_window_hlo("open", GOLDEN) as dump_dir:
+        if dump_dir is None:
             return [("open window compiled", False)]
         bad = set(_offending_modules(dump_dir))
         new = sorted(bad - KNOWN_OFFENDERS - {COMBINE_MODULE})
@@ -131,8 +107,6 @@ def run():
                 new == [],
             ),
         ]
-    finally:
-        shutil.rmtree(dump_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":
