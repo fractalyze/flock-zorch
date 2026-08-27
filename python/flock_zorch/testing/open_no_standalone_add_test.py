@@ -21,6 +21,21 @@ finding (something moved that shouldn't have).
 Structural rather than numerical on purpose — the combine's arithmetic is
 unchanged by where it runs, so only the emitted module list can catch a
 regression here.
+
+Constraint on this mechanism: every entry above is an XLA module name, and a
+module is named after the traced primitive, not the call site that reached
+it. Two unrelated call sites that both lower to a bare bitcast get the SAME
+module name, so tolerating that name tolerates both, indistinguishably.
+`jit_bitcast_convert_type` is the concrete case today: this window's dump
+carries it once for `pcs/ring_switch.py`'s still-eager
+`ghash.to_ghash(packed_witness)` (unfixed, in `KNOWN_OFFENDERS` on its own
+merits) and, whenever the commit path's call site regresses, a SECOND time
+for that — same name, so this gate cannot tell the two apart and a green run
+here says nothing about the commit path. A green run means only "no
+tolerated module reappeared under a name not already in this list"; it must
+never be read as "every bitcast call site is fixed". The commit path has its
+own, shape-keyed assertion for that:
+`python/flock_zorch/testing/commit_prep_no_standalone_bitcast_test.py`.
 """
 
 import glob
@@ -56,6 +71,8 @@ KNOWN_OFFENDERS = frozenset(
     {
         "jit__slice_evals",
         "jit_bit_reverse",
+        # Primitive name, not a site: also matches the commit-path bitcast if
+        # that regresses eager. See the module docstring's constraint note.
         "jit_bitcast_convert_type",
         "jit_build_eq_suffix_tables",
         "jit_rs_eq_ind",
