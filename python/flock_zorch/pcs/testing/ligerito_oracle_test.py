@@ -67,8 +67,25 @@ def run():
     # The flock-zorch prove path → byte-gate every LigeritoProof field.
     ch = Sha256Challenger(b"flock-ligerito-test")
     _root, pdata = zorch_ligerito.commit_flock_ligerito(cfg, g["f"])
+    # `prove_flock_ligerito` takes the un-combined claim parts (the combine now
+    # runs inside `_open_jitted`'s trace, flock-zorch#32 eager-materialisation
+    # cleanup) rather than a pre-combined (b, target). This golden's `b`/`target`
+    # are already the combined pair the reference recursive prover ran against,
+    # so recover them through the same `_combine_claims` identity every other
+    # caller uses: a single rs_eq_ind of `b` with gamma=1 (the ghash
+    # multiplicative identity) reproduces `b_combined = b`, `target = target`
+    # exactly, with no packed-direct claims.
+    one = ghash.to_ghash([1, 0])
     p = zorch_ligerito.prove_flock_ligerito(
-        cfg, pdata, ghash.to_ghash(g["b"]), ghash.to_ghash(g["target"]), ch
+        cfg,
+        pdata,
+        (ghash.to_ghash(g["b"]),),
+        (one,),
+        (ghash.to_ghash(g["target"]),),
+        (),
+        (),
+        (),
+        ch,
     )
 
     results.extend(ligerito_proof_results(p, g, prefix=""))

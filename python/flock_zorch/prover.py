@@ -166,18 +166,26 @@ def open_batch_mixed_ligerito(
         ch.observe_f128(pd.value)  # native ghash scalar
     gammas_pd = [ch.sample_f128() for _ in packed_direct]
 
-    b_combined, target = _combine_claims(
+    # The Ligerito recursion runs in zorch (`zorch.pcs.ligerito`) via the flock
+    # FS seam, reusing the commit-phase `pdata` directly. The ghash algebra rides
+    # the dtype, so `mul` is not threaded. The claim combine (`_combine_claims`)
+    # now runs inside `_open_jitted`'s trace rather than here — passing the
+    # un-combined ring-switch parts plus the packed-direct claims decomposed
+    # into arrays (a `PackedDirectClaim` cannot cross the jit boundary as an
+    # object; `_open_jitted` rebuilds it inside the trace) lets the combine's
+    # XOR-sum fuse into the open instead of materialising on its own.
+    lig, lig_obj = zorch_ligerito.prove_flock_ligerito(
+        config,
+        pdata,
         rs_eq_inds,
         gammas,
         sumcheck_claims,
-        packed_direct=packed_direct,
-        gammas_pd=gammas_pd,
-    )
-    # The Ligerito recursion runs in zorch (`zorch.pcs.ligerito`) via the flock
-    # FS seam, reusing the commit-phase `pdata` directly. The ghash algebra rides
-    # the dtype, so `mul` is not threaded.
-    lig, lig_obj = zorch_ligerito.prove_flock_ligerito(
-        config, pdata, b_combined, target, ch, return_proof=True, tree=tree
+        [pd.point for pd in packed_direct],
+        [pd.value for pd in packed_direct],
+        gammas_pd,
+        ch,
+        return_proof=True,
+        tree=tree,
     )
     return BatchOpenProof(ring_switches=s_hat_vs, ligerito=lig, ligerito_obj=lig_obj)
 
