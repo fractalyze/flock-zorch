@@ -74,7 +74,10 @@ def run():
     # so recover them through the same `_combine_claims` identity every other
     # caller uses: a single rs_eq_ind of `b` with gamma=1 (the ghash
     # multiplicative identity) reproduces `b_combined = b`, `target = target`
-    # exactly, with no packed-direct claims.
+    # exactly, with no packed-direct claims. `[1, 0]` is that identity by
+    # `ghash.py`'s own layout docstring: `lo` holds the coefficients of
+    # x^0..x^63, so lo=1/hi=0 is the constant-1 polynomial regardless of
+    # bit-reflection — the multiplicative identity of any polynomial ring.
     one = ghash.to_ghash([1, 0])
     p = zorch_ligerito.prove_flock_ligerito(
         cfg,
