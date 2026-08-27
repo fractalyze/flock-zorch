@@ -360,6 +360,20 @@ def _bitrev(x: Array) -> Array:
     return lax.bit_reverse(x, dimensions=(0,))
 
 
+@frx.jit
+def _commit_prep(z: Array) -> Array:
+    """`u64[N, 2]` flock-order F128 -> bit-reversed `binary_field_ghash[N]`.
+
+    The two steps are traced together rather than called separately because a
+    bitcast dispatched on its own is not free: its module's root becomes
+    `copy(bitcast(param))`, and the copy exists only to give the module a
+    distinct output buffer — 512 MiB of memcpy for a metadata-only op. Traced
+    with the permutation that follows it, the bitcast disappears into the
+    permutation's operand read.
+    """
+    return _bitrev(ghash.to_ghash(z))
+
+
 def _make_ghash_code(message_len: int, log_inv_rate: int) -> ReedSolomon:
     return ReedSolomon(
         message_len=message_len, blowup=1 << log_inv_rate, dtype=fnp.binary_field_ghash
@@ -456,7 +470,7 @@ def commit_flock_ligerito(
     z = z_packed.reshape(-1, 2)
     log_n = z.shape[0].bit_length() - 1
     prover, _config, _chor = _flock_ligerito_prover(cfg, log_n, tree)
-    root, pdata = prover.commit([_bitrev(ghash.to_ghash(z))])
+    root, pdata = prover.commit([_commit_prep(z)])
     return root, pdata
 
 
