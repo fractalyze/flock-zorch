@@ -177,3 +177,32 @@ The benchmark itself — how to run it and what it has published — is in
   `nsys_capture.py`'s `cuProfilerStart/Stop`, so warm-up and autotune are
   excluded by construction; and `ncu --csv` emits a **units row after the
   header**, so parsing the header alone reads every metric as zero.
+- **ncu cannot see a memcpy, so a kernel byte census is not DRAM traffic.** XLA
+  lowers a lone `copy` — the root a one-instruction module gets, e.g.
+  `copy(bitcast(param))` — to a device-to-device memcpy *thunk*, not a kernel.
+  It is invisible to ncu: filtering the m32 `open` window on `regex:copy`
+  reports `No kernels were profiled` and lists 361 kernel names, none of them a
+  copy, while nsys prices the same operation at 512 MiB in 0.690 ms. Any figure
+  aggregated from `dram__bytes_op_read/write.sum` over kernels is therefore a
+  **kernel** byte count that omits every memcpy; label it that way, and read
+  memcpys from the exported nsys sqlite
+  (`SELECT copyKind, bytes, end-start FROM CUPTI_ACTIVITY_KIND_MEMCPY`) rather
+  than `nsys_capture.py --report`, which joins `CUPTI_ACTIVITY_KIND_KERNEL` and
+  shows nothing for a memcpy-only effect. nsys needs no `sudo`.
+- **Guard the host, not just the card — every guard here watches the GPU, and a
+  CPU-only neighbour defeats all of them.** A capture once crawled for twelve
+  minutes at **0% GPU utilisation**, its prover paged from 17.7 GiB down to
+  1.3 GiB resident, because sibling bazel jobs had pushed a 60 GiB box into
+  91 GiB of swap; `nvidia-smi` reported a clean idle card the whole time. Gate on
+  host RAM and swap alongside the card:
+
+  ```bash
+  [ "$(free -m | awk 'NR==2{print $NF}')" -ge "$WORKING_SET_MIB" ] || exit 1
+  vmstat 1 2 | awk 'NR==4 && ($7+$8) > 50000 { exit 1 }'   # si+so ~ 0
+  ```
+
+  What survives host thrash and what does not: device-side counters (DRAM%, SM%,
+  occupancy, stall reasons, per-kernel duration) are sampled during kernel
+  execution and stay valid — host swapping delays *launches*, not execution. Any
+  wall, gap, or launch-rate figure from the same run is contaminated. So a roof
+  reading taken under contention is recoverable; a timing arm is not.
