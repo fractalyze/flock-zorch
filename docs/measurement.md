@@ -270,3 +270,42 @@ measured against (#322, #323) — on the build box.
   within 0.02 %; dump time is linear in `n_comp` (3 s / 40 s at 256 / 4096).
   Both matter because the file is gitignored, so it is regenerated per machine,
   and every one of the 120 fresh workers reads it inside the readiness budget.
+
+### The x86 frontier measured on build-server (2026-09-08)
+
+Submission `e1a16581` (`c75aece`) under the official harness, worker unsandboxed
+(#322 decision B), box quiet at 99 % idle, `performance` governor:
+
+| run | threads | score (comp/s) | median | p90/p10 |
+|---|---|---|---|---|
+| m32 (`log2=18`), default | 32 | 1,086,628 | 241 ms | 1.078 |
+| m32, pinned to physical cores | 16 | **1,138,183** | 230 ms | 1.048 |
+| m24 (`log2=10`), default | 32 | 274,467 | 3.73 ms | 1.284 |
+
+Four things to carry forward from it:
+
+- **SMT costs ~4.7 % — pin to physical cores.** 16 threads on `taskset -c 0-15`
+  beat all 32 SMT threads (1,138,183 vs 1,086,628) and were steadier
+  (p90/p10 1.048 vs 1.078). Siblings are `N`/`N+16` here; confirm with
+  `/sys/devices/system/cpu/cpu0/topology/thread_siblings_list` rather than
+  assuming, since the pairing differs by machine.
+- **Most of the leaderboard gap is hardware, not the prover.** The same
+  submission scores 1,633,567 on the official c7i.4xlarge and 1,138,183 here —
+  the 9950X is 1.44x slower at it. So an FRX-vs-frontier ratio taken on this box
+  is a ratio against a 1.44x-handicapped frontier and does **not** transfer to
+  the leaderboard; quote the machine with every ratio.
+- **The `powersave` governor is not a threat on `amd-pstate-epp`.** Measured
+  head to head at m24: `powersave`/`balance_performance` 278,087 vs
+  `performance`/`performance` 274,467 — a 1.3 % delta in the wrong direction,
+  i.e. noise. Unlike the old throttling governors, `amd-pstate-epp`'s
+  `powersave` is full-range (cores were already boosting to 5.44 GHz), so a run
+  under it does not need an asterisk. Do not spend a session getting root for
+  this.
+- **Load average measured *during* a run says nothing.** A 32-thread benchmark
+  drives the 1-minute average to ~32 by construction, and it then decays for
+  minutes afterwards. Judge quietness *before* starting, with instantaneous idle
+  (`vmstat 2 3`), not with `uptime` during or after. Related: #322's Context
+  discards an earlier 1,068,472 for having run at load 23-26 under `powersave`;
+  the quiet `performance` run above lands within 1.7 % of it, so that figure was
+  sound after all (different box of the same model, so machine and conditions
+  are conflated in that one comparison).
