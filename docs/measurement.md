@@ -279,11 +279,17 @@ measured against (#322, #323) — on the build box.
 - **The FRX CPU tier does not reach a proof at m32 — it asks for 592 GiB in one
   allocation.** `bench_worker.py` at `log2=18` dies in the untimed warm-up prove,
   ~75-109 s in, before it ever writes the ready file:
-  `Out of memory allocating 635655164048 bytes`. The failure is in the **open**
-  phase at `pcs/ligerito.py`'s `_packed_device_get` (via `_flock_proof_dict`),
-  the helper that concatenates every proof-pytree leaf into one buffer per
-  dtype to cut D2H copy count. Three things pin it down before anyone re-reads
-  it as a machine or harness problem:
+  `Out of memory allocating 635655164048 bytes` (fractalyze/xla#674). The host
+  traceback names `pcs/ligerito.py`'s `_packed_device_get` — **ignore it**, that
+  is only where the host blocked on an async error. `--xla_dump_to` with
+  `--xla_dump_hlo_pass_re=buffer-assignment` names the real module:
+  `jit__round1_core` (the zerocheck round-1 URM), 593.50 GiB total, of which
+  512 GiB is one `binary_field_ghash[16384,4096,64,8]` — the gf8 AES-basis
+  expansion materialized whole. And it is not one module: `jit__slice_evals`,
+  `jit__fold_packed_at_z`, `jit_rs_eq_ind` and `jit__partial_fold` each peak at
+  ~72 GB, also above a 60 GB box, so fixing round-1 alone will not make m32 run.
+  Three things pin it down before anyone re-reads it as a machine or harness
+  problem:
   - **It is not the memory cap.** The byte count is *identical* under
     `with-build-permit --mem 48` and `--mem 56`, so it is the compiled
     program's own buffer request. 592 GiB also exceeds this box's 60 GB RAM
@@ -293,13 +299,12 @@ measured against (#322, #323) — on the build box.
     [`development.md`](development.md) warns about: the standing gates run at
     m=22, so a path gated on size is never exercised by them. The m32 golden it
     tells you to gate with is what surfaced this.
-  - **Do not assume it is CPU-only.** `_packed_device_get` is on the shared
-    proof-assembly path — `prove_phase_bench.py` reaches it through
-    `open_batch_ligerito` too — and **no tier has ever driven `bench_worker.py`
+  - **Measured on XLA:CPU only.** **No tier has ever driven `bench_worker.py`
     at `log2=18`**: the GPU entry was verified at `log2=8` (`fd2d6cb`, which
     defers "the comparable number is the m32 run") and the CPU entry likewise
-    (`c56d4a0`). Whether GPU hits the same request at m32, or whether this is a
-    CPU-backend buffer-assignment difference, is open.
+    (`c56d4a0`). Whether the GPU backend materializes the same intermediates was
+    deliberately not tested — the goal is the CPU tier — so do not quote this as
+    CPU-specific without running it.
 
 - **The m32 constants golden is ~2.2 GB and ~45 min to dump; it is not the
   86 MB one.** `bench_worker.py` loads `constants_golden(log2 + K_LOG)`, so the
