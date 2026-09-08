@@ -226,3 +226,43 @@ measured against (#322, #323) — on the build box.
   trusted verifier accepting a flock-zorch bundle is an open question, not a
   given; check it with a `BLAKE3_LOG2=8` smoke run before assuming the FRX arm
   can be scored by the x86 verifier rather than the Apple fork's harness.
+- **Unsandboxing the harness is one argument, not a patch — and it is the
+  harness's own tested path.** `benchmark.sh` passes the trusted verifier a 9th
+  positional (the sandbox scratch dir) only when `bwrap` is on `PATH`; with 8
+  arguments the harness sets `Config.sandbox_scratch = None` and execs the
+  worker bare, which `worker_command_runs_bare_without_sandbox` covers as a
+  first-class case. So the local-dev path is reached by passing one fewer
+  argument, never by hiding `bwrap` from `PATH` — a `PATH` shim is
+  indistinguishable from sandbox evasion and will be refused by anything
+  watching. Everything else (the `SHA256SUMS` check on the verifier, the locked
+  offline candidate rebuild, the 20/100 trial contract) must still be run
+  verbatim, or the number is not comparable at all. Whether to take that path is
+  a decision, not a workaround — see the bullet above.
+- **The CPU tier's persistent XLA cache is a partial cache, and it warns about
+  a machine mismatch against the very host that just wrote it.** Two things show
+  up on a `FRX_PLATFORMS=cpu` worker on the 9950X, both harmless-looking and
+  both budget-relevant:
+  - `ToProto is not implemented for thunk kind: bit-reverse` — the persistent
+    cache cannot *write* `jit_bit_reverse`, `jit__commit` or `jit__commit_prep`.
+    Those programs are therefore recompiled in **every** fresh worker, so they
+    are charged to the 300 s readiness budget on all 120 trials, not just the
+    first. Warming the cache does not make them go away; budget for them.
+  - `cpu_aot_loader.cc: Target machine feature +prefer-no-gather is not
+    supported on the host machine` on reload of entries this same box wrote
+    minutes earlier. `prefer-no-gather` / `prefer-no-scatter` are Intel tuning
+    pseudo-features that XLA records in the AOT result but the Zen 5 host
+    feature query does not report, so the loader flags its own output as
+    cross-machine. It is not a stale or shared cache (check the dir's mtimes
+    before assuming it is), but the warning names SIGILL, so confirm what the
+    loader actually does with a rejected entry before quoting a cached-path
+    number.
+- **The m32 constants golden is ~2.2 GB and ~45 min to dump; it is not the
+  86 MB one.** `bench_worker.py` loads `constants_golden(log2 + K_LOG)`, so the
+  ranked `log2=18` needs `artifacts/blake3_ligerito_golden_m32.bin`, dumped with
+  `cargo run --release --example dump_blake3_ligerito -- 262144 <out>`
+  (`n_comp` is the first positional; the default 256 is the m22 file the gates
+  use — do not overwrite it). Size is a fixed base plus a per-compression term,
+  `≈ 84.6 MB + 8.21 KB * n_comp`, which the 256 / 1024 / 4096 points fit to
+  within 0.02 %; dump time is linear in `n_comp` (3 s / 40 s at 256 / 4096).
+  Both matter because the file is gitignored, so it is regenerated per machine,
+  and every one of the 120 fresh workers reads it inside the readiness budget.
