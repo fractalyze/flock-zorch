@@ -366,6 +366,36 @@ measured against (#322, #323) — on the build box.
   from a second in-process `prove_bundle`, or from the harness's own
   `score.json`; never from wrapping the worker process.
 
+### The m26 pair on build-server (2026-09-08) — the dev-loop baseline
+
+m32 is the goal's scored instance but does not run (fractalyze/xla#674), so m26
+(`log2=12`, 4096 compressions) is the largest size both arms complete at, and is
+the baseline the lever tasks iterate against. Both arms unsandboxed (#322
+decision 6), `taskset -c 0-15`, 16 threads, `performance` governor, box at 99 %
+idle:
+
+| arm | score | median | trials | verified |
+|---|---|---|---|---|
+| Yukon frontier `e1a16581` (`c75aece`) | **519,852 comp/s** | 7.879 ms | 20 warm-up + 100 measured | 120/120 |
+| flock-zorch FRX CPU tier | **~1,935 comp/s** | 2.117 s | 5 warm-up + 9 measured † | 14/14 |
+
+**~269x**, on this machine, at this size. Read with three caveats:
+
+- † **The FRX arm is not a completed ranked run.** It was stopped partway; the
+  figure is the median of the 14 trials it produced (max/min 1.096). Every trial
+  was seed-fresh and verifier-checked, and the spread is *tighter* than the
+  frontier's, so it is sound as a baseline — but it is not a `score.json` and
+  must not be quoted as a ranked score.
+- **The frontier's own m26 run is jittery: p90/p10 = 3.80**, against 1.048 at m32
+  and 1.284 at m24. Its trials are only ~7.9 ms, so worker spawn/teardown jitter
+  dominates; one 44 ms outlier sits against a 7.1 ms p10. m26 flatters neither
+  arm's precision, which is the price of using it as the fast loop.
+- **The ratio is size-specific and machine-specific.** It was ~214x at m24 on
+  earlier numbers that carry the process-teardown contamination described below,
+  so do not read a trend from the two. And per the m32 table, this 9950X runs the
+  frontier 1.44x slower than the official c7i.4xlarge, so no ratio taken here
+  transfers to the leaderboard.
+
 ### The x86 frontier measured on build-server (2026-09-08)
 
 Submission `e1a16581` (`c75aece`) under the official harness, worker unsandboxed
