@@ -251,6 +251,22 @@ measured against (#322, #323) — on the build box.
     Those programs are therefore recompiled in **every** fresh worker, so they
     are charged to the 300 s readiness budget on all 120 trials, not just the
     first. Warming the cache does not make them go away; budget for them.
+    **Fixed upstream 2026-09-08** by fractalyze/xla#672 (`00f941f5`), which
+    registers `BitReverseThunk` with the CPU thunk serdes registry — but a fix
+    in xla is not a fix in the wheel this repo pins, so probe the wheel before
+    reading a warm-worker number. The CPU path's binary is
+    `frxlib/libjax_common.so`, *not* the `xla_cuda_plugin.so` that
+    [`development.md`](development.md)'s wheel-provenance rule names:
+
+    ```sh
+    B=.venv/lib/python3.11/site-packages/frxlib/libjax_common.so
+    strings -a "$B" | grep -c BitReverseThunkProto   # the fix: 0 = absent
+    strings -a "$B" | grep -c YnnFusionThunkProto    # control: must be > 0
+    ```
+
+    The control is the adjacent `oneof` case that predates the fix, so an empty
+    first result means "absent" rather than "wrong binary". Measured on the
+    pinned `frx==0.10.2.dev20260826110348`: 0 and 20 — the fix is absent.
   - `cpu_aot_loader.cc: Target machine feature +prefer-no-gather is not
     supported on the host machine` on reload of entries this same box wrote
     minutes earlier. `prefer-no-gather` / `prefer-no-scatter` are Intel tuning
@@ -260,6 +276,31 @@ measured against (#322, #323) — on the build box.
     before assuming it is), but the warning names SIGILL, so confirm what the
     loader actually does with a rejected entry before quoting a cached-path
     number.
+- **The FRX CPU tier does not reach a proof at m32 — it asks for 592 GiB in one
+  allocation.** `bench_worker.py` at `log2=18` dies in the untimed warm-up prove,
+  ~75-109 s in, before it ever writes the ready file:
+  `Out of memory allocating 635655164048 bytes`. The failure is in the **open**
+  phase at `pcs/ligerito.py`'s `_packed_device_get` (via `_flock_proof_dict`),
+  the helper that concatenates every proof-pytree leaf into one buffer per
+  dtype to cut D2H copy count. Three things pin it down before anyone re-reads
+  it as a machine or harness problem:
+  - **It is not the memory cap.** The byte count is *identical* under
+    `with-build-permit --mem 48` and `--mem 56`, so it is the compiled
+    program's own buffer request. 592 GiB also exceeds this box's 60 GB RAM
+    plus 99 GB swap by ~4x, so no cap on this machine could satisfy it.
+  - **It is size-gated, and m26 is fine.** `log2=12` (m26) completes — ready in
+    42 s, timed prove 4.22 s, proof written. This is exactly the class
+    [`development.md`](development.md) warns about: the standing gates run at
+    m=22, so a path gated on size is never exercised by them. The m32 golden it
+    tells you to gate with is what surfaced this.
+  - **Do not assume it is CPU-only.** `_packed_device_get` is on the shared
+    proof-assembly path — `prove_phase_bench.py` reaches it through
+    `open_batch_ligerito` too — and **no tier has ever driven `bench_worker.py`
+    at `log2=18`**: the GPU entry was verified at `log2=8` (`fd2d6cb`, which
+    defers "the comparable number is the m32 run") and the CPU entry likewise
+    (`c56d4a0`). Whether GPU hits the same request at m32, or whether this is a
+    CPU-backend buffer-assignment difference, is open.
+
 - **The m32 constants golden is ~2.2 GB and ~45 min to dump; it is not the
   86 MB one.** `bench_worker.py` loads `constants_golden(log2 + K_LOG)`, so the
   ranked `log2=18` needs `artifacts/blake3_ligerito_golden_m32.bin`, dumped with
@@ -270,6 +311,55 @@ measured against (#322, #323) — on the build box.
   within 0.02 %; dump time is linear in `n_comp` (3 s / 40 s at 256 / 4096).
   Both matter because the file is gitignored, so it is regenerated per machine,
   and every one of the 120 fresh workers reads it inside the readiness budget.
+
+- **A harness trial's startup is XLA compile of ONE uncached program — not
+  tracing, and not the cache being broken.** The harness spawns a fresh worker
+  per trial, so every trial repays the whole per-process startup. Attribute it
+  with `JAX_LOG_COMPILES=1` before blaming the prover or reaching for a pin
+  bump. Measured at m26 on a WARM cache (`FRX_PLATFORMS=cpu`, 9950X, frx
+  `dev20260908110928`), first `prove_bundle` = 36.5 s:
+
+  | phase | cost | cached? |
+  |---|---|---|
+  | tracing (95 programs) | 4.45 s | — |
+  | jaxpr → MLIR lowering (99) | 2.66 s | — |
+  | `_open_jitted` compile | **20.11 s** | **no entry, silently** |
+  | `_witness_blake3_xla` | 4.96 s | hit; 6.7 MB entry, deserialize-bound |
+  | `_mlv_sumcheck` | 2.28 s | hit; 4.9 MB entry |
+  | ~93 others | ~2 s | hit, ~0.0007 s each |
+
+  - **`_open_jitted` never enters the persistent cache and nothing says so.**
+    The cache dir holds 96 entries / 15 MB and not one matches `open` or
+    `jitted`; no `Error writing persistent compilation cache entry` is logged
+    (contrast fractalyze/xla#671, which at least printed `ToProto is not
+    implemented`). It therefore recompiles in full in **every** worker —
+    ~20 s x 120 trials ~= 40 min of a ranked run. It is also
+    fractalyze/prime-ir#390's subject (14.9 s there, 20.11 s at m26 here), so
+    the two are complementary: #390 lowers the price, caching stops it being
+    paid 120 times.
+  - **The `cpu_aot_loader` machine-mismatch warnings are benign** — two per hit
+    (`prefer-no-gather`, `prefer-no-scatter`), 196 for 98 hits, and the entry is
+    then used: those compiles finish in ~0.0007 s. This settles the question the
+    CPU-cache bullet below raises; a rejected entry is not what is happening.
+  - **AOT export (`jax.export`) is not the fix.** Tracing is 4.45 s of 36.5 s.
+  - **Run time is nearly flat in `m`** (30.5 s startup at m24 vs 36.6 s at m26),
+    so the ranked 120 trials cost ~82 min at m24 against ~94 min at m26.
+    Dropping a size step to go faster does not work; only fixing the above, or
+    cutting trial count, does. For a non-ranked baseline 5/20 is ~20 min.
+  - **A pin bump is not a speed fix.** fractalyze/xla#672 does what it says —
+    the `ToProto` refusals go 2 -> 0 and cold drops 77 s -> 37 s — but
+    warm-to-warm it buys only **7.5 %** (42.98 -> 39.76 s), because `_open_jitted`
+    dominates and is untouched by it.
+  - Iterate **in-process** (a second prove is 2.0 s); keep the harness for
+    acceptance.
+- **Do not time a hand-run worker as "ready file → process exit" — that is not
+  the harness's window.** The harness stops its clock when the proof file is
+  **renamed**; a process-exit timer additionally charges the write plus Python
+  and XLA interpreter teardown, which measured ~2.0 s at m26 — i.e. it reported
+  4.02 s for a prove the in-process timer puts at 2.0 s, a **2x** overstatement
+  that turns straight into a 2x understatement of comp/s. Take the prove time
+  from a second in-process `prove_bundle`, or from the harness's own
+  `score.json`; never from wrapping the worker process.
 
 ### The x86 frontier measured on build-server (2026-09-08)
 
