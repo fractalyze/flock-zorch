@@ -288,6 +288,31 @@ def test_query_chain_ship_lockstep():
         )
 
 
+def test_cpu_query_chain_carries_no_host_callback():
+    """On CPU the query chain must not ship through a host callback.
+
+    frx's `_cache_write` returns before it ever asks the backend to serialize
+    when a module carries one, so a single callback anywhere under `_open_jitted`
+    costs the whole program its persistent cache entry — ~20 s of recompile in
+    every fresh worker, and silent unless `JAX_EXPLAIN_CACHE_MISSES=1`
+    (flock-zorch#327). Gate the property `_cache_write` reads, not the timing.
+
+    The control program pins the matcher: a `pure_callback` MUST be found, so an
+    empty result on the sampler means "no callback" and not "the matcher missed".
+    """
+    inner = Sha256FieldTranscript.new(DOMAIN, fnp.binary_field_ghash)
+    sampler = frx.jit(
+        flock_ligerito._sample_distinct_positions, static_argnums=(1, 2)
+    ).lower(inner, 64, 5)
+
+    def shipped(x):
+        return frx.pure_callback(lambda v: v, frx.ShapeDtypeStruct(x.shape, x.dtype), x)
+
+    control = frx.jit(shipped).lower(fnp.zeros(4, fnp.int32))
+    check("callback matcher sees the control", "callback" in control.as_text())
+    check("cpu query chain has no callback", "callback" not in sampler.as_text())
+
+
 if __name__ == "__main__":
     test_wire_lohi_host_view()
     test_packed_device_get_preserves_mixed_tree()
@@ -296,6 +321,7 @@ if __name__ == "__main__":
     test_grind_lockstep()
     test_distinct_queries_lockstep()
     test_query_chain_ship_lockstep()
+    test_cpu_query_chain_carries_no_host_callback()
     test_config_mapping()
     test_round_trip_ghash()
     print("OK zorch_ligerito_fs_test")
