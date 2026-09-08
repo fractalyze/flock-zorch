@@ -226,6 +226,10 @@ measured against (#322, #323) — on the build box.
   trusted verifier accepting a flock-zorch bundle is an open question, not a
   given; check it with a `BLAKE3_LOG2=8` smoke run before assuming the FRX arm
   can be scored by the x86 verifier rather than the Apple fork's harness.
+  **Answered 2026-09-08: it does accept one.** Driving the x86 trusted verifier
+  at `scripts/bench_worker_cpu.sh` with `log2=8` reports `verified=true` on the
+  warm-up and both measured trials, so the FRX arm can be scored by the x86
+  verifier and the two arms are directly comparable.
 - **Unsandboxing the harness is one argument, not a patch — and it is the
   harness's own tested path.** `benchmark.sh` passes the trusted verifier a 9th
   positional (the sandbox scratch dir) only when `bwrap` is on `PATH`; with 8
