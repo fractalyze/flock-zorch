@@ -383,7 +383,7 @@ measured against (#322, #323) — on the build box.
     those two components alone, so its own spawn and verification overhead is
     inside the noise at both sizes. Do not budget a separate verification
     term. A ranked 120-trial run is therefore **~50 min at m26 and ~6.7 h at
-    m32**; plan m32 acceptance as its own dispatch, not as a step inside a
+    m32**; m32 acceptance is fractalyze/flock-zorch#325's, not a step inside a
     working session.
   - **AOT export (`jax.export`) is not the fix.** It targets tracing, a few
     seconds of the total.
@@ -408,17 +408,19 @@ governor, box at 99 % idle:
 | arm | measured | score | median | trials | verified |
 |---|---|---|---|---|---|
 | Yukon frontier `e1a16581` (`c75aece`) | 2026-09-08 | **1,138,183 comp/s** | 230 ms | 20 warm-up + 100 measured | 120/120 |
-| flock-zorch FRX CPU tier | 2026-09-09 | **2,986 comp/s** | 87.78 s | 3 warm-up + 10 measured † | 13/13 |
+| flock-zorch FRX CPU tier | 2026-09-09 | **2,986 comp/s** (not ranked †) | 87.78 s | 3 warm-up + 10 measured | 13/13 |
 
 **381x**, on this machine, at this size — the gap this goal has to close. Four
 things qualify it, and none of them is "the run was noisy":
 
-- † **The FRX arm is 13 trials, not the ranked 20/100.** A ranked run at m32 is
-  ~6.7 h on this box (199.8 s/trial, timed end to end), so it is its own
-  dispatch. Its ten measured trials span 87.0-88.3 s
-  at p90/p10 = 1.013 — tighter than either arm's m26 run — so the median is
-  well determined; it is still not a `score.json` anyone may quote as a ranked
-  score.
+- † **The FRX arm is 13 trials, not the ranked 20/100, so it is not a ranked
+  score and must never be quoted as one.** Its ten measured trials span
+  87.0-88.3 s at p90/p10 = 1.013 — tighter than either arm's m26 run — so
+  the median is well determined as a median; that is a different claim from a
+  `score.json` under the leaderboard's contract. The ranked run costs ~6.7 h on
+  this box (199.8 s/trial, timed end to end) and is owned by
+  fractalyze/flock-zorch#325, whose end criteria already require it; it was
+  dropped from #322's spec by decision 29 rather than left implicit.
 - **The arms were measured a day apart** (frontier 2026-09-08, FRX 2026-09-09)
   on the same box under the same governor, pinning and sandbox decision. The
   frontier is a Rust binary and nothing on the wheel side touches it, but say
