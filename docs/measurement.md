@@ -213,6 +213,16 @@ part that stays true.
   neither installed on the build box nor on PyPI, so do not plan around it;
   `yukon sync` takes no `--track` flag (it prints help), and alone it restores
   the best promoted submission.
+- **`main` is the promotion chain, and it — not the newest branch — names the
+  frontier.** Each promoted submission's `Validate submission <id>` commit
+  becomes `main`'s tip, and every candidate branches from the `main` current
+  when it was submitted. So the frontier is `git rev-parse origin/main`, and a
+  candidate is promoted exactly when `main` advances onto it. Sorting
+  `submissions/*` by commit date answers a different question and will hand you
+  an unpromoted candidate: a re-pull can fetch a batch of same-day submissions
+  while the frontier has not moved for a week. Confirm with
+  `git merge-base origin/main <branch>` — equal to `main` means the candidate
+  was cut from the current frontier and did not beat it.
 - **`bwrap` must actually work, or every trial dies before it is measured.**
   Ubuntu ships `kernel.apparmor_restrict_unprivileged_userns=1`, which makes
   bubblewrap fail with `setting up uid map: Permission denied`; the sandboxed
