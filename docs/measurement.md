@@ -370,3 +370,69 @@ part that stays true.
   roughly twice its real cost, and that turns straight into a halving of
   comp/s. Take the prove time from a second in-process `prove_bundle`, or from
   the harness's own `score.json`; never from wrapping the worker process.
+
+### The FRX CPU tier's phase split (#324)
+
+Where the m26 prove's wall goes, and — more useful — which of it moves under
+which repository. Produced by `cpu_phase_split.py`, which drives
+`_bench_profile.prove_bundle` (the body the harness times, `serialize`
+included) rather than `prove_phase_bench`'s witgen→open sha256 scope. The
+absolute numbers belong to #324 and this box; the rules below are what stays
+true.
+
+- **The CPU ranking is not the GPU ranking, and it is not close.** On CUDA
+  `open` is 55–58% of the prove and on Metal the top three phases tie (#292);
+  on CPU at m26 `zerocheck` is **62%**, `lincheck` 24%, `open` 12%, and
+  `commit` + `witgen` + `serialize` together under 3%. A lever ranked from the
+  GPU split aims at the wrong phase. Re-rank per backend; do not carry one
+  over.
+- **A phase name does not name a lever — the kernel class does.** `zerocheck`
+  is three different pieces of work under three different owners: a
+  binary-field select + XOR-reduce (44% of op busy), GHASH multiplies (21%),
+  and NTT transforms (11%). Splitting only to the phase would have sent the
+  next round at "zerocheck" without saying which of the three to touch.
+- **The same fusion name means different things in different modules.**
+  `select_reduce-window_fusion` is the round-1 URM's
+  `binary_field_ghash[.,8,64]` select + XOR-reduce inside `_round1_core`, and
+  a `u32[32]` proof-of-work reduce inside `_open_jitted` — 470 ms against
+  under a millisecond. Any op-level table must key on (module, op); keying on
+  the op name alone silently merges them. Read the class off
+  `--xla_dump_to`'s `after_optimizations` HLO, never off the name.
+- **Rank CPU work by parallel scaling as well as by share, because the two
+  disagree.** A `taskset` sweep over 1/2/4/8/16 physical cores separates
+  classes that are already parallel from classes that are not, and the second
+  group is where the cheap wins are:
+
+  | class | share at 16c | speedup 1c→16c |
+  |---|---:|---:|
+  | select + XOR-reduce (round-1 URM, Ligerito fold) | 47% | 12.8x |
+  | GHASH multiply | 20% | 5.3x |
+  | NTT transform | 10% | 6.4x |
+  | lincheck segment fold | 9% | 1.9x |
+  | FFI custom calls | 3% | 1.0x |
+
+  The largest class is also the best-parallelized one; the whole prove scales
+  8.2x on 16 cores (51% utilization), so roughly half the machine is idle for
+  reasons that have nothing to do with the biggest kernel. **`--xla_cpu_...`
+  parallelism work and binary-field lowering work are therefore separate
+  levers, and the share column alone would have hidden the first.**
+- **Trace with `XLA_FLAGS=--xla_cpu_enable_xprof_traceme=true`; it puts
+  `hlo_op` / `hlo_module` on every op event, which is the only per-kernel
+  attribution the CPU backend offers here.** Two consequences: the flag is in
+  the compilation-cache key, so the first traced run recompiles everything
+  (~78 s vs ~21 s of startup on a warm cache) — budget it, do not read it as a
+  cache bug. And tracing inflates the *wall* ~3x while leaving *op busy*
+  within ~2% of a clean run, so shares come from the trace and absolutes never
+  do.
+- **`perf` cannot count DRAM bytes on this box** —
+  `kernel.perf_event_paranoid` is 4, so CPU events need `CAP_PERFMON`. That is
+  one sysctl away, exactly like ncu's `sudo` above; ask for it rather than
+  substituting a shape-derived byte model, which errs toward manufacturing
+  headroom. Until then the core-count sweep is the discriminator that needs no
+  counters: near-linear scaling rules out a bandwidth roof, and a class that
+  stops scaling names one.
+- **Startup is not the prove and the harness charges both.** In-process
+  startup (golden load + warm-up prove on a warm cache) is ~21 s at m26 against
+  a ~1.35 s prove, so a fresh-worker trial is dominated by deserialization.
+  Quote them separately or a per-hash number becomes a statement about the
+  compile cache.
