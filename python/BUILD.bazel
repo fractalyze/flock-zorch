@@ -403,8 +403,9 @@ py_test(
 )
 
 # No golden: the CPU tier's factored-eq round-1 core is byte-exact against the
-# composite — the geometric small/medium eq identities it rests on. The
-# formulation the CPU tier dispatches to, so it runs on CPU by definition.
+# composite — the geometric small/medium eq identities it rests on. The core
+# itself is portable, so the byte-equality cases run on whatever backend the
+# target lands on; the one case that asserts the CPU dispatch skips elsewhere.
 py_test(
     name = "urm_factored_test",
     size = "small",

@@ -10,7 +10,9 @@ both wire fields.
 The full-proof byte gate covers the production dispatch against flock; this
 covers the factorization itself, cheaply and on CPU. It also pins the guard:
 off the pinned inner challenges the factorization does not hold, and the
-dispatcher must fall back.
+dispatcher must fall back, and it exhaustively checks `_gf8_reduce`, which
+the Triton kernel shares — the one symbol here a CPU box cannot reach through
+its own consumer.
 """
 from __future__ import annotations
 
@@ -67,12 +69,35 @@ class UrmFactoredTest(parameterized.TestCase):
                 err_msg=f"{name} diverges at m={m}",
             )
 
+    def test_matches_composite_on_uncoerced_c_bytes(self) -> None:
+        """The composite reads C as `!= 0`, and `_round1_input_rows` hands some
+        input forms straight through as raw bytes — so a C byte above 1 must
+        fold to the same message, not index off its convert-table row."""
+        m = 15
+        n_rows = 1 << (m - K_SKIP)
+        rng = np.random.default_rng(23)
+        flat = lambda hi: fnp.asarray(  # noqa: E731
+            rng.integers(0, hi, size=n_rows * ELL, dtype=np.uint8)
+        )
+        a, b, c = flat(2), flat(2), flat(256)
+        r = _protocol_r(rng, m)
+
+        want = _urm._round1_core(a, b, c, K_SKIP, r)
+        got = _urm._round1_core_factored(a, b, c, K_SKIP, r)
+        for name, w, g in zip(("P^AB", "P^C"), want, got):
+            np.testing.assert_array_equal(
+                np.asarray(ghash.to_lanes(g)),
+                np.asarray(ghash.to_lanes(w)),
+                err_msg=f"{name} diverges on raw C bytes",
+            )
+
     def test_dispatch_takes_the_factored_core_on_cpu(self) -> None:
         """The pinned inner challenges select it; anything else falls back."""
+        if frx.default_backend() != "cpu":
+            self.skipTest("the factored core is the CPU tier's formulation")
         m = 15
         rng = np.random.default_rng(3)
         r = _protocol_r(rng, m)
-        self.assertEqual(frx.default_backend(), "cpu", "run this gate on CPU")
         self.assertTrue(_urm._round1_factored_ok(m, K_SKIP, r))
 
         unpinned = fnp.concatenate([r[:K_SKIP], rand_ghash(rng, m - K_SKIP)])
@@ -85,6 +110,22 @@ class UrmFactoredTest(parameterized.TestCase):
         r = _protocol_r(np.random.default_rng(5), m)
         ok = frx.jit(lambda rr: _urm._round1_factored_ok(m, K_SKIP, rr))(r)
         self.assertFalse(ok)
+
+    @parameterized.parameters(np.uint16, np.int32)
+    def test_gf8_reduce_is_exhaustively_the_aes_poly_remainder(self, dtype) -> None:
+        """Every input the shift-reduce can produce, against an independent
+        long division by 0x11B.
+
+        `_urm_pallas` calls this on int32 lanes and `_fold_small` on uint16, so
+        both widths are checked. The Triton kernel is the other consumer and no
+        CPU box can compile it, which is what makes exhaustive coverage here
+        worth its cost — it is 2¹⁵ values."""
+        p = np.arange(1 << 15, dtype=dtype)
+        want = p.copy()
+        for bit in range(14, 7, -1):
+            want ^= ((want >> bit) & 1) * dtype(0x11B << (bit - 8))
+        got = np.asarray(_urm._gf8_reduce(fnp.asarray(p)))
+        np.testing.assert_array_equal(got, want)
 
     def test_convert_table_is_the_gamma_scaled_phi8_lift(self) -> None:
         """`convert[b][v] == γᵇ · φ₈(v)`, checked against the ghash multiply

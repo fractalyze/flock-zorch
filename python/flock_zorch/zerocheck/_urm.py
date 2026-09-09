@@ -363,20 +363,28 @@ def _build_convert_table() -> np.ndarray:
 _CONVERT_DEV_G = ghash.to_ghash(fnp.asarray(_build_convert_table().reshape(-1, 2)))
 
 
-def _fold_small(rows, *, reduce_gf8: bool):
+def _fold_small(rows, *, bits: bool):
     """Fold the 3 small dims of byte `[n_rows, ell]` rows onto `[n_out, 16, ell]`,
     as `Σ_K xᴷ · rows[(o << 7) | (med << 3) | K]` in F8.
 
     `eq_small[K] = SG[0] · αᴷ` with α = φ₈(x), and φ₈ is a field homomorphism,
     so `Σ_K eq_small[K] · φ₈(y_K) = SG[0] · φ₈(Σ_K xᴷ · y_K)` — the 8 F128
-    multiplies collapse into 8 u16 shift-XORs. `reduce_gf8` is False for the C
-    track, whose rows are single bits: `Σ_K c_K · xᴷ` has degree < 8 already
-    and the AES-poly fold would be a no-op on it."""
+    multiplies collapse into 8 u16 shift-XORs.
+
+    `bits` says which track this is, and both halves of the answer follow from
+    it. The AB track folds F8 products, whose shifted sum reaches 15 bits and
+    needs the AES-poly reduce. The C track folds witness bits — and reads them
+    the way the composite does, as `!= 0` rather than as bytes, because
+    `_round1_input_rows` passes some input forms through uncoerced. That
+    coercion is what bounds `Σ_K c_K · 2ᴷ` below 256, so the fold is a no-op
+    and the convert-table gather below cannot run off the end of its row."""
     planes = rows.reshape(-1, _MEDIUM, _SMALL, rows.shape[-1])
+    if bits:
+        planes = planes != 0
     acc = planes[:, :, 0].astype(fnp.uint16)
     for k in range(1, _SMALL):
         acc = acc ^ (planes[:, :, k].astype(fnp.uint16) << k)
-    return _gf8_reduce(acc) if reduce_gf8 else acc
+    return acc if bits else _gf8_reduce(acc)
 
 
 def _fold_medium(values, eq_outer_scaled):
@@ -415,8 +423,8 @@ def _round1_core_factored(a, b, c, k_skip, r):
 
     a_rows, b_rows, c_rows = (_round1_input_rows(x, n_rows) for x in (a, b, c))
     ab = _to_u8(_extend_rows(a_rows, k_skip) * _extend_rows(b_rows, k_skip))
-    p_ab = _fold_medium(_fold_small(ab, reduce_gf8=True), eo)
-    p_c = _fold_medium(_fold_small(c_rows, reduce_gf8=False), eo)
+    p_ab = _fold_medium(_fold_small(ab, bits=False), eo)
+    p_c = _fold_medium(_fold_small(c_rows, bits=True), eo)
     return p_ab, _extend_folded_c(p_c, k_skip)
 
 
