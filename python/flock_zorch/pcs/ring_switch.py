@@ -25,6 +25,8 @@ from flock_zorch.sha256_challenger import Sha256Challenger
 
 LOG_PACKING = ghash.LOG_PACKING
 LABEL = b"flock-ring-switch-v0"
+_N_BYTES = 16  # bytes in an F128 — one byte-table lookup each
+_LANES = 2  # uint64 storage lanes in an F128
 
 
 def _inner_product(a, b):
@@ -49,6 +51,50 @@ def s_hat_v_from_z_vec(z_vec, tail):
     promote alongside the next pin bump."""
     eq_tail = sumcheck.build_eq(tail)  # (2^tail,) ghash; [1] when tail is empty
     return fnp.sum(eq_tail[:, None] * z_vec.reshape(-1, 1 << LOG_PACKING), axis=0)
+
+
+@frx.jit
+def _rs_eq_ind_cpu(tensor, eq_r_dprime):
+    """`zorch.pcs.ring_switch.rs_eq_ind` in array primitives, for XLA:CPU.
+
+    The same byte-table fold the zorch kernel runs, and flock
+    `ring_switch::fold_one_slot` with it: `table[k, v]` XOR-sums
+    `eq_r_dprime[8 * k + b]` over the bits `b` set in `v`, and output `i` XORs
+    the 16 entries the little-endian bytes of `tensor[i]` select. What differs
+    is who runs it. zorch's CPU arm is the
+    `frx_bit_select_xor_reduce_packed_bytes` host handler, one thread whatever
+    the machine has; spelled as 16 gathers and an XOR chain the same work is an
+    ordinary fusion, which the CPU backend shards over the output.
+
+    XOR is associative and the table is the same table, so the routes agree bit
+    for bit — `rs_eq_ind_cpu_test` gates that against the zorch kernel directly,
+    and the proof gates gate it end to end.
+
+    Staged here rather than in `zorch.utils.binary_field`, where it belongs, to
+    avoid a zorch+frx lockstep bump — as `s_hat_v_from_z_vec` above is; promote
+    alongside the next pin bump.
+    """
+    eq_lanes = ghash.from_ghash(eq_r_dprime).reshape(_N_BYTES, 8, _LANES)
+    byte = fnp.arange(256, dtype=ghash.U64)[:, None]
+    bit = (byte >> fnp.arange(8, dtype=ghash.U64)) & ghash.U64(1)
+    table = frx.lax.reduce_xor(bit[None, :, :, None] * eq_lanes[:, None, :, :], (2,))
+    # (n, 2) uint64 lanes -> the 16 little-endian bytes flock's fold indexes by.
+    sel = frx.lax.bitcast_convert_type(ghash.from_ghash(tensor), fnp.uint8).reshape(
+        -1, _N_BYTES
+    )
+    acc = fnp.zeros((tensor.shape[0], _LANES), ghash.U64)
+    for k in range(_N_BYTES):
+        acc = acc ^ fnp.take(table[k], sel[:, k].astype(fnp.int32), axis=0)
+    return ghash.to_ghash(acc)
+
+
+def _rs_eq_ind(tensor, eq_r_dprime):
+    """`rs_eq_ind` on whichever spelling the platform runs in parallel: the
+    array-primitive fold on CPU, zorch's kernel everywhere else (CUDA has a
+    Pallas lowering for this shape, and Metal its own custom call)."""
+    if frx.default_backend() == "cpu":
+        return _rs_eq_ind_cpu(tensor, eq_r_dprime)
+    return rs_eq_ind(tensor, eq_r_dprime)
 
 
 @frx.jit
@@ -139,7 +185,7 @@ def prove_batched(
     # Bake gamma_i into each eq, then rs_eq_ind it against the claim's contiguous
     # suffix tensor -> ghash [2^L], device-resident (the caller-owned combination).
     rs_eq_inds = [
-        rs_eq_ind(suffix_tensors[i], g * eq_r_dprimes[i]) for i, g in enumerate(gammas)
+        _rs_eq_ind(suffix_tensors[i], g * eq_r_dprimes[i]) for i, g in enumerate(gammas)
     ]
     return list(s_hat_vs), rs_eq_inds, claims, gammas
 
