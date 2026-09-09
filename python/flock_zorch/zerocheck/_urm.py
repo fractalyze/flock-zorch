@@ -103,6 +103,92 @@ def _extend_rows(rows, k_skip: int):
     return lax.ntt(coeffs, ntt_type="NTT", ntt_length=ell, coset=ell)
 
 
+# The circulant byte table extends a row of BITS, one 64-bit word per 8 λ, so
+# it covers exactly k_skip = 6 on the packed witness. `_extend_rows` stays the
+# path for every other row form: raw F8 bytes, an unpacked bit array, any other
+# k_skip.
+_EXT_TABLE_K_SKIP = 6
+_EXT_WORDS = 8  # 64-bit words per extended row at that k_skip
+
+
+@functools.cache
+def _t0word() -> np.ndarray:
+    """`ext(v at byte group 0)` packed 8 bytes per word — uint64 [256, 8].
+
+    Row v is the S→Λ extension of the ℓ = 64 row carrying the bits of byte v in
+    columns 0..7 and zero elsewhere, with word w holding extension bytes
+    8w .. 8w + 7 little-endian. Built by running `_extend_rows` itself on those
+    256 rows, so the twiddle/coset convention cannot drift from the per-row
+    path.
+
+    One row group generates every 64-bit row, by the circulant
+    `ext(v at group b)[8w + i] == ext(v at 0)[8(w ^ b) + i]`: XOR the eight
+    table words, then extract one byte per λ. Both tiers read this table — the
+    Triton kernel through `_urm_pallas._tables`, XLA:CPU through
+    `_extend_packed_rows`.
+    """
+    byte_rows = np.zeros((256, 1 << _EXT_TABLE_K_SKIP), dtype=np.uint8)
+    byte_rows[:, :8] = (np.arange(256)[:, None] >> np.arange(8)) & 1
+    # Concrete even under an enclosing trace: the table is an input-independent
+    # constant (the @cache would otherwise capture tracers).
+    with frx.ensure_compile_time_eval():
+        ext = np.asarray(
+            _to_u8(_extend_rows(fnp.asarray(byte_rows), _EXT_TABLE_K_SKIP))
+        )
+    t0word = np.zeros((256, _EXT_WORDS), dtype=np.uint64)
+    for i in range(8):
+        t0word |= ext[:, i::8].astype(np.uint64) << np.uint64(8 * i)
+    return t0word
+
+
+@functools.cache
+def _circulant_words() -> np.ndarray:
+    """`_t0word()` pre-permuted per byte group — uint64 [8 * 256, 8], indexed
+    `b * 256 + v` (the flat convention `_CONVERT_DEV_G` uses) with entry
+    `[b * 256 + v][w] == t0word[v][w ^ b]`.
+
+    Folding the circulant's XOR into the table leaves the eight groups reading
+    one table at eight offsets, which is what lets them be ONE gather. The
+    Triton kernel XORs the index at runtime instead, because there the thing
+    worth keeping distinct is the gather lane."""
+    w = np.arange(_EXT_WORDS)
+    return np.concatenate([_t0word()[:, w ^ b] for b in range(_EXT_WORDS)])
+
+
+def _extend_packed_rows(rows):
+    """S→Λ extension of packed 64-bit witness rows: uint64 [N] -> uint8 [N, 64].
+
+    The circulant form of `_extend_rows` at `_EXT_TABLE_K_SKIP`, and the reason
+    the CPU round-1 runs no NTT: a row is 8 byte groups, so its extension is the
+    XOR of 8 table words plus one byte extract per λ, where the NTT form pays a
+    whole INTT + coset NTT per row.
+
+    Reference — flock's `InvNttTableByteSingleGf8`, the same table and the same
+    XOR-shift loop, one byte per element where this packs eight per word:
+      https://github.com/succinctlabs/flock/blob/85fc0e7cc002e7ca4dffdff805ba89976e9a5293/crates/flock-core/src/ntt/inv_table.rs#L154-L167
+    and its §2.1 derivation of the relation:
+      https://github.com/succinctlabs/flock/blob/85fc0e7cc002e7ca4dffdff805ba89976e9a5293/crates/flock-core/src/ntt/inv_table.rs#L1-L21
+
+    **Spelled as one gather under an XOR-reduce, not eight gathers XORed.** They
+    compute the same words, but XLA:CPU fuses the gather into the reduce and
+    materializes only the [N, 8] result, where the eight-gather form emits eight
+    separate fusions and writes then re-reads a whole [N, 8] buffer per group —
+    enough extra traffic to lose to the NTT this replaces."""
+    table = fnp.asarray(_circulant_words())
+    group = np.arange(_EXT_WORDS)
+    # The same vector splits both ends: a source row into its 8 byte groups,
+    # then each result word into the 8 λ bytes it carries.
+    byte_shift = fnp.asarray((group * 8).astype(np.uint64))
+    offset = fnp.asarray((group * 256).astype(np.int32))
+    src = ((rows[:, None] >> byte_shift) & np.uint64(0xFF)).astype(fnp.int32)
+    words = lax.reduce(table[offset + src], np.uint64(0), lax.bitwise_xor, (1,))
+    return (
+        ((words[:, :, None] >> byte_shift) & np.uint64(0xFF))
+        .astype(fnp.uint8)
+        .reshape(-1, _EXT_WORDS * 8)
+    )
+
+
 def _to_u8(x):
     return lax.bitcast_convert_type(x, fnp.uint8)
 
@@ -400,6 +486,19 @@ def _fold_medium(values, eq_outer_scaled):
     return fnp.sum(chunk * eq_outer_scaled[:, None], axis=0)
 
 
+def _extend_factor(x, n_rows: int, k_skip: int):
+    """S→Λ extension of one round-1 factor -> AES rows `[n_rows, 2^k_skip]`.
+
+    The packed F128 witness at k_skip = 6 goes through the circulant byte
+    table: its flat uint64 view IS the table's 64-bit row, so that form skips
+    both the NTT pair and the 8x bit expansion `_round1_input_rows` would
+    materialize. Every other form — an unpacked bit array, raw F8 bytes the
+    table's bit index cannot address, another k_skip — keeps the NTT."""
+    if k_skip == _EXT_TABLE_K_SKIP and is_packed_witness(x):
+        return lax.bitcast_convert_type(_extend_packed_rows(x.reshape(-1)), _AES)
+    return _extend_rows(_round1_input_rows(x, n_rows), k_skip)
+
+
 @functools.partial(frx.jit, static_argnums=(3,))
 def _round1_core_factored(a, b, c, k_skip, r):
     """`_round1_core`'s message over the factored row-eq — the same (P^AB, P^C).
@@ -421,10 +520,10 @@ def _round1_core_factored(a, b, c, k_skip, r):
     mg = sumcheck.build_eq(outer_point[_N_SMALL : _N_SMALL + _N_MEDIUM])
     eo = sumcheck.build_eq(outer_point[_N_SMALL + _N_MEDIUM :]) * (sg[0] * mg[0])
 
-    a_rows, b_rows, c_rows = (_round1_input_rows(x, n_rows) for x in (a, b, c))
-    ab = _to_u8(_extend_rows(a_rows, k_skip) * _extend_rows(b_rows, k_skip))
+    a_l, b_l = (_extend_factor(x, n_rows, k_skip) for x in (a, b))
+    ab = _to_u8(a_l * b_l)
     p_ab = _fold_medium(_fold_small(ab, bits=False), eo)
-    p_c = _fold_medium(_fold_small(c_rows, bits=True), eo)
+    p_c = _fold_medium(_fold_small(_round1_input_rows(c, n_rows), bits=True), eo)
     return p_ab, _extend_folded_c(p_c, k_skip)
 
 
