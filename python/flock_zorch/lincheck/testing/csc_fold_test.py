@@ -1,13 +1,19 @@
 # Copyright 2026 The Zorch Authors. SPDX-License-Identifier: Apache-2.0
 """Native unit test for `lincheck.CscCircuit.fold_alpha_batched` (no golden).
 
-The device fold is a column-sorted prefix-XOR scan (`_csc_fold._seg_xor_fold`);
-the reference here is the naive transposed binary matvec — a host numpy XOR
-scatter over uint64 lanes, independent of the sort/segment/scatter plumbing —
-with only the final α·a ⊕ b combine on the field dtype. This carries the
-non-identity A₀/B₀ structure coverage the retired per-layer lincheck golden gate
-had (the proof-level gates only drive identity or procedural circuits); the
-fold's byte-identity to flock rides those proof gates."""
+The device fold has two formulations — a column-sorted prefix-XOR scan on GPU
+(`_csc_fold._seg_xor_fold`) and a plain scatter-XOR on CPU
+(`_csc_fold._scatter_xor_fold`) — and `CscCircuit` picks one by backend. The
+reference here is the naive transposed binary matvec — a host numpy XOR scatter
+over uint64 lanes, independent of the sort/segment/scatter plumbing — with only
+the final α·a ⊕ b combine on the field dtype. This carries the non-identity
+A₀/B₀ structure coverage the retired per-layer lincheck golden gate had (the
+proof-level gates only drive identity or procedural circuits); the fold's
+byte-identity to flock rides those proof gates.
+
+`FoldArmLockstepTest` drives BOTH arms against that reference on whichever
+backend is running, so CPU CI — where `CscCircuit` selects the scatter — still
+gates the scan arm the GPU prover takes, and vice versa."""
 from __future__ import annotations
 
 import frx
@@ -19,6 +25,13 @@ from absl.testing import absltest, parameterized  # noqa: E402
 
 from flock_zorch import ghash  # noqa: E402
 from flock_zorch.lincheck import CscCircuit  # noqa: E402
+from flock_zorch.lincheck._csc_fold import (  # noqa: E402
+    _csc_segments,
+    _flat_nz,
+    _flatten_nz,
+    _scatter_xor_fold,
+    _seg_xor_fold,
+)
 from flock_zorch.testing._util import rand_ghash  # noqa: E402
 
 
@@ -79,6 +92,36 @@ class CscFoldTest(parameterized.TestCase):
         a_rows = [[], [k - 1], [], [0, k - 1]] + [[] for _ in range(k - 4)]
         b_rows = [[] for _ in range(k)]
         self._assert_fold_matches(a_rows, b_rows, k, seed=13)
+
+
+class FoldArmLockstepTest(parameterized.TestCase):
+    """Both platform arms against the naive reference, on whichever backend is
+    running — so CPU CI gates the scan the GPU prover takes, and vice versa."""
+
+    def _assert_arms_match(self, rows, k: int, seed: int):
+        eq_g = rand_ghash(np.random.default_rng(seed), len(rows))
+        want = _ref_matvec_lanes(rows, ghash.to_lanes(eq_g), k)
+        col, row = _flatten_nz(rows)
+        for name, plan, fold in (
+            ("scan (gpu arm)", _csc_segments, _seg_xor_fold),
+            ("scatter (cpu arm)", _flat_nz, _scatter_xor_fold),
+        ):
+            with self.subTest(name):
+                got = fold(eq_g, *plan(col, row), k)
+                np.testing.assert_array_equal(ghash.to_lanes(got), want)
+
+    @parameterized.parameters((16, 3, 0), (64, 4, 1), (256, 6, 2))
+    def test_random_sparse_arms(self, k: int, max_nnz: int, seed: int):
+        rng = np.random.default_rng(seed)
+        self._assert_arms_match(_rand_rows(rng, k, k, max_nnz), k, seed)
+
+    def test_skewed_column_arms(self):
+        # The const_pin shape: every row hits column 0, so one column's XOR-reduce
+        # is the whole matrix. The scan arm exists to survive it without atomics;
+        # the scatter arm must land on the same bytes.
+        k = 64
+        rng = np.random.default_rng(7)
+        self._assert_arms_match([[0, int(rng.integers(1, k))] for _ in range(k)], k, 7)
 
 
 if __name__ == "__main__":

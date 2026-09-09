@@ -1,9 +1,17 @@
 """Device CSC (column-sparse) fold for `lincheck.CscCircuit` — the perf machinery
 kept out of lincheck/prover.py so its protocol reads top-to-bottom. The
 transposed binary matvec out[c] = XOR_{r:M[r,c]=1} eq[r] is a column-segmented
-XOR-reduce: sort the flat nonzeros by column ONCE (host), then per fold run a
-device prefix-XOR scan + segment diff + clean scatter-set — no atomics, so the
-skewed const_pin column is not a hotspot. Byte-identical to a host scatter.
+XOR-reduce, and the two platforms reach it differently:
+
+- GPU (`_csc_segments` + `_seg_xor_fold`): sort the flat nonzeros by column ONCE
+  (host), then per fold run a device prefix-XOR scan + segment diff + clean
+  scatter-set — no atomics, so the skewed const_pin column is not a hotspot.
+- CPU (`_flat_nz` + `_scatter_xor_fold`): scatter-XOR the nonzeros straight into
+  one accumulator, in the row-major order they were flattened in. XLA:CPU emits
+  the scatter as a serial loop, so the scan's log-depth passes are pure overhead
+  there, and the sort is not worth its locality (see `_flat_nz`).
+
+Both are byte-identical to a host scatter, and to each other.
 
 Requires jax_enable_x64.
 """
@@ -65,3 +73,38 @@ def _seg_xor_fold(eq, row_sorted, seg_end, present, k):
     prev = fnp.concatenate([ghash.zeros(1), ends[:-1]], axis=0)
     seg = ends + prev  # per-column XOR-reduce (add is its own inverse)
     return ghash.zeros(k).at[present].set(seg)
+
+
+def _flat_nz(col, row):
+    """Precompute the CPU scatter-XOR plan for one sparse binary matrix M (flat
+    nonzeros: M[row[i], col[i]] = 1). Unlike `_csc_segments` this keeps the
+    nonzeros in the row-major order `_flatten_nz` produced — no sort, so there
+    are no segments to diff and no scan to run; `_scatter_xor_fold` reads these
+    two arrays directly.
+
+    Leaving them row-major is the faster order, not merely the cheaper one.
+    Column-sorting makes the accumulator writes sequential but the `eq` gather
+    random; row-major does the reverse, and the reverse wins, because a row's
+    whole run of nonzeros gathers the SAME eq[r] (row degrees reach 2,514 on the
+    m26 blake3 A₀) while both the accumulator and eq are 256 KiB and L2-resident
+    either way. Measured on that matrix, m26, 16 cores: 34.9 ms row-major vs
+    50.6 ms column-sorted (and 51.1 ms with `indices_are_sorted`).
+
+    Returns device int32 arrays (col, row) or None if empty."""
+    if len(col) == 0:
+        return None
+    return fnp.asarray(col.astype(np.int32)), fnp.asarray(row.astype(np.int32))
+
+
+@functools.partial(frx.jit, static_argnums=(3,))
+def _scatter_xor_fold(eq, col, row, k):
+    """Device transposed binary matvec out[c] = XOR_{i:col[i]=c} eq[row[i]], as
+    one scatter-XOR into a single dense [k,2] accumulator (ghash add IS XOR, so
+    the scatter-add is the XOR-reduce and duplicate columns accumulate).
+
+    The CPU arm of `_seg_xor_fold`, and byte-identical to it. XLA:CPU lowers a
+    scatter to a serial loop over the nonzeros, which is what makes this the
+    cheaper shape there — the scan arm's log-depth passes buy parallelism the
+    backend does not deliver — and equally what caps it: one core does the whole
+    reduce (fractalyze/xla#679)."""
+    return ghash.zeros(k).at[col].add(eq[row])
