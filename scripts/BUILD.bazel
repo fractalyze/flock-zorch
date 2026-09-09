@@ -1,0 +1,5 @@
+# `zorch_pythonpath.sh` is a dev/venv helper, not a bazel target — but its memo
+# is on the harness worker's startup path, so its invalidation is tested. The
+# test drives a COPY over a synthetic checkout, so this only has to reach
+# runfiles.
+exports_files(["zorch_pythonpath.sh"])

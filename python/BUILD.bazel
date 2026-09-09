@@ -134,6 +134,34 @@ py_test(
     ],
 )
 
+# The readiness instrument and its worker ride in srcs together: the bench
+# reads the worker's source to check that the phases it reports are the marks
+# the worker still writes, and neither is carried by a library
+# (`py_library` excludes testing/, `test_support` globs only `_*.py`).
+py_test(
+    name = "worker_startup_bench_test",
+    size = "small",
+    srcs = [
+        "flock_zorch/testing/bench_worker.py",
+        "flock_zorch/testing/worker_startup_bench.py",
+        "flock_zorch/testing/worker_startup_bench_test.py",
+    ],
+    main = "flock_zorch/testing/worker_startup_bench_test.py",
+    deps = [
+        ":flock_zorch",
+        ":test_support",
+    ],
+)
+
+# The memo that keeps two bazel round-trips out of every harness worker. Pure
+# shell behaviour against a bazel stub — no bazel, no device, no golden.
+py_test(
+    name = "zorch_pythonpath_test",
+    size = "small",
+    srcs = ["flock_zorch/testing/zorch_pythonpath_test.py"],
+    data = ["//scripts:zorch_pythonpath.sh"],
+)
+
 # Fork-fixture byte gate for the benchmark profile's BLAKE3 Merkle arm: leaf
 # non-root chaining values at every leaf shape class, parent compressions, and
 # composed tree roots vs the fork's own merkle module; SHA-256 as the control.

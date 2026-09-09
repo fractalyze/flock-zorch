@@ -264,6 +264,11 @@ XLA compile inside the harness's readiness budget, so warm trials have to hit
 that cache. [`docs/measurement.md`](docs/measurement.md) has the rules for
 running that harness and reading what comes out.
 
+`python/flock_zorch/testing/worker_startup_bench.py` attributes the readiness
+wall those workers pay: it drives an entry script the way the harness does and
+reports min / median / spread per phase, `--programs` adding the XLA cache load
+per program.
+
 ```bash
 git -C "$SCRATCH" clone https://github.com/Layr-Labs/flock-challenge.git
 git -C "$SCRATCH/flock-challenge" checkout d866043
