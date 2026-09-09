@@ -36,6 +36,9 @@ each cost a session — is [`docs/measurement.md`](docs/measurement.md).
 The rules every change must respect — the proof-level byte gates and the
 porting/dtype/kernel gotchas — are
 [`docs/development.md`](docs/development.md).
+Where the CPU tier stands against the Yukon x86 leaderboard's frontier
+submission, measured under the official harness on one machine, is
+[`docs/results-m26-x86-frontier.md`](docs/results-m26-x86-frontier.md).
 
 ## Installation
 
