@@ -9,6 +9,12 @@ field-generic LCH14 additive NTT through `lax.ntt`, so this module carries no
 field code — only φ₈ (a field homomorphism into an F128 subfield, the only
 link between the AES basis and the GHASH basis) and the round-1 plumbing.
 
+`round1_rows` picks the formulation, not the message: the composite
+(`_round1_partial_decomp`) spells the naive per-row form the GPU emitter
+consumes, and `_round1_core_factored` spells the same message over the
+factored row-eq — gf8 bytes throughout, one GHASH multiply per outer chunk.
+Both produce the identical round-1 message.
+
 The S→Λ extension is `INTT ℓ → coset-NTT ℓ` at β=ℓ: the inverse NTT recovers the
 degree-<ℓ coefficients, and the forward coset NTT evaluates them directly on the
 Λ = β+S coset (β = ℓ) via lax.ntt's `coset=` (fractalyze/xla #307) — replacing the
@@ -313,6 +319,115 @@ def _round1_core(a, b, c, k_skip, r):
     return acc[0], _extend_folded_c(acc[1], k_skip)
 
 
+# ---------------------------------------------------------------------------
+# Factored-eq round-1 core — the CPU tier's formulation.
+# ---------------------------------------------------------------------------
+
+# The protocol's inner dims, split by the identity each one admits. The three
+# small challenges are φ₈([0xF7, 0x53, 0xB5]) and the four medium ones are
+# β_i = γ^(2^(i - 1)) / (1 + γ^(2^(i - 1))), so `prover.N_INNER == 3 + 4` here.
+_N_SMALL, _N_MEDIUM = 3, 4
+_SMALL, _MEDIUM = 1 << _N_SMALL, 1 << _N_MEDIUM
+
+
+def _gf8_reduce(p):
+    """AES-poly (0x11B) reduce of a value below 2¹⁶, elementwise.
+
+    x⁸ ≡ 0x1B, so folding the high bits is `h ^ (h << 1) ^ (h << 3) ^ (h << 4)`;
+    two folds suffice because the first leaves at most 11 bits. Shared with the
+    Triton kernel, which spells the same reduction on int32 lanes."""
+    h = p >> 8
+    t = (p & 0xFF) ^ h ^ (h << 1) ^ (h << 3) ^ (h << 4)
+    h2 = t >> 8
+    return (t & 0xFF) ^ h2 ^ (h2 << 1) ^ (h2 << 3) ^ (h2 << 4)
+
+
+def _build_convert_table() -> np.ndarray:
+    """`γᵇ · φ₈(v)` for b ∈ [0, 16), v ∈ [0, 256) — uint64 `[16, 256, 2]` lanes.
+
+    flock's `univariate_skip_optimized.rs::build_convert_table`, 64 KB. γ is
+    GHASH's x, so the doubling chain is the lane shift with the 0x87 carry
+    reduction and needs no field multiply to build."""
+    table = np.zeros((_MEDIUM, 256, 2), dtype=np.uint64)
+    table[0] = PHI_8_TABLE
+    for b in range(1, _MEDIUM):
+        lo, hi = table[b - 1, :, 0], table[b - 1, :, 1]
+        carry = np.where(hi >> np.uint64(63) != 0, np.uint64(0x87), np.uint64(0))
+        table[b, :, 0] = (lo << np.uint64(1)) ^ carry
+        table[b, :, 1] = (hi << np.uint64(1)) | (lo >> np.uint64(63))
+    return table
+
+
+# Flat `[16 * 256]` ghash, indexed `b * 256 + v` — one gather per medium
+# position replaces that position's F128 multiply.
+_CONVERT_DEV_G = ghash.to_ghash(fnp.asarray(_build_convert_table().reshape(-1, 2)))
+
+
+def _fold_small(rows, *, bits: bool):
+    """Fold the 3 small dims of byte `[n_rows, ell]` rows onto `[n_out, 16, ell]`,
+    as `Σ_K xᴷ · rows[(o << 7) | (med << 3) | K]` in F8.
+
+    `eq_small[K] = SG[0] · αᴷ` with α = φ₈(x), and φ₈ is a field homomorphism,
+    so `Σ_K eq_small[K] · φ₈(y_K) = SG[0] · φ₈(Σ_K xᴷ · y_K)` — the 8 F128
+    multiplies collapse into 8 u16 shift-XORs.
+
+    `bits` says which track this is, and both halves of the answer follow from
+    it. The AB track folds F8 products, whose shifted sum reaches 15 bits and
+    needs the AES-poly reduce. The C track folds witness bits — and reads them
+    the way the composite does, as `!= 0` rather than as bytes, because
+    `_round1_input_rows` passes some input forms through uncoerced. That
+    coercion is what bounds `Σ_K c_K · 2ᴷ` below 256, so the fold is a no-op
+    and the convert-table gather below cannot run off the end of its row."""
+    planes = rows.reshape(-1, _MEDIUM, _SMALL, rows.shape[-1])
+    if bits:
+        planes = planes != 0
+    acc = planes[:, :, 0].astype(fnp.uint16)
+    for k in range(1, _SMALL):
+        acc = acc ^ (planes[:, :, k].astype(fnp.uint16) << k)
+    return acc if bits else _gf8_reduce(acc)
+
+
+def _fold_medium(values, eq_outer_scaled):
+    """Fold the 4 medium dims and then the outer dims of a `[n_out, 16, ell]`
+    byte plane onto one ghash `[ell]`.
+
+    `eq_med[b] = MG[0] · γᵇ`, so `Σ_b eq_med[b] · φ₈(v_b)` is a row of the
+    convert table — 16 gathers and 16 XORs where the naive form spends 16 F128
+    multiplies. Only the outer fold that follows stays a GHASH multiply, one
+    per (outer chunk, λ)."""
+    offset = fnp.arange(_MEDIUM, dtype=fnp.int32)[None, :, None] * 256
+    chunk = fnp.sum(_CONVERT_DEV_G[offset + values.astype(fnp.int32)], axis=1)
+    return fnp.sum(chunk * eq_outer_scaled[:, None], axis=0)
+
+
+@functools.partial(frx.jit, static_argnums=(3,))
+def _round1_core_factored(a, b, c, k_skip, r):
+    """`_round1_core`'s message over the factored row-eq — the same (P^AB, P^C).
+
+    `build_eq` pairs challenge i with row bit i, so with row =
+    `(o << 7) | (b << 3) | K` the row-eq factors as `EO[o] · MG[b] · SG[K]`,
+    and the two inner factors are geometric under the protocol's pinned inner
+    challenges (`_inner_challenges_pinned` guards that). Folding them in that
+    order — small by shift-reduce, medium by convert table, outer by one GHASH
+    multiply — keeps the whole contraction on gf8 bytes until the last step,
+    where the composite lifts every product bit to F128 first. `SG[0] · MG[0]`
+    is the constant both folds drop; it rides into the outer eq table.
+
+    Same formulation as `_urm_pallas`, in ordinary array primitives so it
+    lowers on CPU."""
+    outer_point = r[k_skip:]
+    n_rows = 1 << outer_point.shape[0]
+    sg = sumcheck.build_eq(outer_point[:_N_SMALL])
+    mg = sumcheck.build_eq(outer_point[_N_SMALL : _N_SMALL + _N_MEDIUM])
+    eo = sumcheck.build_eq(outer_point[_N_SMALL + _N_MEDIUM :]) * (sg[0] * mg[0])
+
+    a_rows, b_rows, c_rows = (_round1_input_rows(x, n_rows) for x in (a, b, c))
+    ab = _to_u8(_extend_rows(a_rows, k_skip) * _extend_rows(b_rows, k_skip))
+    p_ab = _fold_medium(_fold_small(ab, bits=False), eo)
+    p_c = _fold_medium(_fold_small(c_rows, bits=True), eo)
+    return p_ab, _extend_folded_c(p_c, k_skip)
+
+
 @functools.partial(frx.jit, static_argnums=(1, 2))
 def _packed_to_rows(packed, m: int, k_skip: int):
     """Packed F128 witness [2^(m-7), 2] uint64 -> uint8 rows [2^(m-k_skip), 2^k_skip],
@@ -363,14 +478,26 @@ def _pinned_inner_lanes() -> np.ndarray:
     return np.concatenate([prover.small_challenges(), prover.medium_challenges()])
 
 
-def _round1_pallas_ok(a, b, c, m: int, k_skip: int, r) -> bool:
-    """May round-1 run on the Triton factored-eq kernel for this call?
+def _inner_challenges_pinned(k_skip: int, r) -> bool:
+    """Are `r`'s inner 7 coordinates the protocol's pinned small/medium
+    challenges?
 
-    The kernel's algebra (u16 shift-reduce, gamma-Horner) holds only for the
-    protocol's pinned small/medium inner challenges, so the guard compares the
-    inner 7 coordinates of `r` byte-wise against them — a 7-scalar host pull,
-    once per prove. Everything that fails here takes the composite, which is
-    correct for any challenges."""
+    Both factored formulations rest on `eq_small` and `eq_med` being geometric,
+    which holds only for those values, so the guard compares them byte-wise — a
+    7-scalar host pull, once per prove. Everything that fails here takes the
+    composite, which is correct for any challenges, and a traced `r` (a caller
+    that jits the whole prove rather than its stages) fails here for exactly
+    that reason: its values are not readable at trace time."""
+    expected = _pinned_inner_lanes()
+    n_inner = expected.shape[0]
+    if isinstance(r, frx.core.Tracer) or r.shape[0] < k_skip + n_inner:
+        return False
+    inner = np.asarray(ghash.to_lanes(r[k_skip : k_skip + n_inner]))
+    return bool((inner == expected).all())
+
+
+def _round1_pallas_ok(a, b, c, m: int, k_skip: int, r) -> bool:
+    """May round-1 run on the Triton factored-eq kernel for this call?"""
     if frx.default_backend() != "gpu" or k_skip != 6:
         return False
     if not all(is_packed_witness(x) for x in (a, b, c)):
@@ -380,12 +507,21 @@ def _round1_pallas_ok(a, b, c, m: int, k_skip: int, r) -> bool:
 
     if (1 << (m - k_skip)) < _urm_pallas._ROWS_PER_PARTIAL:
         return False  # the grid is whole programs
-    expected = _pinned_inner_lanes()
-    n_inner = expected.shape[0]
-    if r.shape[0] < k_skip + n_inner:
+    return _inner_challenges_pinned(k_skip, r)
+
+
+def _round1_factored_ok(m: int, k_skip: int, r) -> bool:
+    """May round-1 run on the portable factored-eq core for this call?
+
+    CPU only: it is the tier that has no custom emitter, so the composite it
+    replaces there lowers as the naive per-row form. On GPU the composite IS
+    the fused emitter's operand and the Triton kernel already carries this
+    formulation, so nothing would be gained by diverting either."""
+    if frx.default_backend() != "cpu":
         return False
-    inner = np.asarray(ghash.to_lanes(r[k_skip : k_skip + n_inner]))
-    return bool((inner == expected).all())
+    if m - k_skip < _N_SMALL + _N_MEDIUM:
+        return False  # no outer dims left once the inner 7 are folded
+    return _inner_challenges_pinned(k_skip, r)
 
 
 def round1_rows(a, b, c, m: int, k_skip: int, r):
@@ -399,13 +535,17 @@ def round1_rows(a, b, c, m: int, k_skip: int, r):
     host lift; consumers observe/interpolate natively and byte-gate readers
     normalize via `ghash.to_lanes`.
 
-    On GPU with the packed F128 witness and the pinned inner challenges this
-    dispatches to the Triton factored-eq kernel (1.7x the composite kernel at
-    the 2^22-row block geometry, and it reads eq_out — 16 B per 128 rows —
-    instead of a materialized row-eq); the composite stays the portable path
-    and the byte oracle, the same split `witness_blake3` uses."""
+    Under the pinned inner challenges the message is computed over the factored
+    row-eq: on GPU with the packed F128 witness by the Triton kernel (1.7x the
+    composite kernel at the 2^22-row block geometry, and it reads eq_out — 16 B
+    per 128 rows — instead of a materialized row-eq), on CPU by
+    `_round1_core_factored`. The composite stays the fallback for any other
+    challenges and the byte oracle both are gated against, the same split
+    `witness_blake3` uses."""
     if _round1_pallas_ok(a, b, c, m, k_skip, r):
         from flock_zorch.zerocheck import _urm_pallas  # deferred: import cycle
 
         return _urm_pallas.round1_core_pallas(a, b, c, k_skip, r)
+    if _round1_factored_ok(m, k_skip, r):
+        return _round1_core_factored(a, b, c, k_skip, r)
     return _round1_core(a, b, c, k_skip, r)  # eqx build + extend+phi+accum, fused
