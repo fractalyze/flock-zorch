@@ -1,8 +1,12 @@
 # Result: the m26 CPU tier against the Yukon x86 frontier
 
-The published record of one measured pair: the FRX CPU tier and the
-`eigenlabs/flock-challenge-multi/x86` frontier submission, proving the same
-m26 instance under the official harness, on one machine, in one session.
+The published record of one measured pair: the FRX CPU tier and the frontier
+submission on Yukon's `eigenlabs/flock-challenge-multi/x86` track, proving the
+same m26 instance under the official harness, on one machine, in one session.
+Two names appear throughout and both are right:
+`eigenlabs/flock-challenge-multi/x86` is the Yukon leaderboard identifier,
+while `Layr-Labs/flock-challenge-multi` is the GitHub repository the harness
+and the submission sources are cloned from.
 
 [`measurement.md`](measurement.md) holds the durable rules for producing a
 number this repo will believe. This file is the dated record of a single run,
@@ -25,30 +29,52 @@ cores), 16 threads.
 criterion this measurement was taken against — the FRX tier above the
 frontier's same-machine score, with margin — is **not met**.
 
-Stated alongside, as context rather than as the contract:
+Stated alongside, as context rather than as the contract. Everything below is
+an **in-process** prove, which is a different measurement domain from the
+ranked scores above: the ranked window is a fresh worker per trial timed from
+seed to proof rename. The two sets of ratios are therefore not expected to
+agree, and a figure from one domain must not be divided by a figure from the
+other.
 
-- **The reachable ceiling is 290,633 comp/s** — upstream
-  `succinctlabs/flock@85fc0e7`, this repo's own golden dependency, proving the
-  same m26 instance in 14.09 ms on this box. That is a measured floor for the
-  byte-identical protocol, not an extrapolation. The FRX tier is **39.8x**
-  under it; the frontier is **1.85x above** it. The frontier's margin over the
-  reference is ranked engineering plus one freedom this project does not have:
-  the harness's trusted verifier is built from the submission's own editable
-  sources, so a submission may co-evolve prover and verifier, while
-  flock-zorch's first non-negotiable is byte-identity to upstream flock. So
-  the 73.8x splits into a part compiler and prover work can address (39.8x, to
-  the ceiling) and a part that rule puts out of reach (1.85x, ceiling to
-  frontier). The full per-phase account is #333's, posted on #323 (comment
-  5596452109, §6).
-- **The in-process prove wall is 489.6 ms at its minimum** (8,366 comp/s),
-  three rounds of n=5 unbarriered in-process proves, spread 7.0–15.4 %. That
-  is the prover's own speed with the per-process startup excluded; it is a
-  median-and-min, not a ranked score.
+- **This session's in-process prove wall: 489.6 ms at its minimum**
+  (8,366 comp/s), three rounds of n=5 unbarriered proves, `taskset -c 0-15`.
+  Per round — min 489.6 / 556.6 / 490.0 ms, median 540.3 / 577.1 / 495.1 ms,
+  spread 15.4 / 7.0 / 12.6 %. Startup is excluded. A min and a median, not a
+  ranked score.
+- **The reachable ceiling is 290,633 comp/s (14.09 ms), and it is an inherited
+  figure** — measured by #333 on 2026-09-09, on this box and with these pins,
+  and not re-measured here. It is upstream `succinctlabs/flock@85fc0e7`, this
+  repo's own golden dependency, proving the same m26 instance: a measured
+  floor for the byte-identical protocol rather than an extrapolation. #333
+  records it as a best-of-3 in-process prove and publishes no spread for it,
+  so it is a min without one.
 
-For the same instance and contract, #322 measured this pair a day apart at
-519,852 against 3,022 comp/s (172x). The FRX arm is **2.42x** faster here, and
-both arms above were run in this session, so neither the ratio nor its
-denominator is inherited.
+Against that ceiling, in the in-process domain where it was measured, using
+#333's own third arm for the frontier so all three rows are like-for-like:
+
+| arm | in-process prove | comp/s | source |
+|---|---:|---:|---|
+| flock-zorch FRX CPU tier | 489.6 ms (min of 5) | 8,366 | this session |
+| reference flock `85fc0e7` | 14.09 ms (best of 3) | 290,633 | #333, inherited |
+| Yukon frontier `e1a16581` | 8.258 ms (min of 20) | 496,010 | #333, inherited |
+
+**34.7x** from the CPU tier to the reference ceiling, then **1.71x** from that
+ceiling to the frontier. The first is the part compiler and prover work can
+address. The second is ranked engineering plus one freedom this project does
+not have: the harness's trusted verifier is built from the submission's own
+editable sources, so a submission may co-evolve prover and verifier, while
+flock-zorch's first non-negotiable is byte-identity to upstream flock. The
+full per-phase account is #333's, posted on
+[#323, comment 5596452109](https://github.com/fractalyze/flock-zorch/issues/323#issuecomment-5596452109);
+§6 is the ceiling statement.
+
+Against #322's ranked m26 pair, which measured its two arms a day apart at
+519,852 and 3,022 comp/s (172x): the frontier arm has barely moved (538,547
+here, +3.6 %, on a far tighter spread — p90/p10 1.178 against 3.80), and the
+FRX arm is **2.42x** faster on the wheel carrying fractalyze/xla#679 and
+fractalyze/xla#687. That 2.42x is a cross-session comparison whose denominator
+is #322's inherited 3,022, not a same-session measurement. The **73.8x** above
+is same-session on both arms.
 
 ## Method
 
