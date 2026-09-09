@@ -22,6 +22,26 @@ The benchmark itself — how to run it and what it has published — is in
   `$CUDA_ROOT` there still expands to its OLD value, so the root never reaches
   `PATH` — that one line is how the mixed state is usually reached.
 
+- **A 13.3 toolchain is a pip install; the box does not need one.** When
+  `/usr/local/cuda` is older (12.9 on the reference box) the gates refuse and
+  the Pallas kernels do not degrade — Triton assembles with its own bundled
+  ptxas and dies at `Not a name of any known instruction: 'clmad.hi'`. There is
+  no need to touch the machine's CUDA, which on a shared box you should not:
+
+  ```sh
+  .venv/bin/pip install --no-deps --index-url https://pypi.nvidia.com \
+      nvidia-cuda-nvcc==13.3.73
+  export PATH="$PWD/.venv/lib/python3.11/site-packages/nvidia/cu13/bin:$PATH"
+  ```
+
+  Two naming traps: the package is `nvidia-cuda-nvcc` **unsuffixed** — the
+  `-cu12` one stops at 12.9 and `-cu13` is a stub on PyPI with no real wheel —
+  and it is on `pypi.nvidia.com`, not PyPI. It ships `ptxas` *and* `nvlink`, both
+  13.3.73, **in one directory**, which is exactly the single-toolchain-on-`PATH`
+  state the bullet above asks for; it needs no `CUDA_ROOT`. A venv that was
+  built without it has no `nvidia/` tree at all, so the "falls back to the
+  venv's bundled CUDA" case below is not the only way `PATH` comes up empty.
+
 - **A 13.3 `ptxas` is what emits `clmad`, and `ptxas --version` is not
   automatically the check** — it is only the check once the toolchain is on
   `PATH` as above. With a 13.3 `ptxas` the compiler emits
