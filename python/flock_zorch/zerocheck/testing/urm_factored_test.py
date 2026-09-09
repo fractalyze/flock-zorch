@@ -91,6 +91,42 @@ class UrmFactoredTest(parameterized.TestCase):
                 err_msg=f"{name} diverges on raw C bytes",
             )
 
+    def test_circulant_table_extends_every_byte_of_every_group(self) -> None:
+        """The claim the byte table rests on: `ext(v at group b)[8w + i] ==
+        ext(v at 0)[8(w ^ b) + i]`, so eight table words reproduce the
+        INTT → coset-NTT pair. Checked on every byte value in every group,
+        which by F2-linearity generates every 64-bit row."""
+        v = np.arange(256, dtype=np.uint64)
+        rows = fnp.asarray(np.concatenate([v << np.uint64(8 * b) for b in range(8)]))
+        bits = _urm._lsb_bits(rows, ELL).astype(fnp.uint8)
+        want = _urm._to_u8(_urm._extend_rows(bits, K_SKIP))
+        np.testing.assert_array_equal(
+            np.asarray(_urm._extend_packed_rows(rows)), np.asarray(want)
+        )
+
+    def test_raw_f8_byte_rows_keep_the_ntt_path(self) -> None:
+        """The table indexes a row of BITS, and `_round1_input_rows` hands a
+        flat uint8 array through uncoerced — so an A/B byte above 1 must keep
+        the NTT rather than index the table as a bit pattern. The composite is
+        the reference for that input, as it is for every other."""
+        m = 15
+        n_rows = 1 << (m - K_SKIP)
+        rng = np.random.default_rng(41)
+        flat = lambda hi: fnp.asarray(  # noqa: E731
+            rng.integers(0, hi, size=n_rows * ELL, dtype=np.uint8)
+        )
+        a, b, c = flat(256), flat(256), flat(2)
+        r = _protocol_r(rng, m)
+
+        want = _urm._round1_core(a, b, c, K_SKIP, r)
+        got = _urm._round1_core_factored(a, b, c, K_SKIP, r)
+        for name, w, g in zip(("P^AB", "P^C"), want, got):
+            np.testing.assert_array_equal(
+                np.asarray(ghash.to_lanes(g)),
+                np.asarray(ghash.to_lanes(w)),
+                err_msg=f"{name} diverges on raw F8 A/B bytes",
+            )
+
     def test_dispatch_takes_the_factored_core_on_cpu(self) -> None:
         """The pinned inner challenges select it; anything else falls back."""
         if frx.default_backend() != "cpu":

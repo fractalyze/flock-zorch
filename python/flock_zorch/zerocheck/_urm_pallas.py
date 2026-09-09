@@ -18,13 +18,12 @@ split `witness_blake3` uses. Output keeps `_round1_partials`' contract
 and the proof byte gates apply unchanged.
 
 Table forms:
-  - t0word  u64[256, 8]: ext(v at byte 0) packed 8 bytes per word,
-    word w = ext bytes 8w..8w+7 little-endian. By the circulant
-    ext(v at b)[8w+i] == ext(v at 0)[8(w^b)+i], the S→Λ extension of a
-    packed row is per-λ word_λ = XOR_b t0word[byte_b(src)][(λ>>3) ^ b]
-    followed by ONE byte extract at offset λ&7 — 8 distinct 8-byte
-    addresses per gather instead of the 64 distinct 1-byte addresses of
-    the per-λ byte-table form (which paid ~8× the L1 transactions).
+  - t0word  u64[256, 8]: `_urm._t0word()`, the circulant extension table both
+    tiers read — this kernel here, XLA:CPU through `_urm._extend_packed_rows`.
+    The kernel gathers it as 8 distinct 8-byte addresses per row group
+    (`word_λ = XOR_b t0word[byte_b(src)][(λ>>3) ^ b]`, then ONE byte extract
+    at offset λ&7). A per-λ byte table addresses the same bytes as 64 distinct
+    1-byte loads, and Triton charges load-issue slots per lane.
   - phi_lo/phi_hi u64[256]: φ8 lift lanes.
   - log u8[256] / alog u8[512]: F8 discrete-log multiply (generator 0x03),
     log[0] a sentinel masked by the zero test.
@@ -165,18 +164,7 @@ def _kernel(
 @functools.cache
 def _tables() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """t0word, phi_lo, phi_hi, log, alog — host-built once per process."""
-    byte_rows = np.zeros((256, 64), dtype=np.uint8)
-    for byte in range(256):
-        for col in range(64):
-            byte_rows[byte, col] = (byte >> col) & 1 if col < 8 else 0
-    # Concrete even under an enclosing trace: the tables are input-independent
-    # constants (the @cache would otherwise capture tracers).
-    with frx.ensure_compile_time_eval():
-        ext = np.asarray(_urm._to_u8(_urm._extend_rows(fnp.asarray(byte_rows), 6)))
-    t0byte = ext.astype(np.uint8)  # [256, 64]
-    t0word = np.zeros((256, 8), dtype=np.uint64)
-    for i in range(8):
-        t0word |= t0byte[:, i::8].astype(np.uint64) << np.uint64(8 * i)
+    t0word = _urm._t0word()  # the CPU extension reads the same builder
     phi = _urm.PHI_8_TABLE  # u64 [256, 2]
     phi_lo = np.ascontiguousarray(phi[:, 0])
     phi_hi = np.ascontiguousarray(phi[:, 1])
