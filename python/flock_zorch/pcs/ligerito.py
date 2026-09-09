@@ -159,9 +159,8 @@ _cpu_query_jit = frx.jit(
 )
 
 
-@functools.partial(frx.jit, static_argnums=(1, 2), inline=True)
-def _sample_distinct_positions(inner, block_len: int, count: int):
-    """Sample Ligerito queries on CPU while the surrounding open stays on GPU.
+def _ship_query_chain(inner, block_len: int, count: int):
+    """Run the query chain on the host while the surrounding open stays on GPU.
 
     The chain is 43--218 sequential scalar squeezes per level, so GPU
     parallelism cannot help. One pure callback transfers the transcript to
@@ -173,17 +172,9 @@ def _sample_distinct_positions(inner, block_len: int, count: int):
     fixed-shape state pytree, invariant under absorb/squeeze, that the
     device transcripts already advertise.
 
-    On CPU the surrounding open already runs on the host, so the callback would
-    ship host work to the host — and it costs the program its persistent cache
-    entry. frx's `_cache_write` returns at `if host_callbacks:` *above* the
-    `try:` that reports write failures, silently unless
-    `JAX_EXPLAIN_CACHE_MISSES=1`; this is the only callback the 99 prove
-    programs reach, so that one return is `_open_jitted`'s ~20 s compile paid
-    again in every fresh worker (flock-zorch#327). Take the sampler directly
-    there, which is behavior-preserving by `test_query_chain_ship_lockstep`.
+    Not jitted on its own: it is traced into whichever program calls it, which
+    is what puts the callback inside the caller's module.
     """
-    if frx.default_backend() != "gpu":
-        return _sample_distinct_positions_impl(inner, block_len, count)
     return frx.pure_callback(
         functools.partial(_cpu_query_jit, block_len=block_len, count=count),
         (
@@ -192,6 +183,27 @@ def _sample_distinct_positions(inner, block_len: int, count: int):
         ),
         inner,
     )
+
+
+@functools.partial(frx.jit, static_argnums=(1, 2), inline=True)
+def _sample_distinct_positions(inner, block_len: int, count: int):
+    """Draw the distinct queries, shipping the chain to the host only when the
+    surrounding open is not already there.
+
+    On an accelerator that is `_ship_query_chain`. On CPU the open already runs
+    on the host, so shipping would move host work to the host — and it would
+    cost the program its persistent compilation cache entry: frx's
+    `_cache_write` returns at `if host_callbacks:` *above* the `try:` that
+    reports write failures, silently unless `JAX_EXPLAIN_CACHE_MISSES=1`. This
+    is the only callback the prove programs reach, so that one return is
+    `_open_jitted`'s ~20 s compile paid again in every fresh worker
+    (flock-zorch#327). The two arms are asserted equal by
+    `test_query_chain_ship_lockstep`; `ligerito_oracle_test` gates that the open
+    carries no callback at all.
+    """
+    if frx.default_backend() != "gpu":
+        return _sample_distinct_positions_impl(inner, block_len, count)
+    return _ship_query_chain(inner, block_len, count)
 
 
 @dataclass(frozen=True)
