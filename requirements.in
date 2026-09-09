@@ -11,16 +11,15 @@ numpy
 # PEP 696 TypeVar defaults, which `typing` gains only in 3.13. zorch subscripts
 # them in base-class position, so it is a runtime import, not TYPE_CHECKING-only.
 typing-extensions
-# Lockstep with the zorch git_override pin in MODULE.bazel. frx/frxlib are the
-# Fractalyze jax_fork rebrand; this MUST mirror zorch's own requirements.in and
-# stay on the same version so the GPU kernels are byte-identical. The stack
-# carries the interior-padding lowering lincheck's `_seg_xor_fold`
-# (frx.lax.associative_scan) needs — older wheels raise NotImplementedError on
-# the sha2/blake3 GPU gates. Bump these together with the zorch git_override pin.
-frx==0.10.2.dev20260826110348
-frxlib==0.10.2.dev20260826110348
-frx-cuda12-plugin==0.10.2.dev20260826110348
-frx-cuda12-pjrt==0.10.2.dev20260826110348
+# The four frx pins move in lockstep with the zorch `git_override` pin in
+# MODULE.bazel, and must name the SAME version as zorch's own requirements.in:
+# the binary-field GPU kernels have to match, and CPU-only CI cannot catch a
+# desync. frx/frxlib are the Fractalyze jax_fork rebrand. What a particular
+# wheel carries belongs in the bump commit that moved these pins, not here.
+frx==0.10.2.dev20260908153807
+frxlib==0.10.2.dev20260908153807
+frx-cuda12-plugin==0.10.2.dev20260908153807
+frx-cuda12-pjrt==0.10.2.dev20260908153807
 # zk_dtypes ships the native field dtypes frx lowers; arrives transitively via
 # frx but the resolver lags, so pin it so the lock tracks the frx wheel.
 # 0.0.10 adds the flat AES-basis binary_field_gf8_aes dtype (zk_dtypes#157);
