@@ -390,6 +390,48 @@ part that stays true.
   roughly twice its real cost, and that turns straight into a halving of
   comp/s. Take the prove time from a second in-process `prove_bundle`, or from
   the harness's own `score.json`; never from wrapping the worker process.
+- **The harness never pays the worker's teardown, so teardown is not a startup
+  lever.** `run_trial` captures the proof and immediately `kill`s the worker
+  (`benchmark-tools/harness/src/main.rs`), so Python and XLA interpreter
+  teardown are off its critical path however long they take. They land in a
+  hand-run timing (above) and nowhere else.
+- **Attribute readiness with `worker_startup_bench.py`, not by hand.** It
+  drives the real entry script the way the harness does — `env_clear()` but for
+  `RAYON_NUM_THREADS` and `TMPDIR`, ready file, seed on stdin, proof rename —
+  and reports min / median / spread per phase over N fresh workers,
+  `--programs` adding the per-program XLA cache load. The phases come from
+  marks `bench_worker.py` writes only when `FLOCK_ZORCH_WORKER_TIMELINE` is
+  set, which the harness's cleared env never carries, so the instrument cannot
+  move the number it measures. Numbers from it belong on the issue that ran it,
+  with the machine, not here.
+  - **`--programs` checks the cache by name, and so must any claim built on
+    it.** Timing cannot separate a slow hit from an entry the cache refused
+    (above), so a program with no `jit_<name>-*-cache` file is flagged instead
+    of counted as a load. Reading a refused entry's compile as deserialization
+    is how a startup task gets aimed at the wrong repository.
+- **Readiness is dominated by work below flock-zorch, so size a startup task
+  against the split before taking one.** Nearly all of it is the warm-up
+  prove, and nearly all of that is XLA loading already-compiled programs plus
+  tracing and lowering — a handful of programs carry most of the load. What a
+  change in this repo reaches is the `CscCircuit` construction, the imports and
+  the golden load, which together are a small fraction. Shaving the Python side
+  does not move a ranked run's wall.
+  - **The entry script's env shim is the exception, and it is not Python.**
+    Whatever a worker derives before `exec` — the `@zorch` PYTHONPATH entry,
+    the compile-cache dir name — is derived once per trial inside the readiness
+    budget. Derive it once and memo it, and key the memo on every input to the
+    answer (`scripts/zorch_pythonpath.sh`).
+  - **The golden load is milliseconds, not seconds.** Reading the whole m26
+    file and parsing its CSC rows dominate it; the `z`/`a`/`b` and proof
+    sections `BenchProver` discards are a rounding error. A constants-only
+    reader is not worth writing.
+  - **The cache load is deserialization with the GIL released.** A monitor
+    thread polling through a warm-up prove sees no gap approaching the length
+    of a large entry's load, so the loads are overlappable in principle. The
+    entries are zlib blobs that expand by an order of magnitude, and unzipping
+    is a small part of the load — the rest is XLA's own AOT reconstruction.
+    Nothing in this repo serialises them; a prefetch would have to know each
+    program's avals before its phase runs (fractalyze/xla#686).
 
 ### The FRX CPU tier's phase split (#324)
 

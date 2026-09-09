@@ -34,6 +34,11 @@ export PYTHONPATH
 # executable built by a different one. The tiers share the dir, because JAX's
 # own cache key already carries the backend and device kind, so a cpu-only and
 # a cuda,cpu worker cannot read each other's entries.
+# `frx.__version__`, not the dist metadata: the key has to name the frx this
+# worker will IMPORT, and a source tree ahead of PYTHONPATH shadows the wheel
+# whose metadata `importlib.metadata` reports. The same expression derives the
+# dir in .github/workflows/bench.yml; the two must agree or a run reaches for a
+# cache nothing warmed.
 frx_ver="$(.venv/bin/python -c 'import frx; print(frx.__version__)')"
 export JAX_COMPILATION_CACHE_DIR="${FLOCK_ZORCH_JAX_CACHE:-$HOME/.cache/flock-zorch}/jax-$frx_ver"
 mkdir -p "$JAX_COMPILATION_CACHE_DIR"
