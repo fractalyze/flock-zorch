@@ -29,7 +29,13 @@ from zorch.round import prove_rounds
 from zorch.stage import ProveResult, ProverStage
 
 from flock_zorch import ghash
-from flock_zorch.lincheck._csc_fold import _csc_segments, _flatten_nz, _seg_xor_fold
+from flock_zorch.lincheck._csc_fold import (
+    _csc_segments,
+    _flat_nz,
+    _flatten_nz,
+    _scatter_xor_fold,
+    _seg_xor_fold,
+)
 from flock_zorch.pcs import ring_switch
 from flock_zorch.sha256_challenger import Sha256Challenger
 from flock_zorch.sumcheck import build_eq
@@ -87,10 +93,15 @@ class CscCircuit:
     2^k_log is too large for dense [k,k] matrices (sha2 k=32768, blake3 k=16384).
     Holds A₀/B₀ as flat nonzero (col,row) pairs; `fold_alpha_batched` is the
     transposed binary matvec out[c] = α·Σ_{r:A[r,c]=1} eq[r] ⊕ Σ_{r:B[r,c]=1} eq[r].
-    Runs **on device** as a column-sorted prefix-XOR scan (`_seg_xor_fold`) — handles
-    the skewed const_pin column degree (a padded gather would blow up, an atomic
-    XOR-scatter would hotspot) without either. `const_pin` carries the +β pin column.
-    (The construction-time column sort is host, once.)
+    Runs **on device** in one of the two formulations `_csc_fold` provides, and
+    this class is what picks between them: on GPU a column-sorted prefix-XOR scan
+    (`_seg_xor_fold`), which handles the skewed const_pin column degree without
+    the padded gather that would blow up or the atomic XOR-scatter that would
+    hotspot; on CPU a plain scatter-XOR (`_scatter_xor_fold`), where XLA:CPU's
+    serial scatter loop makes the scan's log-depth passes overhead and neither
+    hazard applies. Their plans differ in layout (the GPU one sorts by column at
+    construction, host, once), so the backend is read in `__init__` rather than
+    inside the fold. `const_pin` carries the +β pin column.
 
     This is why blake3 and sha2 have no per-circuit lincheck module: their goldens
     carry populated A₀/B₀, so a caller builds one of these from `a0_rows`/`b0_rows`
@@ -101,16 +112,17 @@ class CscCircuit:
     def __init__(self, a0_rows, b0_rows, k: int, const_pin=None):
         self.k = k
         self.const_pin = const_pin
-        a_col, a_row = _flatten_nz(a0_rows)
-        b_col, b_row = _flatten_nz(b0_rows)
-        self._a_seg = _csc_segments(a_col, a_row)
-        self._b_seg = _csc_segments(b_col, b_row)
+        self._on_cpu = frx.default_backend() != "gpu"
+        plan = _flat_nz if self._on_cpu else _csc_segments
+        self._a_seg = plan(*_flatten_nz(a0_rows))
+        self._b_seg = plan(*_flatten_nz(b0_rows))
 
     def fold_alpha_batched(self, alpha, eq_inner):
         eq = fnp.asarray(eq_inner).reshape(-1)  # ghash [k]
         zero = fnp.zeros(self.k, _GHASH)
-        out_a = _seg_xor_fold(eq, *self._a_seg, self.k) if self._a_seg else zero
-        out_b = _seg_xor_fold(eq, *self._b_seg, self.k) if self._b_seg else zero
+        fold = _scatter_xor_fold if self._on_cpu else _seg_xor_fold
+        out_a = fold(eq, *self._a_seg, self.k) if self._a_seg else zero
+        out_b = fold(eq, *self._b_seg, self.k) if self._b_seg else zero
         return alpha * out_a + out_b
 
 
@@ -198,9 +210,10 @@ class LincheckCircuit(Protocol):
     (`zorch.round`): a family of circuits plugged into one unchanging lincheck
     protocol, varying only the column-marginal fold. `fold_alpha_batched` returns
     comb[c] = α·(A₀ᵀ·eq_inner)[c] ⊕ (B₀ᵀ·eq_inner)[c]; `const_pin` is the +β pin
-    column, or None. `CscCircuit` (device seg-scan) and the `KeccakLincheckCircuit`
-    / `Keccak3LincheckCircuit` walkers (in `flock_zorch.r1cs_hashes`, with their
-    circuits) match it structurally — no inheritance, no shared base.
+    column, or None. `CscCircuit` (device scan on GPU, scatter on CPU) and the
+    `KeccakLincheckCircuit` / `Keccak3LincheckCircuit` walkers (in
+    `flock_zorch.r1cs_hashes`, with their circuits) match it structurally — no
+    inheritance, no shared base.
     `@runtime_checkable` so `lincheck_circuit_protocol_test` can
     assert conformance at runtime; that checks member presence, not the fold's math
     (the byte-match oracle gates pin that)."""

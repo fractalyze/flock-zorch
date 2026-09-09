@@ -302,8 +302,9 @@ py_test(
     ],
 )
 
-# No golden: `CscCircuit.fold_alpha_batched` (device seg-scan) vs a naive host
-# XOR-scatter reference — the non-identity A₀/B₀ structure coverage.
+# No golden: `CscCircuit.fold_alpha_batched` vs a naive host XOR-scatter
+# reference — the non-identity A₀/B₀ structure coverage. Also gates both fold
+# arms (GPU scan, CPU scatter) and that the backend selects the right one.
 py_test(
     name = "csc_fold_test",
     size = "small",
