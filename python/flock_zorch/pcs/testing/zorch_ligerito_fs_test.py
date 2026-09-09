@@ -272,12 +272,18 @@ def test_round_trip_ghash():
 def test_query_chain_ship_lockstep():
     """The CPU-shipped query chain equals the backend-neutral sampler for BOTH
     device-state arms — shipping moves where the chain runs, never what it
-    absorbs, so positions and every post-chain state leaf must match."""
+    absorbs, so positions and every post-chain state leaf must match.
+
+    Calls `_ship_query_chain` rather than `_sample_distinct_positions`: this file
+    pins `jax_platforms=cpu` (`:24`), where the dispatcher takes the neutral arm,
+    so going through it would compare the impl against itself and leave the
+    shipper — the BLAKE3 arm's only coverage, since that FS arm has no proof
+    golden — untested."""
     # Bare `new` is right here even for the BLAKE3 arm: the sampler never
     # grinds, so the fork's PoW pre-image width cannot reach this path.
     for cls in (Sha256FieldTranscript, Blake3FieldTranscript):
         inner = cls.new(DOMAIN, fnp.binary_field_ghash)
-        shipped_t, shipped_pos = flock_ligerito._sample_distinct_positions(inner, 64, 5)
+        shipped_t, shipped_pos = flock_ligerito._ship_query_chain(inner, 64, 5)
         neutral_t, neutral_pos = flock_ligerito._sample_distinct_positions_impl(
             inner, 64, 5
         )

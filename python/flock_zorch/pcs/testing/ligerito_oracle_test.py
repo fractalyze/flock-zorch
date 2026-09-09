@@ -59,6 +59,38 @@ def load():
     return rd, g
 
 
+def host_callback_results(cfg, pdata, claim_parts) -> list[tuple[str, bool]]:
+    """`_open_jitted` must carry no host callback.
+
+    frx's `_cache_write` returns at `if host_callbacks:` before it ever asks the
+    backend to serialize, so ONE callback anywhere under the open costs the whole
+    program its persistent compilation cache entry — `_open_jitted` recompiling
+    in every fresh worker (~20 s at m26), and silent unless
+    `JAX_EXPLAIN_CACHE_MISSES=1` (flock-zorch#327). The query sampler is the one
+    that used to ship, but gating the sampler alone would stay green if a
+    callback appeared anywhere else under the open, so gate the module
+    `_cache_write` actually inspects.
+
+    `_ship_query_chain` is the control: it MUST match, so an absent match on the
+    open means "no callback" and not "the matcher is wrong".
+    """
+    log_n = pdata.f.shape[0].bit_length() - 1
+    prover, _config, _chor = zorch_ligerito._flock_ligerito_prover(cfg, log_n)
+    inner = Sha256Challenger(b"flock-ligerito-callback-gate")._t
+    opened = zorch_ligerito._open_jitted.lower(
+        prover, pdata, *claim_parts, zorch_ligerito.FlockTranscript(inner)
+    ).as_text()
+    shipped = (
+        frx.jit(zorch_ligerito._ship_query_chain, static_argnums=(1, 2))
+        .lower(inner, 64, 5)
+        .as_text()
+    )
+    return [
+        ("callback matcher sees the shipper", "callback" in shipped),
+        ("_open_jitted carries no host callback", "callback" not in opened),
+    ]
+
+
 def run():
     _, g = load()
     cfg = g["cfg"]
@@ -73,18 +105,17 @@ def run():
     # one rs_eq_ind of `b` weighted by ONE reproduces `b_combined = b` and
     # `target = target` exactly, with no packed-direct claims.
     one = ghash.to_ghash(sumcheck.ONE)
-    p = zorch_ligerito.prove_flock_ligerito(
-        cfg,
-        pdata,
+    claim_parts = (
         (ghash.to_ghash(g["b"]),),
         (one,),
         (ghash.to_ghash(g["target"]),),
         (),  # packed_direct
         (),  # gammas_pd
-        ch,
     )
+    p = zorch_ligerito.prove_flock_ligerito(cfg, pdata, *claim_parts, ch)
 
     results.extend(ligerito_proof_results(p, g, prefix=""))
+    results.extend(host_callback_results(cfg, pdata, claim_parts))
     return g, results
 
 
