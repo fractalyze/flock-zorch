@@ -1,6 +1,6 @@
 # Copyright 2026 The Flock-Zorch Authors. SPDX-License-Identifier: Apache-2.0
-"""snark.fast harness worker — the GPU prover through the flock-challenge
-benchmark window.
+"""snark.fast harness worker — the prover through the flock-challenge
+benchmark window, on whichever platform the entry script selected.
 
 The harness (`benchmark-tools/harness`) spawns a FRESH worker per trial as
 `<worker> <log2> <ready> <proof>` with a cleared env (only RAYON_NUM_THREADS
@@ -11,7 +11,9 @@ same log2 (the seed is traced, so it compiles every program the timed call
 runs), ready file, seed → `BenchProver.prove_bundle` → write + atomic rename.
 stdout/stderr are discarded by the harness.
 
-Point the harness at `scripts/bench_worker.sh`, which restores the env
+Point the harness at an entry script, never at this module: `bench_worker.sh`
+for the GPU tier or `bench_worker_cpu.sh` for the CPU one. Each exports its
+`FRX_PLATFORMS` and sources `bench_worker_common.sh`, which restores the env
 (PATH/PYTHONPATH/per-wheel JAX cache) before exec'ing this module — without
 the cache a respawned worker pays the multi-minute m32 XLA compile against
 the 300 s readiness budget.
