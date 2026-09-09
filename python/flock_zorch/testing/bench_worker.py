@@ -14,9 +14,9 @@ stdout/stderr are discarded by the harness.
 Point the harness at an entry script, never at this module: `bench_worker.sh`
 for the GPU tier or `bench_worker_cpu.sh` for the CPU one. Each exports its
 `FRX_PLATFORMS` and sources `bench_worker_common.sh`, which restores the env
-(PATH/PYTHONPATH/per-wheel JAX cache) before exec'ing this module — without
-the cache a respawned worker pays the multi-minute m32 XLA compile against
-the 300 s readiness budget.
+(PATH/PYTHONPATH/per-wheel JAX cache) before exec'ing this module. Without a
+warm cache a respawned worker recompiles from scratch and misses the readiness
+budget, so the harness never gets a trial out of it.
 
 The bundle bytes this emits are byte-gated against a fork-verified golden by
 `bench_ligerito_oracle_test.py` (same `BenchProver`, same constants path).

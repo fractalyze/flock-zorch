@@ -27,20 +27,21 @@ PYTHONPATH="python:$(scripts/zorch_pythonpath.sh)"
 export PYTHONPATH
 
 # Per-wheel XLA compile cache, deliberately OUTSIDE TMPDIR: the harness wipes
-# its scratch (= TMPDIR) between trials, and a fresh worker per trial must
-# absorb the multi-minute m32 compile inside the 300 s readiness budget — so
-# warm trials MUST hit this cache. Keyed by the frx wheel version because
-# shared caches across toolchains have served wrong executables before
-# (docs/measurement.md); one dir per wheel is the standing rule. The tiers
-# share the dir: JAX's own cache key already carries the backend and device
-# kind, so a cpu-only and a cuda,cpu worker cannot read each other's entries.
+# its scratch (= TMPDIR) between trials, and every fresh worker must absorb the
+# whole XLA compile inside the harness's readiness budget, so warm trials have
+# to hit this cache. Keyed by the frx wheel version: a cache key is only as
+# good as what it covers, and a dir shared across toolchains can serve an
+# executable built by a different one. The tiers share the dir, because JAX's
+# own cache key already carries the backend and device kind, so a cpu-only and
+# a cuda,cpu worker cannot read each other's entries.
 frx_ver="$(.venv/bin/python -c 'import frx; print(frx.__version__)')"
 export JAX_COMPILATION_CACHE_DIR="${FLOCK_ZORCH_JAX_CACHE:-$HOME/.cache/flock-zorch}/jax-$frx_ver"
 mkdir -p "$JAX_COMPILATION_CACHE_DIR"
 # Cache EVERYTHING, including XLA's per-fusion autotune results and kernel
-# cache: the readiness budget is spent on first-call compile work, and the
-# default 1 s floor left most of it uncached (5 entries — ready took 406 s
-# against the 300 s budget; the timed prove itself is seconds).
+# cache. The readiness budget is spent almost entirely on first-call compile
+# work, and the default minimum-compile-time floor leaves most of that
+# uncached — few enough entries that a respawned worker recompiles past the
+# budget and never reaches readiness.
 export JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS=0
 export JAX_PERSISTENT_CACHE_ENABLE_XLA_CACHES=all
 

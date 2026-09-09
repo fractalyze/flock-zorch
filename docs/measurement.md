@@ -181,16 +181,18 @@ The benchmark itself — how to run it and what it has published — is in
 ## The Yukon x86 ranked harness
 
 Running `eigenlabs/flock-challenge-multi/x86` — the leaderboard the CPU tier is
-measured against (#322, #323) — on the build box.
+measured against (#322, #323) — on the build box. What any given run scored,
+and on which day and which pins, belongs on those issues; what follows is the
+part that stays true.
 
 - **The frontier's sources need no Yukon CLI.**
-  `Layr-Labs/flock-challenge-multi` keeps every submission as a branch, so the
-  #1 submission is a plain clone: `submissions/<submission-id>`, whose tip
-  commit message is `Validate submission <submission-id>`. The 1,633,567 comp/s
-  frontier of 2026-09-08 is submission `e1a16581-883b-4459-8af3-bbdb3e0b2ea1`
-  = `c75aece`, which is what `yukon clone` lands on. Worth knowing because the
-  CLI is not installed on the build box and is not on PyPI; a session was spent
-  looking for it. `yukon sync` takes no `--track` flag (it prints help).
+  `Layr-Labs/flock-challenge-multi` keeps every submission as a branch, so a
+  submission is a plain clone: `submissions/<submission-id>`, whose tip commit
+  message is `Validate submission <submission-id>` — which is what makes the
+  identity of a pulled frontier checkable rather than assumed. The CLI is
+  neither installed on the build box nor on PyPI, so do not plan around it;
+  `yukon sync` takes no `--track` flag (it prints help), and alone it restores
+  the best promoted submission.
 - **`bwrap` must actually work, or every trial dies before it is measured.**
   Ubuntu ships `kernel.apparmor_restrict_unprivileged_userns=1`, which makes
   bubblewrap fail with `setting up uid map: Permission denied`; the sandboxed
@@ -203,6 +205,18 @@ measured against (#322, #323) — on the build box.
   AppArmor profile for bwrap). Dropping the sandbox instead is a deviation from
   the ranked contract and changes what the number may be compared against, so it
   is a decision to take deliberately, not a workaround to reach for.
+- **Unsandboxing the harness is one argument, not a patch — and it is the
+  harness's own tested path.** `benchmark.sh` passes the trusted verifier a 9th
+  positional (the sandbox scratch dir) only when `bwrap` is on `PATH`; with 8
+  arguments the harness sets `Config.sandbox_scratch = None` and execs the
+  worker bare, which `worker_command_runs_bare_without_sandbox` covers as a
+  first-class case. So the local-dev path is reached by passing one fewer
+  argument, never by hiding `bwrap` from `PATH` — a `PATH` shim is
+  indistinguishable from sandbox evasion and will be refused by anything
+  watching. Everything else (the `SHA256SUMS` check on the verifier, the locked
+  offline candidate rebuild, the 20/100 trial contract) must still be run
+  verbatim, or the number is not comparable at all. Whether to take that path is
+  a decision, not a workaround — see the bullet above.
 - **The x86 frontier's score is not all prover work — read
   `crates/flock-prover/src/seed_pipe.rs` before attributing the gap.** During
   the untimed warm-up the submission splices a pipe onto descriptor 0 and keeps
@@ -218,302 +232,141 @@ measured against (#322, #323) — on the build box.
   main thread losing the stdin race to the seed-pipe thread, not a failed
   prove — the published bytes differ per seed and are the real proof. Do not
   read the exit code of a hand-run worker as the harness's verdict.
-- **The multi fork's pristine flock is NOT the fork the bench gate pins.**
+- **The multi fork's pristine flock is NOT the fork the bench gate pins, and
+  the x86 trusted verifier accepts a flock-zorch bundle anyway.**
   `crates/flock-{core,prover}` on `flock-challenge-multi@main` differ from
   `Layr-Labs/flock-challenge@d866043`, the rev `Cargo.toml` pins as
   `flock-challenge-prover` and that `bench_ligerito_oracle_test.py` byte-gates
-  against (the `DOMAIN` is the same `flock-bench-v0` in both). So the x86
-  trusted verifier accepting a flock-zorch bundle is an open question, not a
-  given; check it with a `BLAKE3_LOG2=8` smoke run before assuming the FRX arm
-  can be scored by the x86 verifier rather than the Apple fork's harness.
-  **Answered 2026-09-08: it does accept one.** Driving the x86 trusted verifier
-  at `scripts/bench_worker_cpu.sh` with `log2=8` reports `verified=true` on the
-  warm-up and both measured trials, so the FRX arm can be scored by the x86
-  verifier and the two arms are directly comparable.
-- **Unsandboxing the harness is one argument, not a patch — and it is the
-  harness's own tested path.** `benchmark.sh` passes the trusted verifier a 9th
-  positional (the sandbox scratch dir) only when `bwrap` is on `PATH`; with 8
-  arguments the harness sets `Config.sandbox_scratch = None` and execs the
-  worker bare, which `worker_command_runs_bare_without_sandbox` covers as a
-  first-class case. So the local-dev path is reached by passing one fewer
-  argument, never by hiding `bwrap` from `PATH` — a `PATH` shim is
-  indistinguishable from sandbox evasion and will be refused by anything
-  watching. Everything else (the `SHA256SUMS` check on the verifier, the locked
-  offline candidate rebuild, the 20/100 trial contract) must still be run
-  verbatim, or the number is not comparable at all. Whether to take that path is
-  a decision, not a workaround — see the bullet above.
-- **The CPU tier's persistent XLA cache is a partial cache, and it warns about
-  a machine mismatch against the very host that just wrote it.** Two things show
-  up on a `FRX_PLATFORMS=cpu` worker on the 9950X, both harmless-looking and
-  both budget-relevant:
-  - `ToProto is not implemented for thunk kind: bit-reverse` — on a wheel
-    predating fractalyze/xla#672 the persistent cache cannot *write*
-    `jit_bit_reverse`, `jit__commit` or `jit__commit_prep`. Those programs are
-    therefore recompiled in **every** fresh worker, so they are charged to the
-    300 s readiness budget on all 120 trials, not just the first. Warming the
-    cache does not make them go away; budget for them.
-    **Fixed upstream 2026-09-08** by fractalyze/xla#672 (`00f941f5`), which
-    registers `BitReverseThunk` with the CPU thunk serdes registry — but a fix
-    in xla is not a fix in the wheel this repo pins, so probe the wheel before
-    reading a warm-worker number. The CPU path's binary is
-    `frxlib/libjax_common.so`, *not* the `xla_cuda_plugin.so` that
-    [`development.md`](development.md)'s wheel-provenance rule names:
+  against (the `DOMAIN` is the same `flock-bench-v0` in both). The divergence
+  does not cost acceptance — driving the x86 trusted verifier at
+  `scripts/bench_worker_cpu.sh` reports `verified=true` — so both arms can be
+  scored by the same verifier and are directly comparable. Re-confirm with a
+  `BLAKE3_LOG2=8` smoke run when either fork moves; it is seconds, and the
+  alternative is discovering it 100 trials in.
+- **A ratio between the two arms is a property of one machine and one size,
+  and transfers to neither.** This box runs the frontier submission well below
+  its score on the official c7i.4xlarge, so a ratio taken here is a ratio
+  against a handicapped frontier and says nothing about the leaderboard. It
+  also moves with `m`: the FRX arm carries fixed per-process floors that
+  amortize as `m` grows while the frontier's trials are milliseconds, so the
+  gap narrows with size. Measure at the size you intend to claim, and quote the
+  machine with every ratio.
+- **Both arms in one session, or say so.** The frontier is a Rust binary that
+  no wheel or pin on our side touches, which makes re-using an earlier run of
+  it tempting. That is allowed and often right — but an inherited arm is an
+  inherited figure, so label it as one wherever the pair is quoted.
+- **A reduced-trial median is not a ranked score.** The contract is 20 warm-ups
+  discarded and 100 measured; anything else is a median, however tight its
+  spread. Both are useful and they are not interchangeable — say which one a
+  number is every time it appears, because the qualifier is what gets dropped
+  when a figure is quoted onward.
 
-    ```sh
-    B=.venv/lib/python3.11/site-packages/frxlib/libjax_common.so
-    strings -a "$B" | grep -c BitReverseThunkProto   # the fix: 0 = absent
-    strings -a "$B" | grep -c YnnFusionThunkProto    # control: must be > 0
-    ```
+### Machine conditions
 
-    The control is the adjacent `oneof` case that predates the fix, so an empty
-    first result means "absent" rather than "wrong binary". `dev20260826110348`
-    gave 0 and 20 — absent; the pinned `dev20260908153807` gives 20 and 20, and
-    a warm CPU worker on it logs no `ToProto is not implemented` line at all.
-    Run the probe rather than reading xla's issue state: the fix landed in xla
-    on 2026-09-08 while the wheel this repo pinned was still the 08-26 build,
-    so "fixed upstream" and "fixed in the wheel you are measuring" were three
-    days apart.
-  - `cpu_aot_loader.cc: Target machine feature +prefer-no-gather is not
-    supported on the host machine` on reload of entries this same box wrote
-    minutes earlier. `prefer-no-gather` / `prefer-no-scatter` are Intel tuning
-    pseudo-features that XLA records in the AOT result but the Zen 5 host
-    feature query does not report, so the loader flags its own output as
-    cross-machine. It is not a stale or shared cache (check the dir's mtimes
-    before assuming it is), but the warning names SIGILL, so confirm what the
-    loader actually does with a rejected entry before quoting a cached-path
-    number.
-- **The FRX CPU tier does reach a proof at m32 — but only on a wheel carrying
-  fractalyze/xla#676.** The history is worth keeping, because the failure named
-  the wrong culprit twice. On `frx==0.10.2.dev20260826110348`,
-  `bench_worker.py` at `log2=18` died in the untimed warm-up prove ~75-109 s
-  in, before it ever wrote the ready file:
-  `Out of memory allocating 635655164048 bytes` — 592 GiB in one allocation,
-  filed as fractalyze/xla#674. `--xla_dump_to` with
-  `--xla_dump_hlo_pass_re=buffer-assignment` named the real module,
-  `jit__round1_core` (the zerocheck round-1 URM), at 593.50 GiB, of which
-  512 GiB was one `binary_field_ghash[16384,4096,64,8]` — the gf8 AES-basis
-  expansion materialized whole. It was neither the machine nor the prover: the
-  byte count was identical under `with-build-permit --mem 48` and `--mem 56`,
-  so it was the compiled program's own buffer request. The cause was a fusion
-  gap. `TreeReductionRewriter` rewrites a long-axis reduction into a chain of
-  reduce-windows, and `CpuInstructionFusion` had never accepted a reduce-window
-  as a fusion consumer, so the reduction's whole input was materialized;
-  fractalyze/xla#676 lets a non-overlapping one take a fused producer. On the
-  pinned `0.10.2.dev20260908153807`, which carries it, m32 runs end to end at
-  45.3 GB peak RSS on this 60 GB box — see the m32 pair below — and the four
-  other modules that peaked near 72 GB (`jit__slice_evals`,
-  `jit__fold_packed_at_z`, `jit_rs_eq_ind`, `jit__partial_fold`) are no longer
-  a wall either. Three things to carry forward:
-  - **The host traceback named the wrong phase.** It pointed at
-    `pcs/ligerito.py`'s `_packed_device_get`, which is only where the host
-    blocked on an async error, and reads as an `open`-phase problem. Take the
-    failing module from a buffer-assignment dump, never from the Python frame.
-  - **It was size-gated, and nothing below m32 ever saw it.** m26 (`log2=12`)
-    completed throughout. This is exactly the class
-    [`development.md`](development.md) warns about: the standing gates run at
-    m=22, so a path gated on size is never exercised by them — the m32 golden
-    it tells you to gate with is what surfaced this.
-  - **Measured on XLA:CPU only.** No tier has driven `bench_worker.py` at
-    `log2=18` on the GPU backend, so whether it materialized the same
-    intermediates was never tested; do not quote any of this as CPU-specific.
+- **SMT costs a few percent — pin to physical cores.** Half the threads on
+  `taskset -c 0-15` beat all 32 SMT threads on this box and were steadier.
+  Sibling pairing differs by machine, so read
+  `/sys/devices/system/cpu/cpu0/topology/thread_siblings_list` rather than
+  assuming `N`/`N+16`.
+- **The `powersave` governor is not a threat on `amd-pstate-epp`.** Unlike the
+  old throttling governors it is full-range — cores boost to their full
+  frequency under it — and head-to-head against `performance` the difference
+  is inside run-to-run noise. A run under it does not need an asterisk, so
+  do not spend a session getting root to change it.
+- **Load average measured *during* a run says nothing.** A 32-thread benchmark
+  drives the 1-minute average to ~32 by construction, and it then decays for
+  minutes afterwards. Judge quietness *before* starting, with instantaneous
+  idle (`vmstat 2 3`) — a figure discarded for "the box was loaded" on the
+  strength of a during-run load average is usually a sound figure thrown away.
 
-- **The m32 constants golden is ~2.2 GB and ~45 min to dump; it is not the
-  86 MB one.** `bench_worker.py` loads `constants_golden(log2 + K_LOG)`, so the
-  ranked `log2=18` needs `artifacts/blake3_ligerito_golden_m32.bin`, dumped with
+### The FRX CPU tier under that harness
+
+- **An OOM in the untimed warm-up naming a preposterous single allocation is
+  the compiled program's own buffer request, not the machine's limit.**
+  `bench_worker.py` dying before it writes the ready file with
+  `Out of memory allocating <n> bytes`, where `n` is orders of magnitude past
+  the box's RAM, means some program is materializing an intermediate whole —
+  so the question is which one and why it was not fused, never how much RAM
+  the box has. Three things pin it down, and each has been read wrong at
+  least once:
+  - **The host traceback names the wrong phase.** It points at the frame where
+    the host blocked on an async error — `pcs/ligerito.py`'s
+    `_packed_device_get`, which reads as an `open`-phase problem — not at the
+    module that asked. Take the failing module from `--xla_dump_to` with
+    `--xla_dump_hlo_pass_re=buffer-assignment` and sum the `allocation N: size`
+    lines; never from the Python frame.
+  - **It is not the memory cap.** The byte count is identical under different
+    `with-build-permit --mem` values, because it is the compiled program's own
+    buffer request. If tightening or loosening the cap moves it, you are
+    looking at something else.
+  - **It is size-gated, so the standing gates cannot see it.** Those run at
+    m=22 while the wall appears only at the ranked size. This is exactly the
+    class [`development.md`](development.md) warns about, and the m32-variant
+    golden it tells you to gate with is what surfaces it. Reproduce the fix at
+    a size that fits and confirm at the ranked one.
+
+  The instance behind these rules was `CpuInstructionFusion` declining the
+  reduce-windows `TreeReductionRewriter` emits as fusion consumers, so a
+  reduction's whole input was materialized. Whether a GPU backend materializes
+  the same intermediates has not been tested, so do not read any of this as
+  CPU-specific.
+- **The m32 constants golden is ~2.2 GB; it is not the 86 MB one.**
+  `bench_worker.py` loads `constants_golden(log2 + K_LOG)`, so the ranked
+  `log2=18` needs `artifacts/blake3_ligerito_golden_m32.bin`, dumped with
   `cargo run --release --example dump_blake3_ligerito -- 262144 <out>`
   (`n_comp` is the first positional; the default 256 is the m22 file the gates
   use — do not overwrite it). Size is a fixed base plus a per-compression term,
   `≈ 84.6 MB + 8.21 KB * n_comp`, which the 256 / 1024 / 4096 points fit to
-  within 0.02 %; dump time is linear in `n_comp` (3 s / 40 s at 256 / 4096).
-  Both matter because the file is gitignored, so it is regenerated per machine,
-  and every one of the 120 fresh workers reads it inside the readiness budget.
-
-- **A harness trial's startup is XLA compile of ONE uncached program — not
+  within 0.02 %; dump time is linear in `n_comp` and runs to tens of minutes at
+  the ranked size. Both matter because the file is gitignored, so it is
+  regenerated per machine, and every fresh worker reads it inside the readiness
+  budget.
+- **A harness trial's startup is XLA compile of a handful of programs — not
   tracing, and not the cache being broken.** The harness spawns a fresh worker
-  per trial, so every trial repays the whole per-process startup. Attribute it
-  with `JAX_LOG_COMPILES=1` before blaming the prover or reaching for a pin
-  bump. Measured spawn → ready file on a WARM cache (`FRX_PLATFORMS=cpu`,
-  9950X, `taskset -c 0-15`, frx `dev20260908153807` with flock-zorch#328 in
-  tree), against the harness's 300 s readiness budget:
-
-  | size | warm startup | timed prove | XLA compile inside startup |
-  |---|---|---|---|
-  | m26 (`log2=12`) | 22.8-24.8 s | 1.35 s | 13.87 s over 95 programs |
-  | m32 (`log2=18`) | 116.2 s | 87.8 s | — |
-
-  At m26 four programs are the whole compile bill — `_open_jitted` 5.52 s,
-  `_witness_blake3_xla` 4.93 s, `_mlv_sumcheck` 2.19 s, `prove_inf_product`
-  0.72 s, with ~91 others at ~0.5 s together. Every one of them is a cache
-  *hit*, so that 13.87 s is deserialization, not compilation, and no pin bump
-  or tracing work touches it. The remaining ~10 s of the 24 s is imports,
-  tracing, lowering, the 118 MB golden load and the untimed warm-up prove.
-
-  - **`_open_jitted` enters the persistent cache only since flock-zorch#328;
-    before it, it silently did not.** It recompiled in full in every worker —
-    20.11 s x 120 trials ~= 40 min of a ranked run — with no
-    `Error writing persistent compilation cache entry` logged and no matching
-    entry in the dir. The cause was in frx rather than XLA (`_cache_write`
-    skips a program carrying host callbacks), which is why fractalyze/xla#673
-    closed with no XLA change: taking the query sampler directly when the open
-    is on CPU (flock-zorch#328) removed the callback, and the entry appeared.
-    Check it by name, never by timing — `ls "$JAX_COMPILATION_CACHE_DIR" |
-    grep open` must show `jit__open_jitted-<hash>-cache`, and it is the largest
-    entry in the dir. The same program now costs 5.52 s to load against 20.11 s
-    to compile, which is most of the warm-startup step from 39.76 s to a
-    23.8 s median.
-  - **Do not credit that step to the wheel.** fractalyze/xla#672, which the
-    same wheel carries, does what it says — the `ToProto` refusals go 2 -> 0
-    and cold startup 77 s -> 37 s — but warm-to-warm it bought only **7.5 %**
-    (42.98 -> 39.76 s). Startup is dominated by `_open_jitted`, and only
-    flock-zorch#328 moved that. The two figures come from different sessions,
-    so the direct evidence for the attribution is not the step itself but the
-    same program's cost inside one measurement: 5.52 s loaded against 20.11 s
-    compiled.
-  - **The `cpu_aot_loader` machine-mismatch warnings are benign** — two per hit
-    (`prefer-no-gather`, `prefer-no-scatter`), 190 for 95 hits, and the entry is
-    then used. A rejected entry is not what is happening.
-  - **Startup is NOT flat in `m` any more, and the old reading was an
-    artifact.** It looked flat (30.5 s at m24 vs 36.6 s at m26) while
-    `_open_jitted` recompiled from scratch in every worker and swamped
-    everything size-dependent. With it cached, startup tracks how much
-    executable has to be deserialized: 24 s at m26 against 116 s at m32.
-  - **A trial costs startup plus prove, and nothing else worth counting.**
-    Timed end to end, the harness runs 25.1 s/trial at m26 (175.8 s for 7)
-    and 199.8 s/trial at m32 (599.4 s for 3) — against 25.2 s and 204.0 s for
-    those two components alone, so its own spawn and verification overhead is
-    inside the noise at both sizes. Do not budget a separate verification
-    term. A ranked 120-trial run is therefore **~50 min at m26 and ~6.7 h at
-    m32**; m32 acceptance is fractalyze/flock-zorch#325's, not a step inside a
-    working session.
-  - **AOT export (`jax.export`) is not the fix.** It targets tracing, a few
-    seconds of the total.
-  - Iterate **in-process** (a second prove is 2.0 s at m26); keep the harness
-    for acceptance.
+  per trial, so every trial repays the whole per-process startup against the
+  300 s readiness budget. Attribute it with `JAX_LOG_COMPILES=1` before blaming
+  the prover or reaching for a pin bump. On a warm cache at m26 the compile
+  bill is ~14 s over ~95 programs, and four of them are nearly all of it
+  (`_open_jitted`, `_witness_blake3_xla`, `_mlv_sumcheck`,
+  `prove_inf_product`); the rest of the startup is imports, tracing, lowering
+  and the golden load. Every one of those compiles is a cache *hit*, so what
+  the budget buys is deserialization, which is why neither a pin bump nor AOT
+  export (`jax.export` targets tracing, a few seconds of the total) moves it.
+  - **A program the cache silently refuses is the thing to look for, and only
+    a by-name check finds it.** Two mechanisms drop entries without an error:
+    a thunk kind the CPU serdes registry does not know refuses the *write*
+    with `ToProto is not implemented for thunk kind: <kind>`, and frx's
+    `_cache_write` skips a program carrying host callbacks with no log line at
+    all. Either way the program recompiles in full in every worker, which at
+    120 trials is the difference between a working session and an overnight
+    one. `ls "$JAX_COMPILATION_CACHE_DIR"` and confirm the expensive programs
+    are there by name — `jit__open_jitted-<hash>-cache` above all, since it is
+    the largest entry when present. Timing cannot distinguish a slow hit from
+    a miss; the directory listing can.
+  - **`cpu_aot_loader` machine-mismatch warnings on Zen 5 are benign.**
+    `Target machine feature +prefer-no-gather is not supported on the host
+    machine` (and `-no-scatter`) appear twice per hit on entries the same box
+    wrote: they are Intel tuning pseudo-features XLA records in the AOT result
+    that the host feature query does not report. The entry is used and the
+    compile finishes in under a millisecond. The warning names SIGILL, which
+    is what makes it look load-bearing.
+  - **Startup is not flat in `m`.** Once the expensive programs are cached,
+    startup tracks how much executable has to be deserialized, so it grows
+    steeply with size — m32's is several times m26's. Dropping a size step is
+    therefore a real way to shorten a run, and an assumption of flatness is a
+    way to under-budget one by hours.
+  - **A trial costs startup plus prove and nothing else worth counting.**
+    Timed end to end, a harness trial matches those two components to within
+    noise at both m26 and m32, so the harness's own spawn and verification
+    overhead needs no separate term. Budget a ranked 120-trial run as
+    `120 * (startup + prove)`; at the ranked size that is hours, which makes it
+    its own dispatch rather than a step inside a working session.
+  - Iterate **in-process**: a second `prove_bundle` skips the whole startup.
+    Keep the harness for acceptance.
 - **Do not time a hand-run worker as "ready file → process exit" — that is not
   the harness's window.** The harness stops its clock when the proof file is
   **renamed**; a process-exit timer additionally charges the write plus Python
-  and XLA interpreter teardown, which measured ~2.0 s at m26 — i.e. it reported
-  4.02 s for a prove the in-process timer puts at 2.0 s, a **2x** overstatement
-  that turns straight into a 2x understatement of comp/s. Take the prove time
-  from a second in-process `prove_bundle`, or from the harness's own
-  `score.json`; never from wrapping the worker process.
-
-### The m32 pair on build-server (2026-09-08/09) — the goal's scored instance
-
-m32 (`log2=18`, 262,144 compressions) is the size the leaderboard scores, and
-since the frx wheel carrying fractalyze/xla#676 both arms complete at it. Both
-unsandboxed (#322 decision 6), `taskset -c 0-15`, 16 threads, `performance`
-governor, box at 99 % idle:
-
-| arm | measured | score | median | trials | verified |
-|---|---|---|---|---|---|
-| Yukon frontier `e1a16581` (`c75aece`) | 2026-09-08 | **1,138,183 comp/s** | 230 ms | 20 warm-up + 100 measured | 120/120 |
-| flock-zorch FRX CPU tier | 2026-09-09 | **2,986 comp/s** (not ranked †) | 87.78 s | 3 warm-up + 10 measured | 13/13 |
-
-**381x**, on this machine, at this size — the gap this goal has to close. Four
-things qualify it, and none of them is "the run was noisy":
-
-- † **The FRX arm is 13 trials, not the ranked 20/100, so it is not a ranked
-  score and must never be quoted as one.** Its ten measured trials span
-  87.0-88.3 s at p90/p10 = 1.013 — tighter than either arm's m26 run — so
-  the median is well determined as a median; that is a different claim from a
-  `score.json` under the leaderboard's contract. The ranked run costs ~6.7 h on
-  this box (199.8 s/trial, timed end to end) and is owned by
-  fractalyze/flock-zorch#325, whose end criteria already require it; it was
-  dropped from #322's spec by decision 29 rather than left implicit.
-- **The arms were measured a day apart** (frontier 2026-09-08, FRX 2026-09-09)
-  on the same box under the same governor, pinning and sandbox decision. The
-  frontier is a Rust binary and nothing on the wheel side touches it, but say
-  so when quoting the pair rather than implying one sitting.
-- **The ratio does not transfer to the leaderboard.** The same submission
-  scores 1,633,567 on the official c7i.4xlarge against 1,138,183 here, so this
-  is a ratio against a 1.44x-handicapped frontier.
-- **Part of the frontier's margin is not prover work.** Its seed-pipe lifts the
-  harness's strictly serial 6.5 M-draw input expansion out of the timed window,
-  which our worker still pays. Price that block before reading 381x as prover
-  speed.
-
-The FRX arm's 116 s worker startup is **not** in that 381x: the harness starts
-its clock when the seed is written and stops it at the proof rename, so startup
-is charged only to the 300 s readiness budget (which it clears with 61 % to
-spare) and to the wall-clock of a ranked run. Peak RSS is 45.3 GB against this
-box's 60 GB — the only headroom figure in the pair that is close to a limit.
-
-### The m26 pair on build-server (2026-09-08/09) — the dev-loop baseline
-
-m26 (`log2=12`, 4096 compressions) is the fast loop the lever tasks iterate
-against: a ranked 120-trial run costs ~50 min at m26 against ~6.7 h at m32. Both
-arms under the ranked contract (20 warm-up discarded, 100 measured, median),
-both unsandboxed (#322 decision 6), `taskset -c 0-15`, 16 threads,
-`performance` governor, box at 99 % idle:
-
-| arm | measured | score | median | p90/p10 | verified |
-|---|---|---|---|---|---|
-| Yukon frontier `e1a16581` (`c75aece`) | 2026-09-08 | **519,852 comp/s** | 7.879 ms | 3.80 | 120/120 |
-| flock-zorch FRX CPU tier | 2026-09-09 | **3,022 comp/s** | 1.355 s | 1.15 | 120/120 |
-
-**172x**, on this machine, at this size. Read with four caveats:
-
-- **The arms were measured a day apart, not in one sitting.** Only the FRX arm
-  was re-run for the wheel; the frontier row is the 2026-09-08 run verbatim,
-  because the frontier is a Rust binary that nothing on the wheel side touches.
-  Same box, same governor, same pinning, same sandbox decision — say so when
-  quoting the pair. Its own dated row is in the frontier table below.
-- **The FRX arm moved 1.56x since 2026-09-08** (median 2.117 s -> 1.355 s), and
-  the tree moved by exactly two commits in between: #330 (zorch
-  `3762ddce` -> `1d3db25f` and the frx quad to `dev20260908153807`) and #328.
-  So the step belongs to that pair jointly — no single-commit attribution was
-  measured, and the older figure was a 14-trial partial rather than a ranked
-  run, so the two are not the same kind of number either.
-- **The frontier's own m26 run is jittery: p90/p10 = 3.80**, against 1.048 at
-  m32 and 1.284 at m24. Its trials are only ~7.9 ms, so worker spawn/teardown
-  jitter dominates; one 44 ms outlier sits against a 7.1 ms p10. m26 flatters
-  neither arm's precision, which is the price of using it as the fast loop —
-  and it is why the m32 pair, not this one, is the number the goal is scored
-  on.
-- **The ratio is size-specific and machine-specific.** It is 172x here and
-  381x at m32, because the FRX arm's fixed floors amortize with `m` while the
-  frontier's do not; an earlier ~214x at m24 carried the process-teardown
-  contamination described above, so do not read a trend across all three. And
-  this 9950X runs the frontier 1.44x slower than the official c7i.4xlarge, so
-  no ratio taken here transfers to the leaderboard.
-
-### The x86 frontier measured on build-server (2026-09-08)
-
-Submission `e1a16581` (`c75aece`) under the official harness, worker unsandboxed
-(#322 decision B), box quiet at 99 % idle, `performance` governor:
-
-| run | threads | score (comp/s) | median | p90/p10 |
-|---|---|---|---|---|
-| m32 (`log2=18`), default | 32 | 1,086,628 | 241 ms | 1.078 |
-| m32, pinned to physical cores | 16 | **1,138,183** | 230 ms | 1.048 |
-| m26 (`log2=12`), pinned | 16 | 519,852 | 7.879 ms | 3.80 |
-| m24 (`log2=10`), default | 32 | 274,467 | 3.73 ms | 1.284 |
-
-Four things to carry forward from it:
-
-- **SMT costs ~4.7 % — pin to physical cores.** 16 threads on `taskset -c 0-15`
-  beat all 32 SMT threads (1,138,183 vs 1,086,628) and were steadier
-  (p90/p10 1.048 vs 1.078). Siblings are `N`/`N+16` here; confirm with
-  `/sys/devices/system/cpu/cpu0/topology/thread_siblings_list` rather than
-  assuming, since the pairing differs by machine.
-- **Most of the leaderboard gap is hardware, not the prover.** The same
-  submission scores 1,633,567 on the official c7i.4xlarge and 1,138,183 here —
-  the 9950X is 1.44x slower at it. So an FRX-vs-frontier ratio taken on this box
-  is a ratio against a 1.44x-handicapped frontier and does **not** transfer to
-  the leaderboard; quote the machine with every ratio.
-- **The `powersave` governor is not a threat on `amd-pstate-epp`.** Measured
-  head to head at m24: `powersave`/`balance_performance` 278,087 vs
-  `performance`/`performance` 274,467 — a 1.3 % delta in the wrong direction,
-  i.e. noise. Unlike the old throttling governors, `amd-pstate-epp`'s
-  `powersave` is full-range (cores were already boosting to 5.44 GHz), so a run
-  under it does not need an asterisk. Do not spend a session getting root for
-  this.
-- **Load average measured *during* a run says nothing.** A 32-thread benchmark
-  drives the 1-minute average to ~32 by construction, and it then decays for
-  minutes afterwards. Judge quietness *before* starting, with instantaneous idle
-  (`vmstat 2 3`), not with `uptime` during or after. Related: #322's Context
-  discards an earlier 1,068,472 for having run at load 23-26 under `powersave`;
-  the quiet `performance` run above lands within 1.7 % of it, so that figure was
-  sound after all (different box of the same model, so machine and conditions
-  are conflated in that one comparison).
+  and XLA interpreter teardown, which at m26 is enough to report a prove as
+  roughly twice its real cost, and that turns straight into a halving of
+  comp/s. Take the prove time from a second in-process `prove_bundle`, or from
+  the harness's own `score.json`; never from wrapping the worker process.
