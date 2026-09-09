@@ -247,14 +247,22 @@ measures a fresh worker per trial — seed on stdin starts the clock, the proof
 file's rename stops it — and verifies every proof with the fork's own verifier
 (BLAKE3 Fiat-Shamir and BLAKE3 Merkle on the `flock-bench-v0` domain; the
 `prove_fast` profile plumbing selects that arm). Point its `WORKER` positional
-at `scripts/bench_worker.sh`: the harness clears the worker's env, so the shim
-restores it and exec's `python/flock_zorch/testing/bench_worker.py`, whose
-timed body is byte-gated against a fork-verified bundle by
-`bench_ligerito_oracle_test.py` (regen: `cargo run --release --example
-dump_bench_ligerito`) — the harness's `verified=true` is the same acceptance
-the gate pins. The shim also wires a per-wheel `JAX_COMPILATION_CACHE_DIR`:
-a respawned worker must absorb the multi-minute XLA compile inside the
-harness's 300 s readiness budget, so warm trials have to hit that cache.
+at one of the two entry scripts — `scripts/bench_worker.sh` for the GPU tier
+(`FRX_PLATFORMS=cuda,cpu`) or `scripts/bench_worker_cpu.sh` for the CPU tier
+(`cpu`), the one the Yukon x86 leaderboard comparison is scored on. Each sets
+its platform list and then sources `scripts/bench_worker_common.sh`, the shared
+env shim: the harness clears the worker's env, so the shim restores it and
+exec's
+`python/flock_zorch/testing/bench_worker.py`, whose timed body is byte-gated
+against a fork-verified bundle by `bench_ligerito_oracle_test.py` (regen:
+`cargo run --release --example dump_bench_ligerito`) — the harness's
+`verified=true` is the same acceptance the gate pins. The platform list cannot
+be an override from the caller, because that cleared env would drop it; one
+entry script per tier is how each tier names its own. The shim also wires a
+per-wheel `JAX_COMPILATION_CACHE_DIR`: a respawned worker must absorb the whole
+XLA compile inside the harness's readiness budget, so warm trials have to hit
+that cache. [`docs/measurement.md`](docs/measurement.md) has the rules for
+running that harness and reading what comes out.
 
 ```bash
 git -C "$SCRATCH" clone https://github.com/Layr-Labs/flock-challenge.git
@@ -266,6 +274,7 @@ cargo run --manifest-path "$SCRATCH/flock-challenge/Cargo.toml" --release \
   -p flock-benchmark-harness -- \
   "$PWD/scripts/bench_worker.sh" "$SCRATCH/bench" score.json summary.json \
   8 32 2 10   # LOG2 THREADS WARMUP_RUNS RUNS; log2 8 → m=22, 18 → m=32
+# Swap in scripts/bench_worker_cpu.sh, in both commands, for the CPU tier.
 ```
 
 ## Benchmark

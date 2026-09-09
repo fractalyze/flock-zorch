@@ -11,3 +11,6 @@ __pycache__/
 bazel-*
 # XLA per-fusion autotune cache — machine/GPU-specific, regenerated on GPU runs.
 /xla_gpu_per_fusion_autotune_cache_dir/
+
+# Personal Claude Code settings (per-developer, never committed)
+.claude/settings.local.json
