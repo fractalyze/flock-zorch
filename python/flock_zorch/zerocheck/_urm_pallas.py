@@ -52,14 +52,6 @@ _OUTER_PER_PARTIAL = _ROWS_PER_PARTIAL // 128
 _NUM_WARPS = 2
 
 
-def _gf8_reduce(p: Array) -> Array:
-    """AES-poly reduce of a <=15-bit value (vector, int32 lanes)."""
-    h = p >> 8
-    t = (p & 0xFF) ^ h ^ (h << 1) ^ (h << 3) ^ (h << 4)
-    h2 = t >> 8
-    return (t & 0xFF) ^ h2 ^ (h2 << 1) ^ (h2 << 3) ^ (h2 << 4)
-
-
 def _xor_reduce0(x: Array) -> Array:
     """XOR-reduce axis 0 (power-of-2 sized) by halving splits.
 
@@ -136,7 +128,7 @@ def _kernel(
         aacc = _xor_reduce0(prod << k8)
         cbit = ((cv[:, None] >> lam.astype(fnp.uint64)[None, :]) & 1).astype(fnp.int32)
         cacc = _xor_reduce0(cbit << k8)
-        sn = _gf8_reduce(aacc)
+        sn = _urm._gf8_reduce(aacc)
         out = list(chunk)
         # gamma-Horner: chunk = x*chunk + phi8(sn)
         for t, idx in ((0, sn), (2, cacc)):

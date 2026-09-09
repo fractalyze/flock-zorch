@@ -402,6 +402,20 @@ py_test(
     ],
 )
 
+# No golden: the CPU tier's factored-eq round-1 core is byte-exact against the
+# composite — the geometric small/medium eq identities it rests on. The
+# formulation the CPU tier dispatches to, so it runs on CPU by definition.
+py_test(
+    name = "urm_factored_test",
+    size = "small",
+    srcs = ["flock_zorch/zerocheck/testing/urm_factored_test.py"],
+    deps = [
+        ":flock_zorch",
+        ":test_support",
+        requirement("absl-py"),
+    ],
+)
+
 # No golden: prove zerocheck+lincheck → verify both, claim reconstruction + tamper
 # rejection for the lincheck verifier. Software-mul, so it runs on CPU.
 py_test(
