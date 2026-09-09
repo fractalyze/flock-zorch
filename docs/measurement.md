@@ -338,7 +338,7 @@ measured against (#322, #323) — on the build box.
 
   | size | warm startup | timed prove | XLA compile inside startup |
   |---|---|---|---|
-  | m26 (`log2=12`) | 24.1-24.8 s | 1.35 s | 13.87 s over 95 programs |
+  | m26 (`log2=12`) | 22.8-24.8 s | 1.35 s | 13.87 s over 95 programs |
   | m32 (`log2=18`) | 116.2 s | 87.8 s | — |
 
   At m26 four programs are the whole compile bill — `_open_jitted` 5.52 s,
@@ -359,12 +359,16 @@ measured against (#322, #323) — on the build box.
     Check it by name, never by timing — `ls "$JAX_COMPILATION_CACHE_DIR" |
     grep open` must show `jit__open_jitted-<hash>-cache`, and it is the largest
     entry in the dir. The same program now costs 5.52 s to load against 20.11 s
-    to compile, which is most of the warm-startup step from 39.76 s to 24.3 s.
+    to compile, which is most of the warm-startup step from 39.76 s to a
+    23.8 s median.
   - **Do not credit that step to the wheel.** fractalyze/xla#672, which the
     same wheel carries, does what it says — the `ToProto` refusals go 2 -> 0
     and cold startup 77 s -> 37 s — but warm-to-warm it bought only **7.5 %**
     (42.98 -> 39.76 s). Startup is dominated by `_open_jitted`, and only
-    flock-zorch#328 moved that.
+    flock-zorch#328 moved that. The two figures come from different sessions,
+    so the direct evidence for the attribution is not the step itself but the
+    same program's cost inside one measurement: 5.52 s loaded against 20.11 s
+    compiled.
   - **The `cpu_aot_loader` machine-mismatch warnings are benign** — two per hit
     (`prefer-no-gather`, `prefer-no-scatter`), 190 for 95 hits, and the entry is
     then used. A rejected entry is not what is happening.
@@ -372,9 +376,15 @@ measured against (#322, #323) — on the build box.
     artifact.** It looked flat (30.5 s at m24 vs 36.6 s at m26) while
     `_open_jitted` recompiled from scratch in every worker and swamped
     everything size-dependent. With it cached, startup tracks how much
-    executable has to be deserialized: 24 s at m26 against 116 s at m32. A
-    ranked 120-trial run is therefore ~1 h at m26 but ~10 h at m32 — plan m32
-    acceptance as its own dispatch, not as a step inside a working session.
+    executable has to be deserialized: 24 s at m26 against 116 s at m32.
+  - **A trial costs startup plus prove, and nothing else worth counting.**
+    Timed end to end, the harness runs 25.1 s/trial at m26 (175.8 s for 7)
+    and 199.8 s/trial at m32 (599.4 s for 3) — against 25.2 s and 204.0 s for
+    those two components alone, so its own spawn and verification overhead is
+    inside the noise at both sizes. Do not budget a separate verification
+    term. A ranked 120-trial run is therefore **~50 min at m26 and ~6.7 h at
+    m32**; plan m32 acceptance as its own dispatch, not as a step inside a
+    working session.
   - **AOT export (`jax.export`) is not the fix.** It targets tracing, a few
     seconds of the total.
   - Iterate **in-process** (a second prove is 2.0 s at m26); keep the harness
@@ -388,24 +398,24 @@ measured against (#322, #323) — on the build box.
   from a second in-process `prove_bundle`, or from the harness's own
   `score.json`; never from wrapping the worker process.
 
-### The m32 pair on build-server (2026-09-09) — the goal's scored instance
+### The m32 pair on build-server (2026-09-08/09) — the goal's scored instance
 
 m32 (`log2=18`, 262,144 compressions) is the size the leaderboard scores, and
 since the frx wheel carrying fractalyze/xla#676 both arms complete at it. Both
 unsandboxed (#322 decision 6), `taskset -c 0-15`, 16 threads, `performance`
 governor, box at 99 % idle:
 
-| arm | score | median | trials | verified |
-|---|---|---|---|---|
-| Yukon frontier `e1a16581` (`c75aece`) | **1,138,183 comp/s** | 230 ms | 20 warm-up + 100 measured | 120/120 |
-| flock-zorch FRX CPU tier | **2,986 comp/s** | 87.78 s | 3 warm-up + 10 measured † | 13/13 |
+| arm | measured | score | median | trials | verified |
+|---|---|---|---|---|---|
+| Yukon frontier `e1a16581` (`c75aece`) | 2026-09-08 | **1,138,183 comp/s** | 230 ms | 20 warm-up + 100 measured | 120/120 |
+| flock-zorch FRX CPU tier | 2026-09-09 | **2,986 comp/s** | 87.78 s | 3 warm-up + 10 measured † | 13/13 |
 
 **381x**, on this machine, at this size — the gap this goal has to close. Four
 things qualify it, and none of them is "the run was noisy":
 
 - † **The FRX arm is 13 trials, not the ranked 20/100.** A ranked run at m32 is
-  ~10 h on this box (116 s startup + 88 s prove + ~90 s verification per
-  trial), so it is its own dispatch. Its ten measured trials span 87.0-88.3 s
+  ~6.7 h on this box (199.8 s/trial, timed end to end), so it is its own
+  dispatch. Its ten measured trials span 87.0-88.3 s
   at p90/p10 = 1.013 — tighter than either arm's m26 run — so the median is
   well determined; it is still not a `score.json` anyone may quote as a ranked
   score.
@@ -427,21 +437,26 @@ is charged only to the 300 s readiness budget (which it clears with 61 % to
 spare) and to the wall-clock of a ranked run. Peak RSS is 45.3 GB against this
 box's 60 GB — the only headroom figure in the pair that is close to a limit.
 
-### The m26 pair on build-server (2026-09-09) — the dev-loop baseline
+### The m26 pair on build-server (2026-09-08/09) — the dev-loop baseline
 
 m26 (`log2=12`, 4096 compressions) is the fast loop the lever tasks iterate
-against: a ranked 120-trial run costs ~50 min at m26 against ~10 h at m32. Both
+against: a ranked 120-trial run costs ~50 min at m26 against ~6.7 h at m32. Both
 arms under the ranked contract (20 warm-up discarded, 100 measured, median),
 both unsandboxed (#322 decision 6), `taskset -c 0-15`, 16 threads,
 `performance` governor, box at 99 % idle:
 
-| arm | score | median | p90/p10 | verified |
-|---|---|---|---|---|
-| Yukon frontier `e1a16581` (`c75aece`) | **519,852 comp/s** | 7.879 ms | 3.80 | 120/120 |
-| flock-zorch FRX CPU tier | **3,022 comp/s** | 1.355 s | 1.15 | 120/120 |
+| arm | measured | score | median | p90/p10 | verified |
+|---|---|---|---|---|---|
+| Yukon frontier `e1a16581` (`c75aece`) | 2026-09-08 | **519,852 comp/s** | 7.879 ms | 3.80 | 120/120 |
+| flock-zorch FRX CPU tier | 2026-09-09 | **3,022 comp/s** | 1.355 s | 1.15 | 120/120 |
 
-**172x**, on this machine, at this size. Read with three caveats:
+**172x**, on this machine, at this size. Read with four caveats:
 
+- **The arms were measured a day apart, not in one sitting.** Only the FRX arm
+  was re-run for the wheel; the frontier row is the 2026-09-08 run verbatim,
+  because the frontier is a Rust binary that nothing on the wheel side touches.
+  Same box, same governor, same pinning, same sandbox decision — say so when
+  quoting the pair. Its own dated row is in the frontier table below.
 - **The FRX arm moved 1.56x since 2026-09-08** (median 2.117 s -> 1.355 s), and
   the tree moved by exactly two commits in between: #330 (zorch
   `3762ddce` -> `1d3db25f` and the frx quad to `dev20260908153807`) and #328.
@@ -470,6 +485,7 @@ Submission `e1a16581` (`c75aece`) under the official harness, worker unsandboxed
 |---|---|---|---|---|
 | m32 (`log2=18`), default | 32 | 1,086,628 | 241 ms | 1.078 |
 | m32, pinned to physical cores | 16 | **1,138,183** | 230 ms | 1.048 |
+| m26 (`log2=12`), pinned | 16 | 519,852 | 7.879 ms | 3.80 |
 | m24 (`log2=10`), default | 32 | 274,467 | 3.73 ms | 1.284 |
 
 Four things to carry forward from it:
