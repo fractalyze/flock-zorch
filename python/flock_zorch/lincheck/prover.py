@@ -93,15 +93,15 @@ class CscCircuit:
     2^k_log is too large for dense [k,k] matrices (sha2 k=32768, blake3 k=16384).
     Holds A₀/B₀ as flat nonzero (col,row) pairs; `fold_alpha_batched` is the
     transposed binary matvec out[c] = α·Σ_{r:A[r,c]=1} eq[r] ⊕ Σ_{r:B[r,c]=1} eq[r].
-    Runs **on device**, by a formulation `_csc_fold` picks per platform: on GPU a
-    column-sorted prefix-XOR scan (`_seg_xor_fold`), which handles the skewed
-    const_pin column degree without the padded gather that would blow up or the
-    atomic XOR-scatter that would hotspot; on CPU a plain scatter-XOR
-    (`_scatter_xor_fold`), where XLA:CPU's serial scatter loop makes the scan's
-    log-depth passes overhead and neither hazard applies. The plans differ in
-    layout (the GPU one sorts by column at construction, host, once), so the
-    backend is read here rather than inside the fold. `const_pin` carries the +β
-    pin column.
+    Runs **on device** in one of the two formulations `_csc_fold` provides, and
+    this class is what picks between them: on GPU a column-sorted prefix-XOR scan
+    (`_seg_xor_fold`), which handles the skewed const_pin column degree without
+    the padded gather that would blow up or the atomic XOR-scatter that would
+    hotspot; on CPU a plain scatter-XOR (`_scatter_xor_fold`), where XLA:CPU's
+    serial scatter loop makes the scan's log-depth passes overhead and neither
+    hazard applies. Their plans differ in layout (the GPU one sorts by column at
+    construction, host, once), so the backend is read in `__init__` rather than
+    inside the fold. `const_pin` carries the +β pin column.
 
     This is why blake3 and sha2 have no per-circuit lincheck module: their goldens
     carry populated A₀/B₀, so a caller builds one of these from `a0_rows`/`b0_rows`
@@ -210,9 +210,10 @@ class LincheckCircuit(Protocol):
     (`zorch.round`): a family of circuits plugged into one unchanging lincheck
     protocol, varying only the column-marginal fold. `fold_alpha_batched` returns
     comb[c] = α·(A₀ᵀ·eq_inner)[c] ⊕ (B₀ᵀ·eq_inner)[c]; `const_pin` is the +β pin
-    column, or None. `CscCircuit` (device seg-scan) and the `KeccakLincheckCircuit`
-    / `Keccak3LincheckCircuit` walkers (in `flock_zorch.r1cs_hashes`, with their
-    circuits) match it structurally — no inheritance, no shared base.
+    column, or None. `CscCircuit` (device scan on GPU, scatter on CPU) and the
+    `KeccakLincheckCircuit` / `Keccak3LincheckCircuit` walkers (in
+    `flock_zorch.r1cs_hashes`, with their circuits) match it structurally — no
+    inheritance, no shared base.
     `@runtime_checkable` so `lincheck_circuit_protocol_test` can
     assert conformance at runtime; that checks member presence, not the fold's math
     (the byte-match oracle gates pin that)."""

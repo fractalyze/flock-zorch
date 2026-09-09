@@ -13,8 +13,11 @@ byte-identity to flock rides those proof gates.
 
 `FoldArmLockstepTest` drives BOTH arms against that reference on whichever
 backend is running, so CPU CI — where `CscCircuit` selects the scatter — still
-gates the scan arm the GPU prover takes, and vice versa."""
+gates the scan arm the GPU prover takes, and vice versa. `ArmSelectionTest` then
+gates the choice itself, which is the only behavior the platform split adds."""
 from __future__ import annotations
+
+from unittest import mock
 
 import frx
 import numpy as np
@@ -122,6 +125,47 @@ class FoldArmLockstepTest(parameterized.TestCase):
         k = 64
         rng = np.random.default_rng(7)
         self._assert_arms_match([[0, int(rng.integers(1, k))] for _ in range(k)], k, 7)
+
+
+class ArmSelectionTest(parameterized.TestCase):
+    """`CscCircuit` must pick the arm its backend calls for.
+
+    That selection is the only behavior the platform split adds, and no
+    fold-level test can see it: `FoldArmLockstepTest` calls both folds directly,
+    and `CscFoldTest` passes on either arm. Without this, inverting the backend
+    test — CPU silently taking the scan, or GPU taking the scatter whose atomics
+    would hotspot the skewed `const_pin` column — keeps the suite green.
+
+    The plans are told apart by arity rather than by re-deriving `_on_cpu`, which
+    would only restate the implementation: `_csc_segments` returns
+    (row_sorted, seg_end, present) and `_flat_nz` returns (col, row)."""
+
+    @parameterized.named_parameters(
+        ("gpu_takes_the_scan", "gpu", 3),
+        ("cpu_takes_the_scatter", "cpu", 2),
+        # Any non-GPU backend takes the CPU arm — the split is "is this the
+        # backend whose scatter needs atomics", not an allowlist.
+        ("tpu_takes_the_scatter", "tpu", 2),
+    )
+    def test_backend_selects_plan(self, backend: str, plan_len: int):
+        k = 64
+        rng = np.random.default_rng(17)
+        a_rows, b_rows = _rand_rows(rng, k, k, 3), _rand_rows(rng, k, k, 3)
+        eq_g = rand_ghash(rng, k)
+        alpha = rand_ghash(rng, 1)[0]
+
+        with mock.patch.object(frx, "default_backend", return_value=backend):
+            circuit = CscCircuit(a_rows, b_rows, k)
+        self.assertLen(circuit._a_seg, plan_len)
+        self.assertLen(circuit._b_seg, plan_len)
+
+        # The arm it selected must still fold to the naive reference.
+        eq_lanes = ghash.to_lanes(eq_g)
+        want = alpha * ghash.to_ghash(
+            _ref_matvec_lanes(a_rows, eq_lanes, k)
+        ) + ghash.to_ghash(_ref_matvec_lanes(b_rows, eq_lanes, k))
+        got = circuit.fold_alpha_batched(alpha, eq_g)
+        np.testing.assert_array_equal(ghash.to_lanes(got), ghash.to_lanes(want))
 
 
 if __name__ == "__main__":

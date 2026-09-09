@@ -38,13 +38,16 @@ def _flatten_nz(rows):
 
 
 def _csc_segments(col, row):
-    """Precompute the device segment-XOR-reduce plan for one sparse binary matrix
-    M (flat nonzeros: M[row[i], col[i]] = 1). The transposed fold out[c] =
-    Σ_{i:col[i]=c} eq[row[i]] is a segment-XOR-reduce keyed by column. Sort the
-    nonzeros by column (host, ONCE) so each column is a contiguous run; record the
-    gather order, each run's LAST index, and the distinct present columns. The
-    per-fold device path (`_seg_xor_fold`) then needs only a gather + prefix scan +
-    a clean scatter — no atomics (so the skewed const_pin column is not a hotspot).
+    """Precompute the GPU segment-XOR-reduce plan for one sparse binary matrix M
+    (flat nonzeros: M[row[i], col[i]] = 1); `_flat_nz` is the CPU counterpart.
+
+    The transposed fold out[c] = Σ_{i:col[i]=c} eq[row[i]] is a segment-XOR-reduce
+    keyed by column. Sort the nonzeros by column (host, ONCE) so each column is a
+    contiguous run; record the gather order, each run's LAST index, and the
+    distinct present columns. The per-fold device path (`_seg_xor_fold`) then
+    needs only a gather + prefix scan + a clean scatter — no atomics, so the
+    skewed const_pin column is not a hotspot.
+
     Returns device int32 arrays (row_sorted, seg_end, present) or None if empty."""
     if len(col) == 0:
         return None
