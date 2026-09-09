@@ -16,10 +16,10 @@ typing-extensions
 # the binary-field GPU kernels have to match, and CPU-only CI cannot catch a
 # desync. frx/frxlib are the Fractalyze jax_fork rebrand. What a particular
 # wheel carries belongs in the bump commit that moved these pins, not here.
-frx==0.10.2.dev20260908153807
-frxlib==0.10.2.dev20260908153807
-frx-cuda12-plugin==0.10.2.dev20260908153807
-frx-cuda12-pjrt==0.10.2.dev20260908153807
+frx==0.10.2.dev20260909121611
+frxlib==0.10.2.dev20260909121611
+frx-cuda12-plugin==0.10.2.dev20260909121611
+frx-cuda12-pjrt==0.10.2.dev20260909121611
 # zk_dtypes ships the native field dtypes frx lowers; arrives transitively via
 # frx but the resolver lags, so pin it so the lock tracks the frx wheel.
 # 0.0.10 adds the flat AES-basis binary_field_gf8_aes dtype (zk_dtypes#157);
