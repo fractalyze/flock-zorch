@@ -140,18 +140,18 @@ def _mlv_round_pair(a_g, b_g, eq_g, eq_next_g, r0_g, t):
     return a2, b2, t, ((m1, minf), (m1_next, minf_next)), (rho, rho_next)
 
 
-@frx.jit
 def _mlv_sumcheck(a_g, b_g, eq_tables, r0_g, t):
-    """Run the complete multilinear tail as one device program.
+    """The complete multilinear tail: the round schedule over `_mlv_round_pair`.
 
-    The round shapes shrink statically, so tracing the tuple of suffix tables
-    unrolls the protocol without a host-controlled loop.  This used to be a bad
-    trade while each SHA-256 transcript hop lowered as a streaming loop; the
-    dedicated SHA kernels and current XLA fusion make it worth re-evaluating.
+    Rounds compose in pairs; the pair's deferred group of four holds exactly
+    while two rounds remain, so an odd round count leaves one single
+    `_mlv_round` at the end.
 
-    Rounds trace in composed pairs (`_mlv_round_pair`); the pair's deferred
-    group of four holds exactly while two rounds remain, so an odd round
-    count leaves one single `_mlv_round` at the end.
+    The loop is a plain Python one over shrinking static shapes, so the same
+    body serves both drivers: called bare it dispatches one program per pair
+    (`_ladder_on_host`), and wrapped in `_MLV_SUMCHECK_FUSED` it traces the
+    whole ladder into one. The two emit identical arithmetic in identical
+    order, so the wire cannot move between them.
     """
     rounds, rhos = [], []
     n_mlv = len(eq_tables)
@@ -166,7 +166,7 @@ def _mlv_sumcheck(a_g, b_g, eq_tables, r0_g, t):
         rounds.append((m1, minf))
         rhos.append(rho)
     final_a, final_b = a_g[0], b_g[0]
-    t = t.observe_scalar(final_a).observe_scalar(final_b)
+    t = _observe_finals(t, final_a, final_b)
     return t, tuple(rounds), fnp.stack(rhos), final_a, final_b
 
 
@@ -205,18 +205,17 @@ def _mlv_round_pair_sq(a_g, eq_sqrt_next_g, sqrt_c_g, r0_g, t):
     return a2, t, ((m1, minf), (m1_next, minf_next)), (rho, rho_next)
 
 
-@frx.jit
 def _mlv_sumcheck_sq(a_g, eq_sqrt_tables, cs_sqrt_g, r0_g, t):
     """`_mlv_sumcheck` on the equal-factor path — the same wire: message values
     are exact field identities of the generic pair's, and the final b̂ observe
     repeats â's value, which is what the generic path serializes too.
 
-    Rounds trace in composed pairs (`_mlv_round_pair_sq`) with the odd tail on
-    the single round — the same schedule as the generic ladder. A pair reads
-    ONLY round i+1's table plus √c_i (= `cs_sqrt_g[i]`, the challenge its
-    table chain absorbed); slots outside `_sq_pair_reads` may arrive as None.
-    The asserts fail at trace time, next to the schedule, if the emission
-    keep ever drifts from the reads."""
+    Rounds compose in pairs (`_mlv_round_pair_sq`) with the odd tail on the
+    single round — the same schedule, and the same two drivers, as the generic
+    ladder. A pair reads ONLY round i+1's table plus √c_i (= `cs_sqrt_g[i]`,
+    the challenge its table chain absorbed); slots outside `_sq_pair_reads` may
+    arrive as None. The asserts fail next to the schedule if the emission keep
+    ever drifts from the reads."""
     rounds, rhos = [], []
     n_mlv = len(eq_sqrt_tables)
     for i in range(0, n_mlv - 1, 2):
@@ -232,7 +231,7 @@ def _mlv_sumcheck_sq(a_g, eq_sqrt_tables, cs_sqrt_g, r0_g, t):
         rounds.append((m1, minf))
         rhos.append(rho)
     final_a = a_g[0]
-    t = t.observe_scalar(final_a).observe_scalar(final_a)
+    t = _observe_finals(t, final_a, final_a)
     return t, tuple(rounds), fnp.stack(rhos), final_a
 
 
@@ -241,8 +240,32 @@ def _observe_finals(t, final_a, final_b):
     return t.observe_scalar(final_a).observe_scalar(final_b)
 
 
+_MLV_SUMCHECK_FUSED = frx.jit(_mlv_sumcheck)
+_MLV_SUMCHECK_SQ_FUSED = frx.jit(_mlv_sumcheck_sq)
+
 _EQ_TABLES = frx.jit(sumcheck.build_eq_suffix_tables)
 _SQRT = frx.jit(sumcheck.sqrt_ghash)
+
+
+def _ladder_on_host() -> bool:
+    """Drive the ladder as one program per pair, from the host, rather than
+    tracing every round into one?
+
+    The two drivers trade the same two costs against each other, and the
+    backends sit on opposite sides of it. A round is one pass over an array
+    that halves each time, and the rounds cannot overlap: a Fiat-Shamir hop
+    has to observe round i's message before round i+1's challenge exists. So
+    tracing the ladder whole buys no cross-round scheduling on any backend —
+    it only saves per-dispatch latency, and it costs the per-round working set
+    the separate programs keep live.
+
+    On CPU the pass dominates and the latency is small, so the host loop wins;
+    it is also the shape the reference prover uses. On GPU the round is short
+    enough that launch latency sets its cost, so the fused program wins there.
+
+    Both drivers run the same body in the same order, so this chooses a
+    schedule and never a wire — `LadderDriverWireTest` pins that."""
+    return frx.default_backend() == "cpu"
 
 
 def _sq_pair_reads(n_mlv):
@@ -364,14 +387,18 @@ class _MultilinearRound:
         if carry.b_rows is carry.a_rows:
             cs_sqrt = _SQRT(r_g[k_skip + 1 :])
             eq_tables = _EQ_TABLES_SQ(cs_sqrt)
-            transcript._t, rounds, rhos, final_a = _mlv_sumcheck_sq(
+            ladder_sq = (
+                _mlv_sumcheck_sq if _ladder_on_host() else _MLV_SUMCHECK_SQ_FUSED
+            )
+            transcript._t, rounds, rhos, final_a = ladder_sq(
                 a_g, eq_tables, cs_sqrt, sumcheck.eq._ONE_G, transcript._t
             )
             final_b = final_a
         else:
             b_g = _fold_at_z(carry.b_rows, weights)
             eq_tables = _EQ_TABLES(r_g[k_skip + 1 :])
-            transcript._t, rounds, rhos, final_a, final_b = _mlv_sumcheck(
+            ladder = _mlv_sumcheck if _ladder_on_host() else _MLV_SUMCHECK_FUSED
+            transcript._t, rounds, rhos, final_a, final_b = ladder(
                 a_g, b_g, eq_tables, sumcheck.eq._ONE_G, transcript._t
             )
 

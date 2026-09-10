@@ -460,11 +460,23 @@ _SUBSTEPS: dict[str, tuple[tuple[str, str, str], ...]] = {
     ),
     # Patch on `zerocheck.prover`, not on `._fold`: the round body looks these
     # up in its own module globals, so that is where the wrapper must land.
+    #
+    # The ladder needs BOTH of its driver names patched — `_ladder_on_host`
+    # picks one per backend, and a wrapper on the name that backend does not
+    # call emits no range at all. Patching the unused one is harmless: only the
+    # selected driver is ever dispatched, so either way exactly one range opens.
+    # Wrapping the `_FUSED` name (not the body it jits) is what keeps the range
+    # on the dispatch, since `_wrap_substeps` runs after the program is traced.
     "zerocheck-ml": (
         ("flock_zorch.zerocheck.prover", "_lagrange_weights", "zerocheck-ml/weights"),
         ("flock_zorch.zerocheck.prover", "_fold_at_z", "zerocheck-ml/fold_at_z"),
         ("flock_zorch.zerocheck.prover", "_EQ_TABLES", "zerocheck-ml/eq_tables"),
         ("flock_zorch.zerocheck.prover", "_mlv_sumcheck", "zerocheck-ml/mlv_sumcheck"),
+        (
+            "flock_zorch.zerocheck.prover",
+            "_MLV_SUMCHECK_FUSED",
+            "zerocheck-ml/mlv_sumcheck",
+        ),
     ),
     "zerocheck-ml-sq": (
         (
@@ -482,6 +494,11 @@ _SUBSTEPS: dict[str, tuple[tuple[str, str, str], ...]] = {
         (
             "flock_zorch.zerocheck.prover",
             "_mlv_sumcheck_sq",
+            "zerocheck-ml-sq/mlv_sumcheck_sq",
+        ),
+        (
+            "flock_zorch.zerocheck.prover",
+            "_MLV_SUMCHECK_SQ_FUSED",
             "zerocheck-ml-sq/mlv_sumcheck_sq",
         ),
     ),
