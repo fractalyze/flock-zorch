@@ -250,9 +250,13 @@ def test_round_trip_ghash():
     prover = LigeritoProver(make_code, merkle.GHASH_SHA256_TREE, config, chor)
     verifier = LigeritoVerifier(make_code, merkle.GHASH_SHA256_TREE, config, chor)
 
-    f = rand_ghash(np.random.default_rng(7), 1 << config.num_vars)
+    witness = rand_ghash(np.random.default_rng(7), 1 << config.num_vars)
     z = rand_ghash(np.random.default_rng(11), config.num_vars)
-    root, pdata = prover.commit([f])
+    root, pdata = prover.commit([witness])
+    # `commit` takes the basis's own witness order: the monomial convention is
+    # handed raw coefficient order and bit-reverses it into the multilinear the
+    # recursion folds, which is what the opened value evaluates.
+    f = lax.bit_reverse(witness, dimensions=(0,))
     claim = OpeningClaim(root, [z])
     opened = prover.prove(claim, OpeningWitness(pdata), flock_transcript(DOMAIN))
     value, proof = opened.reduction_proof.values, opened.reduction_proof.proof
