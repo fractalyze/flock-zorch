@@ -95,6 +95,17 @@ The benchmark itself — how to run it and what it has published — is in
   override checkout against the `MODULE.bazel` pin. A stale override once hid a
   +35% m32 throughput difference (#200 erratum) — every m32 wall measured under
   it had to be thrown away.
+- **A shared `JAX_COMPILATION_CACHE_DIR` can hand you an executable compiled for
+  another machine, and XLA:CPU loads it anyway.** The tell is on stderr, buried
+  in a wall of feature lists: `Loading XLA:CPU AOT result. Target machine
+  feature +prefer-no-gather is not supported on the host machine`. It is logged
+  at error level and execution continues, so a run that prints it is still a
+  number — just not this host's. The mismatched features are the ones that
+  decide codegen: an entry built under `+prefer-no-gather` / `+prefer-no-scatter`
+  will not emit the gather or scatter the source asks for, which silently
+  misprices exactly the code paths those flags name. Give each arm of an A/B its
+  own **fresh** cache directory and let both compile here; startup grows by about
+  a minute at m26 and is reported separately from the prove anyway.
 - **Do not set `XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async` by default.** At m32 it
   *inflates* the prove **~14%** — 71.8 ms without it vs 81.6 ms with it, means
   of three fresh processes per arm, `--throughput` best-of-10 each,

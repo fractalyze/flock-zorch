@@ -112,6 +112,16 @@ _OP_CLASS = (
 # Modules whose whole body is one class, applied only after the op rules miss.
 _MODULE_CLASS = {
     "_seg_xor_fold": "xor_fold",  # the lincheck segment fold: slice/pad/add
+    # Its CPU counterpart, one scatter-XOR into a dense accumulator. Neither
+    # `gather` nor `scatter` is an op family named above, so without this the
+    # comb fold — the largest single term in the CPU lincheck phase — reports
+    # as `other`.
+    "_scatter_xor_fold": "xor_fold",
+    # The lincheck partial fold. On CPU its body is the sum-table build and the
+    # chunked table-lookup reduce — add/concatenate/slice/reduce fusions, no op
+    # family a rule above names. On GPU the fold is one `ffi_call`, which the op
+    # rules take first, so this fallback covers only `build_eq`'s tail there.
+    "_partial_fold": "xor_fold",
 }
 
 KERNEL_CLASSES = (
