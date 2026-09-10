@@ -1,4 +1,4 @@
-# Copyright 2026 The Zorch Authors. SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The Flock-Zorch Authors. SPDX-License-Identifier: Apache-2.0
 """The CPU partial fold's table path against the portable select-XOR oracle
 (no golden). The two formulations differ in everything but the answer — one
 table lookup per byte vs one select-XOR step per outer bit — so this is the
@@ -56,11 +56,13 @@ class PartialFoldTableTest(parameterized.TestCase):
 
     @parameterized.named_parameters(
         # (m, k_log): one stripe (chunk clamps below _STRIPES_PER_CHUNK), the
-        # exact chunk, several chunks, and the m26 bench shape.
+        # exact chunk, several chunks, and the bench profile's k_log
+        # (`cpu_phase_split.K_LOG`) at a small m — the m26 bench shape itself is
+        # 512 stripes, which the select-XOR oracle is far too slow to gate.
         ("one_stripe", 11, 8),
         ("one_chunk", 14, 8),
         ("many_chunks", 20, 12),
-        ("bench_shape", 22, 14),
+        ("bench_k_log", 22, 14),
     )
     def test_matches_the_select_xor_oracle(self, m: int, k_log: int):
         rng = np.random.default_rng(m * 100 + k_log)

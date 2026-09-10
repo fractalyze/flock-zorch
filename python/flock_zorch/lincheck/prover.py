@@ -196,8 +196,8 @@ def _partial_fold_kernel(zp, eq_outer):
 
 # Stripes folded per `_partial_fold_table` iteration. Each iteration holds a
 # `[chunk, k]` ghash intermediate live, so the chunk trades loop trips against
-# cache residency; 8 measured best or tied-best at every shape the hash circuits
-# reach (k_log 14-17, m 22-28) and keeps the intermediate bounded at large m.
+# cache residency, and it bounds that intermediate as m grows. Tuned by a sweep
+# over the shapes the hash circuits reach; the sweep is on flock-zorch#351.
 _STRIPES_PER_CHUNK = 8
 
 
@@ -223,8 +223,10 @@ def _partial_fold_table(zp, eq_outer, n_outer):
 
     The stripe axis is walked in `_STRIPES_PER_CHUNK` blocks rather than gathered
     whole: XLA:CPU fuses the gather into the reduce either way, but the loop caps
-    the live intermediate at `[chunk, k]` instead of `[n_outer / 8, k]`, which is
-    what keeps the accumulator and the tables cache-resident."""
+    the live intermediate at `[chunk, k]` instead of `[n_outer / 8, k]`, and each
+    trip indexes only `chunk` of the tables. The tables themselves are built for
+    every stripe up front and stay live across the loop — hoisting that build out
+    of the trip measured faster than rebuilding each block's inside it."""
     k = zp.shape[1]
     n_stripes = n_outer // 8
     chunk = min(_STRIPES_PER_CHUNK, n_stripes)  # n_stripes is a power of two
