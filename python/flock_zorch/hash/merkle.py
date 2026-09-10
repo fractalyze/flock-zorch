@@ -4,10 +4,9 @@ commit/fold machinery) with flock's leaf hasher and compressor injected.
 
 The SHA-256 arm is flock's default construction (no domain separation): each
 leaf hash = `SHA256(leaf_bytes)`, each internal node = `SHA256(left ‖ right)`
-(64-byte preimage). zorch's binary `_fold_scan` produces the same per-level
-digests with an O(1)-in-height traced body (it compresses a full-width buffer
-each level and slices the live prefix — extra hashes, cheaper trace; Merkle is
-<1% of PCS commit).
+(64-byte preimage). zorch's `MerkleTree.fold_digests` produces the per-level
+digests, compressing only each level's live nodes one right-sized level at a
+time.
 
 The BLAKE3 arm is the flock-challenge fork's `merkle_hash = Blake3`
 (the benchmark profile's commitment), and it does NOT hash concatenated bytes:
