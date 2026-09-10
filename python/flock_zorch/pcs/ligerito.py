@@ -21,8 +21,9 @@ flock side of both seams so the code-generic driver produces flock's byte wire:
 
 The algebra side rides zorch's `LigeritoConfig.monomial_commit` (flock commits
 the raw lanes — the bit-reversed coefficient basis) plus the raw-basis entries
-(`open_with_basis` / `verify_with_basis`): the driver's witness and initial
-basis are the full-index bit-reversals of flock's `w` / `b`, under which
+(`open_with_basis` / `verify_with_basis`): the driver's initial basis is the
+full-index bit-reversal of flock's `b`, and the witness is flock's `w` in raw
+coefficient order, whose reversal the monomial `CommitBasis` owns. Under those
 zorch's folds, commits, and induces reproduce flock's bytes exactly (gate:
 `testing/ligerito_oracle_test.py`).
 """
@@ -386,20 +387,6 @@ def _bitrev(x: Array) -> Array:
     return lax.bit_reverse(x, dimensions=(0,))
 
 
-@frx.jit
-def _commit_prep(z: Array) -> Array:
-    """`u64[N, 2]` flock-order F128 -> bit-reversed `binary_field_ghash[N]`.
-
-    The two steps are traced together rather than called separately because a
-    bitcast dispatched on its own is not free: its module's root becomes
-    `copy(bitcast(param))`, and the copy exists only to give the module a
-    distinct output buffer — 512 MiB of memcpy for a metadata-only op. Traced
-    with the permutation that follows it, the bitcast disappears into the
-    permutation's operand read.
-    """
-    return _bitrev(ghash.to_ghash(z))
-
-
 def _make_ghash_code(message_len: int, log_inv_rate: int) -> ReedSolomon:
     return ReedSolomon(
         message_len=message_len, blowup=1 << log_inv_rate, dtype=fnp.binary_field_ghash
@@ -490,13 +477,15 @@ def commit_flock_ligerito(
     `LigeritoProver.commit` (rather than flock's `pcs_commit.commit`) yields the
     `LigeritoProverData` the open consumes directly — the commit→open prover-data
     threading of sp1-zorch's `commit_region`/`TraceCommitData`, so the open never
-    re-encodes or repackages L0. Byte-identical root to flock's `pcs_commit`; the
-    witness is the full-index bit-reversal of flock's `z` under the
-    monomial-commit correspondence."""
+    re-encodes or repackages L0. Byte-identical root to flock's `pcs_commit`.
+
+    `commit` takes the witness in raw coefficient order: the monomial
+    `CommitBasis` owns the bit-reversal that the full-index correspondence
+    calls for, and folds it into the single transpose it collapses to."""
     z = z_packed.reshape(-1, 2)
     log_n = z.shape[0].bit_length() - 1
     prover, _config, _chor = _flock_ligerito_prover(cfg, log_n, tree)
-    root, pdata = prover.commit([_commit_prep(z)])
+    root, pdata = prover.commit([ghash.to_ghash(z)])
     return root, pdata
 
 
