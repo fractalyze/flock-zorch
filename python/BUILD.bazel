@@ -387,6 +387,22 @@ py_test(
     ],
 )
 
+# No golden: the ladder's two drivers (host loop vs whole-ladder jit) serialize
+# the same proof, and each backend reaches the one `_ladder_on_host` selects.
+# The GPU full-proof goldens only ever exercise the fused driver, so nothing
+# else compares the host loop's bytes to anything. Software-mul, so it runs on
+# CPU; medium because it proves four times per wire case.
+py_test(
+    name = "ladder_driver_test",
+    size = "medium",
+    srcs = ["flock_zorch/zerocheck/testing/ladder_driver_test.py"],
+    deps = [
+        ":flock_zorch",
+        ":test_support",
+        requirement("absl-py"),
+    ],
+)
+
 # No golden: one composed round pair reproduces two single rounds exactly —
 # messages, sampled challenges, folded arrays, threaded transcript — on both
 # the generic and the equal-factor (four-sum basis) ladder. Software-mul, so
