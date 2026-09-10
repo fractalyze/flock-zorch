@@ -358,6 +358,20 @@ py_test(
     ],
 )
 
+# No golden: the CPU partial fold's sum-table path against the portable
+# select-XOR oracle — two formulations that share only their answer. Software-mul,
+# so it runs on CPU.
+py_test(
+    name = "partial_fold_test",
+    size = "small",
+    srcs = ["flock_zorch/lincheck/testing/partial_fold_test.py"],
+    deps = [
+        ":flock_zorch",
+        ":test_support",
+        requirement("absl-py"),
+    ],
+)
+
 # No golden: prove_packed → verify round-trip for the zerocheck verifier (accept +
 # claim reconstruction + tamper rejection). Software-mul, so it runs on CPU.
 py_test(

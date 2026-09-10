@@ -53,6 +53,21 @@ class ClassifyTest(unittest.TestCase):
         it is the case the module fallback exists for."""
         for op in ("slice_add_fusion.17", "concatenate_pad_fusion", "add_pad_fusion"):
             self.assertEqual(split.classify("jit__seg_xor_fold", op), "xor_fold", op)
+        for op in ("bitcast_gather_fusion", "fusion.3", "select_bitcast_fusion"):
+            self.assertEqual(
+                split.classify("jit__scatter_xor_fold", op), "xor_fold", op
+            )
+
+    def test_partial_folds_cpu_body_is_not_a_residual(self):
+        """Read off `_partial_fold`'s CPU HLO: the sum-table build and the
+        chunked lookup reduce name no op family, so without the module rule the
+        phase's own fold would report as `other`. `build_eq` shares the module
+        and stays a multiply."""
+        for op in ("reduce_add_fusion", "add_concatenate_fusion.2", "slice_add_fusion"):
+            self.assertEqual(split.classify("jit__partial_fold", op), "xor_fold", op)
+        self.assertEqual(
+            split.classify("jit__partial_fold", "multiply_bitcast_fusion"), "ghash_mul"
+        )
 
     def test_op_families_route_to_their_class(self):
         cases = {
@@ -61,7 +76,6 @@ class ClassifyTest(unittest.TestCase):
             ("jit__commit", "blake3.12"): "blake3",
             ("jit_rs_eq_ind", "ffi_call.0"): "ffi",
             ("jit__mlv_sumcheck", "multiply_add_fusion.44"): "ghash_mul",
-            ("jit__partial_fold", "select_reduce-window_fusion"): "select_xor",
         }
         for (module, op), want in cases.items():
             self.assertEqual(split.classify(module, op), want, f"{module}/{op}")

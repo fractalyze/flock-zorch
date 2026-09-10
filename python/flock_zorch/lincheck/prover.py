@@ -172,7 +172,7 @@ def _partial_fold(zp, x_outer, n_outer):
     eq_outer = frx.lax.optimization_barrier(build_eq(x_outer))
     if frx.default_backend() == "gpu":
         return _partial_fold_kernel(zp, eq_outer)
-    return _partial_fold_expr(zp, eq_outer, n_outer)
+    return _partial_fold_table(zp, eq_outer, n_outer)
 
 
 def _partial_fold_kernel(zp, eq_outer):
@@ -181,10 +181,11 @@ def _partial_fold_kernel(zp, eq_outer):
 
     `zp` is already stripe-major — stripe `s` holds outer bits `8s..8s+7` of
     every inner column — which is the orientation the kernel reads, so nothing
-    is transposed. The gain is reduce DEPTH, not bytes: `_partial_fold_expr`
-    takes one select-XOR step per outer bit (2^18 at m=32), while a byte indexes
-    the table once, so the reduce is 8x shallower over the same traffic. XOR
-    commutes, so the two agree bit-for-bit."""
+    is transposed. The gain is reduce DEPTH, not bytes: the portable
+    `_partial_fold_expr` takes one select-XOR step per outer bit (2^18 at m=32),
+    while a byte indexes the table once, so the reduce is 8x shallower over the
+    same traffic. XOR commutes, so the two agree bit-for-bit. `_partial_fold_table`
+    reaches the same table on CPU, in XLA ops rather than shared memory."""
     limbs = frx.lax.bitcast_convert_type(eq_outer, fnp.uint32)  # [n_outer, 4]
     out = frx.ffi.ffi_call(
         "frx_stripe_xor_fold",
@@ -193,8 +194,54 @@ def _partial_fold_kernel(zp, eq_outer):
     return frx.lax.bitcast_convert_type(out, _GHASH)  # [k]
 
 
+# Stripes folded per `_partial_fold_table` iteration. Each iteration holds a
+# `[chunk, k]` ghash intermediate live, so the chunk trades loop trips against
+# cache residency; 8 measured best or tied-best at every shape the hash circuits
+# reach (k_log 14-17, m 22-28) and keeps the intermediate bounded at large m.
+_STRIPES_PER_CHUNK = 8
+
+
+def _stripe_sum_tables(eq_outer, n_stripes):
+    """`table[s, b] = Σ_{r: bit r of b set} eq_outer[8·s + r]` — flock's
+    `build_sum_table`, one 256-entry table per byte stripe, by the same doubling
+    construction: bit `r` extends the table built from bits `0..r-1` by XORing
+    `eq_outer[8·s + r]` into every entry, so a stripe costs 255 XORs and not the
+    naive 8 · 256."""
+    eq8 = eq_outer.reshape(n_stripes, 8)
+    table = ghash.zeros(n_stripes)[:, None]
+    for r in range(8):
+        table = fnp.concatenate([table, table + eq8[:, r : r + 1]], axis=1)
+    return table
+
+
+def _partial_fold_table(zp, eq_outer, n_outer):
+    """CPU arm: index each stripe's 256-entry sum table once per byte, as flock's
+    `partial_fold_packed_z_fast_padded` does — 1 byte load + 1 table lookup +
+    1 XOR per `(stripe, i_inner)`, against `_partial_fold_expr`'s select-XOR step
+    per outer BIT. XOR commutes and `table[0]` is the field zero, so this agrees
+    with the oracle bit-for-bit, padding rows included.
+
+    The stripe axis is walked in `_STRIPES_PER_CHUNK` blocks rather than gathered
+    whole: XLA:CPU fuses the gather into the reduce either way, but the loop caps
+    the live intermediate at `[chunk, k]` instead of `[n_outer / 8, k]`, which is
+    what keeps the accumulator and the tables cache-resident."""
+    k = zp.shape[1]
+    n_stripes = n_outer // 8
+    chunk = min(_STRIPES_PER_CHUNK, n_stripes)  # n_stripes is a power of two
+    table = _stripe_sum_tables(eq_outer, n_stripes).reshape(-1)
+    base = (fnp.arange(chunk, dtype=fnp.int32) * 256)[:, None]  # per-row table origin
+
+    def fold_chunk(c, acc):
+        block = frx.lax.dynamic_slice(zp, (c * chunk, 0), (chunk, k))
+        idx = block.astype(fnp.int32) + base + c * (chunk * 256)
+        return acc + fnp.sum(table[idx], axis=0)
+
+    return frx.lax.fori_loop(0, n_stripes // chunk, fold_chunk, ghash.zeros(k))
+
+
 def _partial_fold_expr(zp, eq_outer, n_outer):
-    """Portable path and the oracle the kernel is gated against."""
+    """The portable formulation, one select-XOR step per outer bit, kept as the
+    oracle `partial_fold_test` gates the CPU table path against."""
     bits = (
         zp[:, None, :] >> fnp.arange(8, dtype=fnp.uint8)[None, :, None]
     ) & 1  # [nb,8,k]
