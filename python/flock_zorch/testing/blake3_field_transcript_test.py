@@ -1,6 +1,6 @@
 # Copyright 2026 The Flock-Zorch Authors. SPDX-License-Identifier: Apache-2.0
 """zorch's `Blake3FieldTranscript`, as THIS repo wires it, against the host
-`Blake3Challenger`.
+`Blake3Challenger` of `testing/_blake3_challenger.py`.
 
 The transcript itself is zorch's and is gated there against its own byte oracle.
 What that cannot check is the wiring: the fork pads its proof-of-work pre-image
@@ -35,10 +35,8 @@ frx.config.update("jax_enable_x64", True)
 import frx.numpy as fnp  # noqa: E402
 
 from flock_zorch import ghash  # noqa: E402
-from flock_zorch.blake3_challenger import (  # noqa: E402
-    Blake3Challenger,
-    _initial_device_transcript,
-)
+from flock_zorch.blake3_challenger import _initial_device_transcript  # noqa: E402
+from flock_zorch.testing._blake3_challenger import Blake3Challenger  # noqa: E402
 
 DOMAIN = b"flock-bench-v0"
 

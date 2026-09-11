@@ -30,7 +30,7 @@ import functools
 
 import numpy as np
 from absl.testing import absltest
-from hash_frx.sha256 import compress
+from hash_frx.sha256.sha256 import compress
 
 from flock_zorch.r1cs_hashes import sha2_witness as ws
 
