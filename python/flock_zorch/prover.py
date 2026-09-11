@@ -63,10 +63,9 @@ class ProveProfile:
 
 SHA256_PROFILE = ProveProfile(Sha256Challenger, merkle.GHASH_SHA256_TREE)
 # The device BLAKE3 transcript: a host-backed one cannot be carried by a jitted
-# loop, so the sumcheck round loop de-compiles into a host loop and the prove
-# runs ~10x slower at m32. The host row under `testing/_blake3_challenger.py`
-# stays as the byte oracle this arm is pinned against, the way zorch pins the
-# SHA-256 arm.
+# loop, so the sumcheck round loop would de-compile back onto the host. The host
+# row under `testing/_blake3_challenger.py` stays as the byte oracle this arm is
+# pinned against, the way zorch pins the SHA-256 arm.
 BLAKE3_PROFILE = ProveProfile(Blake3DeviceChallenger, merkle.GHASH_BLAKE3_TREE)
 
 

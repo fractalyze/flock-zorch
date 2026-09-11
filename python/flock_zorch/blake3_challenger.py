@@ -67,8 +67,8 @@ class Blake3DeviceChallenger:
     `Blake3FieldTranscript`'s state is a fixed-shape pytree, so a jitted round
     loop carries it and the sumcheck loop stays inside the compiled program.
     (The host row under `testing/_blake3_challenger.py` cannot: a host
-    transcript is not a pytree, and a prove driven by one de-compiles its round
-    loop into a host loop — measured ~10x at m32.
+    transcript is not a pytree, so a prove driven by one de-compiles its round
+    loop back onto the host.
     `testing/blake3_field_transcript_test.py::RoundLoopTest` is the leading
     indicator and needs no GPU.)
 
