@@ -35,4 +35,12 @@ zk-dtypes==0.0.17
 # marker seam. It sits BELOW `zorch`, which imports it rather than owning a
 # copy, so this repo takes it directly — pip resolves here on a separate hub
 # from zorch's, so a shared distribution has to be named in both.
-hash-frx==0.2.0.dev20260820080354
+hash-frx==0.2.0.dev20260911005315
+# TEST-ONLY, and formerly transitive: every row hash-frx ships is now a device
+# row, so a host BLAKE3 digest is the caller's to make. `zorch.testkit.byte_hash`
+# makes it for both repos and reaches this binding by plain `import blake3`, so
+# the venv the GPU gates run on has to carry it. The bazel tests take it from
+# `@zorch_pip` through `//zorch/testkit:byte_hash`; unpinned here, as in zorch's
+# own `requirements.in`, because a stable third-party binding of a published
+# standard is not the kind of shared distribution a hub skew can break.
+blake3

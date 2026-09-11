@@ -38,12 +38,12 @@ import numpy as np
 from absl.testing import absltest
 
 from flock_zorch.blake3_challenger import (
-    Blake3Challenger,
     Blake3DeviceChallenger,
     _initial_device_transcript,
 )
 from flock_zorch.ghash import _lanes_to_ghash, to_lanes
 from flock_zorch.sha256_challenger import Sha256Challenger
+from flock_zorch.testing._blake3_challenger import Blake3Challenger
 
 _DOMAIN = b"flock-bench-v0"
 _LABEL = b"flock-zerocheck-v0"

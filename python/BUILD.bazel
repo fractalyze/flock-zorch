@@ -36,6 +36,7 @@ py_library(
 
 py_library(
     name = "test_support",
+    testonly = True,
     # Glob, not a list: every shared testing helper must land here or the
     # py_tests fail at import, and an explicit list makes that easy to forget.
     # The pattern already covers __init__.py, which is why naming it as well
@@ -45,6 +46,9 @@ py_library(
     visibility = ["//visibility:public"],
     deps = [
         ":flock_zorch",
+        # `_blake3_challenger.py`'s host digest. testonly, which is why this
+        # library is too.
+        "@zorch//zorch/testkit:byte_hash",
         requirement("frx"),
         requirement("numpy"),
     ],
@@ -91,6 +95,7 @@ py_test(
     srcs = ["flock_zorch/testing/blake3_challenger_test.py"],
     deps = [
         ":flock_zorch",
+        ":test_support",
     ],
 )
 
@@ -111,6 +116,7 @@ py_test(
     srcs = ["flock_zorch/testing/blake3_field_transcript_test.py"],
     deps = [
         ":flock_zorch",
+        ":test_support",
     ],
 )
 

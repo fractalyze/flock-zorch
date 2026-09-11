@@ -29,8 +29,8 @@ from __future__ import annotations
 import frx
 import frx.numpy as fnp
 import numpy as np
-from hash_frx.blake3 import blake3
-from hash_frx.sha256 import digest as sha256_digest
+from hash_frx.blake3.rows import non_root_digest, parent_digest
+from hash_frx.sha256.sha256 import digest as sha256_digest
 from zorch.commit.merkle import MerkleTree
 
 
@@ -135,9 +135,9 @@ def _blake3_leaf_digest(rows):
 
     A backend without a BLAKE3 emitter would pay that cliff again rather than
     fall back. None is in use here; the seam to restore if one appears is
-    `blake3.unmarked_non_root_hash`, which is the same arithmetic unmarked.
+    `blake3.modes.unmarked_non_root_hash`, which is the same arithmetic unmarked.
     """
-    return blake3.non_root_digest(rows)
+    return non_root_digest(rows)
 
 
 def _blake3_parent_digest(pairs):
@@ -157,7 +157,7 @@ def _blake3_parent_digest(pairs):
     the two children ARE the marker's 64 operand bytes, so the packing folds
     into the emitter's own block read.
     """
-    return blake3.parent_digest(pairs)
+    return parent_digest(pairs)
 
 
 class _Blake3LeafHasher:
